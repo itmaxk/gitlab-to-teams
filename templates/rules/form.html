@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Редактирование' if rule else 'Новое правило' }} — GitLab → Teams{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">{{ 'Редактирование правила' if rule else 'Новое правило' }}</h1>
+
+<form method="POST" action="{{ '/rules/' ~ rule.id ~ '/save' if rule else '/rules/new/save' }}" class="space-y-5 max-w-2xl">
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">Название *</label>
+    <input type="text" name="name" required value="{{ rule.name if rule else '' }}"
+      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+  </div>
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">Описание</label>
+    <input type="text" name="description" value="{{ rule.description if rule else '' }}"
+      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+  </div>
+
+  <div class="grid grid-cols-2 gap-4">
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Паттерн файла</label>
+      <input type="text" name="file_pattern" value="{{ rule.file_pattern if rule else 'changelogs/unreleased/*.md' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+    </div>
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Тип совпадения</label>
+      <select name="match_type"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+        <option value="contains" {{ 'selected' if rule and rule.match_type == 'contains' }}>Содержит (contains)</option>
+        <option value="regex" {{ 'selected' if rule and rule.match_type == 'regex' }}>Регулярное выражение (regex)</option>
+        <option value="exact" {{ 'selected' if rule and rule.match_type == 'exact' }}>Точное совпадение (exact)</option>
+      </select>
+    </div>
+  </div>
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">Условие в содержимом файла</label>
+    <input type="text" name="content_match" value="{{ rule.content_match if rule else 'type: breaking' }}"
+      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+  </div>
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL (пусто = из .env)</label>
+    <input type="text" name="teams_webhook_url" value="{{ rule.teams_webhook_url if rule else '' }}"
+      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+      placeholder="https://outlook.office.com/webhook/...">
+  </div>
+
+  {% if rule %}
+  <div class="flex items-center gap-2">
+    <input type="checkbox" name="enabled" id="enabled" {{ 'checked' if rule.enabled }}
+      class="rounded bg-slate-800 border-slate-600">
+    <label for="enabled" class="text-sm text-slate-300">Правило включено</label>
+  </div>
+  {% endif %}
+
+  <div class="flex items-center gap-2">
+    <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
+      class="rounded bg-slate-800 border-slate-600">
+    <label for="send_email" class="text-sm text-slate-300">Дублировать на email</label>
+  </div>
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">Email-получатели</label>
+    <div id="email-list" class="space-y-2">
+      {% if rule and rule.emails %}
+        {% for email in rule.emails %}
+        <div class="flex gap-2 email-row">
+          <input type="text" name="emails" value="{{ email }}"
+            class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+            placeholder="user@example.com">
+          <button type="button" onclick="this.parentElement.remove()"
+            class="text-red-400 hover:text-red-300 px-2 cursor-pointer">✕</button>
+        </div>
+        {% endfor %}
+      {% endif %}
+    </div>
+    <button type="button" onclick="addEmail()"
+      class="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer">+ Добавить email</button>
+  </div>
+
+  <div class="flex gap-3 pt-4">
+    <button type="submit"
+      class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg cursor-pointer">Сохранить</button>
+    <a href="/rules" class="text-slate-400 hover:text-white px-4 py-2">Отмена</a>
+  </div>
+</form>
+{% endblock %}

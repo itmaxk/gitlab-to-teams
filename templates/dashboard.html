@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Дашборд — GitLab → Teams{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Дашборд</h1>
+  <div class="flex gap-4 text-sm">
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Правил: <span class="font-bold text-blue-400">{{ stats.rules_count }}</span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Уведомлений: <span class="font-bold text-green-400">{{ stats.notifications_count }}</span>
+    </div>
+  </div>
+</div>
+
+<h2 class="text-lg font-semibold mb-3">Последние уведомления</h2>
+
+{% if logs %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-700 text-slate-400">
+        <th class="text-left py-2 px-3">Дата</th>
+        <th class="text-left py-2 px-3">Правило</th>
+        <th class="text-left py-2 px-3">MR</th>
+        <th class="text-left py-2 px-3">Файл</th>
+        <th class="text-center py-2 px-3">Teams</th>
+        <th class="text-center py-2 px-3">Email</th>
+        <th class="text-left py-2 px-3">Ошибка</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for log in logs %}
+      <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+        <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ log.created_at[:19] }}</td>
+        <td class="py-2 px-3">{{ log.rule_name or '—' }}</td>
+        <td class="py-2 px-3">
+          {% if log.mr_url %}
+            <a href="{{ log.mr_url }}" target="_blank" class="text-blue-400 hover:underline">{{ log.mr_title }}</a>
+          {% else %}
+            {{ log.mr_title }}
+          {% endif %}
+        </td>
+        <td class="py-2 px-3 font-mono text-xs text-slate-400">{{ log.file_path }}</td>
+        <td class="py-2 px-3 text-center">
+          {% if log.teams_sent %}<span class="text-green-400">✓</span>{% else %}<span class="text-slate-600">—</span>{% endif %}
+        </td>
+        <td class="py-2 px-3 text-center">
+          {% if log.email_sent %}<span class="text-green-400">✓</span>{% else %}<span class="text-slate-600">—</span>{% endif %}
+        </td>
+        <td class="py-2 px-3 text-red-400 text-xs">{{ log.error or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-slate-500 py-8 text-center">Уведомлений пока нет.</p>
+{% endif %}
+{% endblock %}

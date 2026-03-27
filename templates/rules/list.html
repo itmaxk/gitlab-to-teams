@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Правила — GitLab → Teams{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Правила уведомлений</h1>
+  <a href="/rules/new" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">+ Новое правило</a>
+</div>
+
+{% if rules %}
+<div class="grid gap-4">
+  {% for rule in rules %}
+  <div class="bg-slate-800 rounded-lg border border-slate-700 p-4" id="rule-{{ rule.id }}">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex-1">
+        <div class="flex items-center gap-3 mb-2">
+          <h3 class="font-semibold text-lg">{{ rule.name }}</h3>
+          <button
+            onclick="toggleRule({{ rule.id }})"
+            class="text-xs px-2 py-0.5 rounded-full border cursor-pointer
+              {% if rule.enabled %}bg-green-900/30 text-green-400 border-green-800{% else %}bg-slate-900 text-slate-500 border-slate-600{% endif %}"
+            id="toggle-{{ rule.id }}"
+          >
+            {{ 'Вкл' if rule.enabled else 'Выкл' }}
+          </button>
+        </div>
+        {% if rule.description %}
+        <p class="text-slate-400 text-sm mb-2">{{ rule.description }}</p>
+        {% endif %}
+        <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
+          <span>📁 <code class="text-slate-300">{{ rule.file_pattern }}</code></span>
+          <span>🔍 <code class="text-slate-300">{{ rule.content_match }}</code> ({{ rule.match_type }})</span>
+          {% if rule.send_email and rule.emails %}
+          <span>📧 {{ rule.emails | length }} получател{{ 'ь' if rule.emails | length == 1 else ('я' if rule.emails | length < 5 else 'ей') }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <button onclick="testRule({{ rule.id }})" class="text-xs text-yellow-400 hover:text-yellow-300 border border-yellow-800 px-2 py-1 rounded cursor-pointer">Тест</button>
+        <a href="/rules/{{ rule.id }}/edit" class="text-xs text-blue-400 hover:text-blue-300 border border-blue-800 px-2 py-1 rounded">Изм.</a>
+        <button onclick="deleteRule({{ rule.id }})" class="text-xs text-red-400 hover:text-red-300 border border-red-800 px-2 py-1 rounded cursor-pointer">Удал.</button>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-slate-500 py-8 text-center">Правил пока нет. <a href="/rules/new" class="text-blue-400 hover:underline">Создать первое</a>.</p>
+{% endif %}
+{% endblock %}
