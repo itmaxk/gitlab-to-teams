@@ -40,5 +40,8 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8055"))
+    print(f"\n  Web-интерфейс: http://localhost:{port}/rules")
+    print(f"  Дашборд:       http://localhost:{port}/")
+    print(f"  Swagger API:   http://localhost:{port}/docs\n")
     uvicorn.run("main:app", host=host, port=port, reload=True)

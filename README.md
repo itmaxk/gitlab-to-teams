@@ -20,9 +20,8 @@
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate    # Windows
-# source .venv/bin/activate  # Linux/Mac
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install -r requirements.txt    # Windows
+# .venv/bin/pip install -r requirements.txt                    # Linux/Mac
 ```
 
 ### 2. Настройка
@@ -52,25 +51,26 @@ SMTP_FROM=""
 
 # Сервер
 HOST=0.0.0.0
-PORT=8000
+PORT=8055
 ```
 
 ### 3. Запуск
 
 ```bash
-python main.py
+.venv\Scripts\python.exe main.py    # Windows
+# .venv/bin/python main.py          # Linux/Mac
 ```
 
-Сервер запустится на `http://localhost:8000`.
+Сервер запустится и выведет ссылку на web-интерфейс в консоль.
 
 ## Интерфейсы
 
 | URL | Описание |
 |-----|----------|
-| `http://localhost:8000/` | Дашборд — лог уведомлений и статистика |
-| `http://localhost:8000/rules` | Управление правилами |
-| `http://localhost:8000/rules/new` | Создание нового правила |
-| `http://localhost:8000/docs` | Swagger — документация API |
+| `http://localhost:8055/` | Дашборд — лог уведомлений и статистика |
+| `http://localhost:8055/rules` | Управление правилами |
+| `http://localhost:8055/rules/new` | Создание нового правила |
+| `http://localhost:8055/docs` | Swagger — документация API |
 
 ## Настройка GitLab Webhook
 
@@ -78,7 +78,7 @@ python main.py
 
 | Параметр | Значение |
 |----------|----------|
-| URL | `https://your-host:8000/api/webhook/gitlab` |
+| URL | `https://your-host:8055/api/webhook/gitlab` |
 | Secret token | Значение `GITLAB_WEBHOOK_SECRET` из `.env` |
 | Trigger | **Merge request events** |
 | SSL verification | Включено (если используется HTTPS) |
@@ -116,7 +116,7 @@ python main.py
 
 ## API
 
-Все эндпоинты доступны в Swagger: `http://localhost:8000/docs`
+Все эндпоинты доступны в Swagger: `http://localhost:8055/docs`
 
 | Метод | URL | Описание |
 |-------|-----|----------|
