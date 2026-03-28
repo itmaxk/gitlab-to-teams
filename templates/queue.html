@@ -49,6 +49,11 @@
       class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
       Загрузить
     </button>
+    <button onclick="loadMRsFiltered()" id="load-filtered-btn"
+      class="bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer"
+      title="Загрузить только MR, которые ещё не были cherry-picked в указанную ветку">
+      Загрузить новые
+    </button>
   </div>
 </div>
 
@@ -313,6 +318,64 @@ async function loadMRs() {
     alert('Ошибка: ' + e.message);
   } finally {
     btn.textContent = 'Загрузить';
+    btn.disabled = false;
+  }
+}
+
+async function loadMRsFiltered() {
+  const input = document.getElementById('mr-input').value.trim();
+  if (!input) return;
+
+  const targetBranch = document.getElementById('target-branch').value.trim();
+  if (!targetBranch) {
+    alert('Укажите релизную ветку');
+    return;
+  }
+
+  const ids = parseMrInput(input);
+  if (ids.length === 0) {
+    alert('Не найдено валидных ID');
+    return;
+  }
+
+  const btn = document.getElementById('load-filtered-btn');
+  btn.textContent = 'Проверка...';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/queue/load-filtered', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mr_ids: ids, target_branch: targetBranch }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      alert(data.detail || 'Ошибка загрузки');
+      return;
+    }
+
+    loadedMRs = data.mrs;
+    cherryPickState = {};
+    renderMRs();
+    renderErrors(data.errors);
+
+    document.getElementById('control-panel').classList.remove('hidden');
+    document.getElementById('mr-table').classList.remove('hidden');
+    updateStatsLine();
+
+    if (data.filtered_count > 0) {
+      const el = document.getElementById('load-errors');
+      const msg = `<div class="bg-teal-900/30 border border-teal-800 rounded-lg px-3 py-2 text-teal-300 text-sm mb-1">
+        Отфильтровано ${data.filtered_count} MR, уже cherry-picked в ${escapeHtml(targetBranch)}
+      </div>`;
+      el.innerHTML = msg + el.innerHTML;
+      el.classList.remove('hidden');
+    }
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.textContent = 'Загрузить новые';
     btn.disabled = false;
   }
 }

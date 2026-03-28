@@ -15,6 +15,7 @@ from services.gitlab_client import (
     merge_merge_request,
     find_mrs_by_source_branches,
     search_merge_requests,
+    find_merged_mrs_by_branches,
     project_web_url,
 )
 
@@ -30,6 +31,11 @@ class SearchJiraRequest(BaseModel):
 
 class LoadMRsRequest(BaseModel):
     mr_ids: list[int]
+
+
+class LoadFilteredRequest(BaseModel):
+    mr_ids: list[int]
+    target_branch: str
 
 
 class CherryPickRequest(BaseModel):
@@ -121,6 +127,57 @@ async def load_mrs(data: LoadMRsRequest):
 
     mrs.sort(key=lambda m: m["merged_at"] or "")
     return {"mrs": mrs, "errors": errors}
+
+
+@router.post("/load-filtered")
+async def load_mrs_filtered(data: LoadFilteredRequest):
+    """Загружает MR и отфильтровывает уже cherry-picked в target_branch."""
+    project_id = await get_project_id()
+    mrs = []
+    errors = []
+    for mr_id in data.mr_ids:
+        try:
+            mr = await get_mr_by_iid(project_id, mr_id)
+            mrs.append({
+                "id": mr["iid"],
+                "title": mr["title"],
+                "state": mr["state"],
+                "web_url": mr["web_url"],
+                "author": mr.get("author", {}).get("name", ""),
+                "source_branch": mr["source_branch"],
+                "target_branch": mr["target_branch"],
+                "merged_at": mr.get("merged_at"),
+                "merge_commit_sha": mr.get("merge_commit_sha"),
+            })
+        except Exception as e:
+            logger.warning("Не удалось загрузить MR !%s: %s", mr_id, e)
+            errors.append({"id": mr_id, "error": str(e)})
+
+    # Проверяем какие уже cherry-picked
+    cp_branches = []
+    sha_to_mr = {}
+    for mr in mrs:
+        sha = mr.get("merge_commit_sha")
+        if sha:
+            branch = f"cherry-pick-{sha[:8]}"
+            cp_branches.append(branch)
+            sha_to_mr[branch] = mr["id"]
+
+    already_picked = set()
+    if cp_branches:
+        merged_branches = await find_merged_mrs_by_branches(
+            project_id, cp_branches, data.target_branch,
+        )
+        already_picked = {sha_to_mr[b] for b in merged_branches if b in sha_to_mr}
+
+    filtered = [mr for mr in mrs if mr["id"] not in already_picked]
+    filtered.sort(key=lambda m: m["merged_at"] or "")
+
+    return {
+        "mrs": filtered,
+        "errors": errors,
+        "filtered_count": len(already_picked),
+    }
 
 
 @router.post("/cherry-pick")

@@ -189,6 +189,27 @@ async def find_mrs_by_source_branches(
     return result
 
 
+async def find_merged_mrs_by_branches(
+    project_id: int,
+    source_branches: list[str],
+    target_branch: str,
+) -> set[str]:
+    """Возвращает set source_branch для которых есть merged MR в target_branch."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    found = set()
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        for branch in source_branches:
+            resp = await client.get(url, headers=_headers(), params={
+                "source_branch": branch,
+                "target_branch": target_branch,
+                "state": "merged",
+                "per_page": 1,
+            })
+            if resp.status_code == 200 and resp.json():
+                found.add(branch)
+    return found
+
+
 async def search_merge_requests(
     project_id: int,
     search: str,
