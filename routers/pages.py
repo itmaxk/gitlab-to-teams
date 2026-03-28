@@ -115,7 +115,10 @@ def polled_mrs(
 
 @router.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request):
-    return templates.TemplateResponse(request, "queue.html", {})
+    return templates.TemplateResponse(request, "queue.html", {
+        "jira_url": os.getenv("JIRA_URL", ""),
+        "jira_project": os.getenv("JIRA_PROJECT", ""),
+    })
 
 
 @router.get("/rules", response_class=HTMLResponse)

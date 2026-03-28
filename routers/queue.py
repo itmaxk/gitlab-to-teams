@@ -14,12 +14,18 @@ from services.gitlab_client import (
     approve_merge_request,
     merge_merge_request,
     find_mrs_by_source_branches,
+    search_merge_requests,
     project_web_url,
 )
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
+
+
+class SearchJiraRequest(BaseModel):
+    jira_ids: list[str]
+    state: str = "merged"
 
 
 class LoadMRsRequest(BaseModel):
@@ -50,6 +56,42 @@ class SaveSessionRequest(BaseModel):
     name: str = ""
     target_branch: str
     items: list[SaveSessionItem]
+
+
+@router.post("/search-jira")
+async def search_jira(data: SearchJiraRequest):
+    """Ищет MR по Jira ID в title."""
+    project_id = await get_project_id()
+    results = []
+    seen_iids = set()
+    for jira_id in data.jira_ids:
+        jira_id = jira_id.strip()
+        if not jira_id:
+            continue
+        try:
+            mrs = await search_merge_requests(project_id, jira_id, state=data.state)
+            for mr in mrs:
+                if mr["iid"] not in seen_iids:
+                    seen_iids.add(mr["iid"])
+                    results.append({
+                        "jira_id": jira_id,
+                        "mr_id": mr["iid"],
+                        "title": mr["title"],
+                        "web_url": mr["web_url"],
+                        "state": mr["state"],
+                        "merged_at": mr.get("merged_at"),
+                    })
+        except Exception as e:
+            logger.warning("Ошибка поиска MR по Jira %s: %s", jira_id, e)
+            results.append({
+                "jira_id": jira_id,
+                "mr_id": None,
+                "title": "",
+                "web_url": "",
+                "state": "error",
+                "error": str(e),
+            })
+    return {"results": results}
 
 
 @router.post("/load")

@@ -189,6 +189,27 @@ async def find_mrs_by_source_branches(
     return result
 
 
+async def search_merge_requests(
+    project_id: int,
+    search: str,
+    state: str = "merged",
+    per_page: int = 20,
+) -> list[dict]:
+    """Ищет MR по тексту в title/description."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    params = {
+        "search": search,
+        "state": state,
+        "per_page": per_page,
+        "order_by": "updated_at",
+        "sort": "desc",
+    }
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers(), params=params)
+        resp.raise_for_status()
+    return resp.json()
+
+
 async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Получает содержимое файла из репозитория GitLab."""
     encoded_path = quote(file_path, safe="")
