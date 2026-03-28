@@ -26,6 +26,7 @@ class CherryPickRequest(BaseModel):
     merge_commit_sha: str
     target_branch: str
     source_mr_iid: int
+    source_mr_title: str = ""
 
 
 class CheckCherryPicksRequest(BaseModel):
@@ -65,7 +66,7 @@ async def api_cherry_pick(data: CherryPickRequest):
     """Cherry-pick: создаёт ветку от target, cherry-pick коммита, возвращает URL создания MR."""
     project_id = await get_project_id()
     sha_short = data.merge_commit_sha[:8]
-    cp_branch = f"cherry-pick-{sha_short}-into-{data.target_branch}"
+    cp_branch = f"cherry-pick-{sha_short}"
 
     try:
         await create_branch(project_id, cp_branch, data.target_branch)
@@ -88,7 +89,7 @@ async def api_cherry_pick(data: CherryPickRequest):
         f"{web_url}/-/merge_requests/new"
         f"?merge_request%5Bsource_branch%5D={source_enc}"
         f"&merge_request%5Btarget_branch%5D={target_enc}"
-        f"&merge_request%5Btitle%5D=Cherry-pick+!{data.source_mr_iid}+into+{target_enc}"
+        f"&merge_request%5Btitle%5D={quote(data.source_mr_title + ' ' + data.target_branch, safe='')}"
     )
 
     return {

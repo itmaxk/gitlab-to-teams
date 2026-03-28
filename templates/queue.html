@@ -222,6 +222,7 @@ async function cherryPickOne(sha, iid) {
         merge_commit_sha: sha,
         target_branch: targetBranch,
         source_mr_iid: iid,
+        source_mr_title: (loadedMRs.find(m => m.iid === iid) || {}).title || '',
       }),
     });
     const data = await resp.json();
