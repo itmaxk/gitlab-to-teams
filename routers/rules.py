@@ -174,6 +174,49 @@ def toggle_rule(rule_id: int):
     return {"enabled": bool(new_val)}
 
 
+@router.post("/{rule_id}/copy")
+def copy_rule(rule_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    src = dict(row)
+    cur = conn.execute(
+        """INSERT INTO notification_rules
+           (name, description, file_pattern, content_match, match_type,
+            target_branch, mr_state, poll_interval_seconds,
+            file_check_enabled, file_check_path_prefix,
+            teams_webhook_url, send_email, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        (
+            src["name"] + " (копия)", src["description"], src["file_pattern"],
+            src["content_match"], src["match_type"],
+            src["target_branch"], src["mr_state"], src["poll_interval_seconds"],
+            src["file_check_enabled"], src["file_check_path_prefix"],
+            src["teams_webhook_url"], src["send_email"],
+        ),
+    )
+    new_id = cur.lastrowid
+    emails = conn.execute(
+        "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
+    ).fetchall()
+    for e in emails:
+        conn.execute(
+            "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
+            (e["email"], new_id),
+        )
+    conn.commit()
+    new_row = conn.execute(
+        "SELECT * FROM notification_rules WHERE id = ?", (new_id,)
+    ).fetchone()
+    conn.close()
+    return _rule_to_out(new_row)
+
+
 @router.post("/{rule_id}/test")
 async def test_rule(rule_id: int):
     conn = get_db()

@@ -38,6 +38,16 @@ async function deleteRule(id) {
   }
 }
 
+async function copyRule(id) {
+  const resp = await fetch(`/api/rules/${id}/copy`, { method: 'POST' });
+  if (resp.ok) {
+    location.reload();
+  } else {
+    const data = await resp.json();
+    alert(data.detail || 'Ошибка копирования');
+  }
+}
+
 async function testRule(id) {
   const btn = event.target;
   btn.textContent = '...';

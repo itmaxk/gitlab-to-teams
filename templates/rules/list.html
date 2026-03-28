@@ -42,6 +42,7 @@
       </div>
       <div class="flex gap-2 shrink-0">
         <button onclick="testRule({{ rule.id }})" class="text-xs text-yellow-400 hover:text-yellow-300 border border-yellow-800 px-2 py-1 rounded cursor-pointer">Тест</button>
+        <button onclick="copyRule({{ rule.id }})" class="text-xs text-slate-400 hover:text-slate-300 border border-slate-600 px-2 py-1 rounded cursor-pointer">Копия</button>
         <a href="/rules/{{ rule.id }}/edit" class="text-xs text-blue-400 hover:text-blue-300 border border-blue-800 px-2 py-1 rounded">Изм.</a>
         <button onclick="deleteRule({{ rule.id }})" class="text-xs text-red-400 hover:text-red-300 border border-red-800 px-2 py-1 rounded cursor-pointer">Удал.</button>
       </div>

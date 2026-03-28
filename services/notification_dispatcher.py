@@ -37,6 +37,11 @@ async def dispatch_notifications(
             except Exception as e:
                 error += f"Teams: {e}\n"
 
+        if not emails:
+            default_email = os.getenv("DEFAULT_EMAIL", "")
+            if default_email:
+                emails = [e.strip() for e in default_email.split(",") if e.strip()]
+
         if rule["send_email"] and emails:
             try:
                 send_changelog_email(
