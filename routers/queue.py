@@ -153,10 +153,14 @@ async def load_mrs_filtered(data: LoadFilteredRequest):
             logger.warning("Не удалось загрузить MR !%s: %s", mr_id, e)
             errors.append({"id": mr_id, "error": str(e)})
 
-    # Проверяем какие уже cherry-picked
+    # Оставляем только MR, вмерженные НЕ в релизную ветку (т.е. в master)
+    master_mrs = [mr for mr in mrs if mr["target_branch"] != data.target_branch]
+    skipped_by_branch = len(mrs) - len(master_mrs)
+
+    # Проверяем какие уже cherry-picked в релизную ветку
     cp_branches = []
     sha_to_mr = {}
-    for mr in mrs:
+    for mr in master_mrs:
         sha = mr.get("merge_commit_sha")
         if sha:
             branch = f"cherry-pick-{sha[:8]}"
@@ -170,13 +174,13 @@ async def load_mrs_filtered(data: LoadFilteredRequest):
         )
         already_picked = {sha_to_mr[b] for b in merged_branches if b in sha_to_mr}
 
-    filtered = [mr for mr in mrs if mr["id"] not in already_picked]
+    filtered = [mr for mr in master_mrs if mr["id"] not in already_picked]
     filtered.sort(key=lambda m: m["merged_at"] or "")
 
     return {
         "mrs": filtered,
         "errors": errors,
-        "filtered_count": len(already_picked),
+        "filtered_count": len(already_picked) + skipped_by_branch,
     }
 
 
