@@ -113,6 +113,11 @@ def polled_mrs(
     })
 
 
+@router.get("/queue", response_class=HTMLResponse)
+def queue_page(request: Request):
+    return templates.TemplateResponse(request, "queue.html", {})
+
+
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))

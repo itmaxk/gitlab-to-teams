@@ -59,6 +59,38 @@ async def get_mr_changes(project_id: int, mr_iid: int) -> list[str]:
     return [change["new_path"] for change in data.get("changes", []) if change.get("new_path")]
 
 
+async def get_mr_by_iid(project_id: int, mr_iid: int) -> dict:
+    """Получает один MR по его IID."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+    return resp.json()
+
+
+async def create_branch(project_id: int, branch_name: str, ref: str) -> dict:
+    """Создаёт новую ветку от указанного ref."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/repository/branches"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.post(url, headers=_headers(), json={
+            "branch": branch_name,
+            "ref": ref,
+        })
+        resp.raise_for_status()
+    return resp.json()
+
+
+async def cherry_pick_commit(project_id: int, sha: str, target_branch: str) -> dict:
+    """Cherry-pick коммита в указанную ветку."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/repository/commits/{sha}/cherry_pick"
+    async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        resp = await client.post(url, headers=_headers(), json={
+            "branch": target_branch,
+        })
+        resp.raise_for_status()
+    return resp.json()
+
+
 async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Получает содержимое файла из репозитория GitLab."""
     encoded_path = quote(file_path, safe="")

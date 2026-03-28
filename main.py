@@ -41,10 +41,11 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-from routers import rules, pages  # noqa: E402
+from routers import rules, pages, queue  # noqa: E402
 
 app.include_router(rules.router)
 app.include_router(pages.router)
+app.include_router(queue.router)
 
 if __name__ == "__main__":
     import uvicorn
