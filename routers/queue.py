@@ -46,6 +46,7 @@ class SaveSessionItem(BaseModel):
 
 
 class SaveSessionRequest(BaseModel):
+    name: str = ""
     target_branch: str
     items: list[SaveSessionItem]
 
@@ -202,8 +203,8 @@ def save_session(data: SaveSessionRequest):
 
     conn = get_db()
     cur = conn.execute(
-        "INSERT INTO cherry_pick_sessions (target_branch, mr_count) VALUES (?, ?)",
-        (data.target_branch, len(data.items)),
+        "INSERT INTO cherry_pick_sessions (name, target_branch, mr_count) VALUES (?, ?, ?)",
+        (data.name, data.target_branch, len(data.items)),
     )
     session_id = cur.lastrowid
     for item in data.items:

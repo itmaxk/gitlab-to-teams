@@ -70,6 +70,7 @@ def init_db():
 
         CREATE TABLE IF NOT EXISTS cherry_pick_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT DEFAULT '',
             target_branch TEXT NOT NULL,
             mr_count INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
@@ -139,6 +140,15 @@ def _migrate(conn: sqlite3.Connection):
         cp_columns = {row[1] for row in cursor2.fetchall()}
         if cp_columns and "cherry_pick_mr_url" not in cp_columns:
             conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_mr_url TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    # Миграция cherry_pick_sessions
+    try:
+        cursor3 = conn.execute("PRAGMA table_info(cherry_pick_sessions)")
+        cs_columns = {row[1] for row in cursor3.fetchall()}
+        if cs_columns and "name" not in cs_columns:
+            conn.execute("ALTER TABLE cherry_pick_sessions ADD COLUMN name TEXT DEFAULT ''")
     except Exception:
         pass
 

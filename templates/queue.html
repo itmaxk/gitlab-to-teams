@@ -328,6 +328,12 @@ async function autoCherryPickAll() {
   autoRunning = false;
   btn.textContent = 'Auto Cherry-Pick';
   btn.disabled = false;
+
+  // Автосохранение если есть замерженные
+  const mergedCount = Object.values(cherryPickState).filter(cp => cp.status === 'merged').length;
+  if (mergedCount > 0) {
+    await saveSession(true);
+  }
 }
 
 async function refreshStatuses() {
@@ -410,10 +416,17 @@ function showAllCpLinks() {
   document.getElementById('session-modal').classList.remove('hidden');
 }
 
-async function saveSession() {
+function generateSessionName() {
+  const iids = Object.keys(cherryPickState).slice(0, 5).map(k => `!${k}`);
+  const suffix = Object.keys(cherryPickState).length > 5 ? '...' : '';
+  const time = new Date().toLocaleString('ru-RU');
+  return `${iids.join(', ')}${suffix} — ${time}`;
+}
+
+async function saveSession(auto = false) {
   const cpEntries = Object.keys(cherryPickState);
   if (cpEntries.length === 0) {
-    alert('Нет выполненных cherry-pick для сохранения');
+    if (!auto) alert('Нет выполненных cherry-pick для сохранения');
     return;
   }
 
@@ -435,6 +448,8 @@ async function saveSession() {
     };
   });
 
+  const sessionName = generateSessionName();
+
   const btn = document.getElementById('save-btn');
   btn.textContent = 'Сохранение...';
   btn.disabled = true;
@@ -443,7 +458,7 @@ async function saveSession() {
     const resp = await fetch('/api/queue/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_branch: targetBranch, items }),
+      body: JSON.stringify({ name: sessionName, target_branch: targetBranch, items }),
     });
     const data = await resp.json();
 
@@ -517,9 +532,9 @@ async function loadHistory() {
       return `
         <div class="bg-slate-800 rounded-lg border border-slate-700 p-3 mb-2 flex items-center justify-between">
           <div>
-            <span class="text-white font-medium">${escapeHtml(s.target_branch)}</span>
-            <span class="text-slate-400 text-xs ml-2">${s.mr_count} MR</span>
-            <span class="text-slate-500 text-xs ml-2">${date}</span>
+            <span class="text-white font-medium">${escapeHtml(s.name || s.target_branch)}</span>
+            <span class="text-slate-400 text-xs ml-2">${escapeHtml(s.target_branch)}</span>
+            <span class="text-slate-400 text-xs ml-1">${s.mr_count} MR</span>
           </div>
           <div class="flex gap-2">
             <button onclick="viewSession(${s.id})"
