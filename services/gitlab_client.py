@@ -1,7 +1,10 @@
+import logging
 import os
 from urllib.parse import quote
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def _base_url() -> str:
@@ -76,7 +79,14 @@ async def create_branch(project_id: int, branch_name: str, ref: str) -> dict:
             "branch": branch_name,
             "ref": ref,
         })
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = resp.text
+            logger.error("create_branch %s from %s → %s %s", branch_name, ref, resp.status_code, body)
+            try:
+                msg = resp.json().get("message", body)
+            except Exception:
+                msg = body
+            raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
@@ -87,7 +97,14 @@ async def cherry_pick_commit(project_id: int, sha: str, target_branch: str) -> d
         resp = await client.post(url, headers=_headers(), json={
             "branch": target_branch,
         })
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            body = resp.text
+            logger.error("cherry_pick %s → %s: %s %s", sha, target_branch, resp.status_code, body)
+            try:
+                msg = resp.json().get("message", body)
+            except Exception:
+                msg = body
+            raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
