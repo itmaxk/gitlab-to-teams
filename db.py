@@ -86,6 +86,7 @@ def init_db():
             merge_commit_sha TEXT DEFAULT '',
             cherry_pick_branch TEXT DEFAULT '',
             mr_create_url TEXT DEFAULT '',
+            cherry_pick_mr_url TEXT DEFAULT '',
             FOREIGN KEY (session_id) REFERENCES cherry_pick_sessions(id) ON DELETE CASCADE
         );
 
@@ -131,6 +132,16 @@ def _migrate(conn: sqlite3.Connection):
     for col, sql in migrations.items():
         if col not in columns:
             conn.execute(sql)
+
+    # Миграция cherry_pick_items
+    try:
+        cursor2 = conn.execute("PRAGMA table_info(cherry_pick_items)")
+        cp_columns = {row[1] for row in cursor2.fetchall()}
+        if cp_columns and "cherry_pick_mr_url" not in cp_columns:
+            conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_mr_url TEXT DEFAULT ''")
+    except Exception:
+        pass
+
     conn.commit()
 
 

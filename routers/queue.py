@@ -42,6 +42,7 @@ class SaveSessionItem(BaseModel):
     merge_commit_sha: str = ""
     cherry_pick_branch: str = ""
     mr_create_url: str = ""
+    cherry_pick_mr_url: str = ""
 
 
 class SaveSessionRequest(BaseModel):
@@ -209,12 +210,12 @@ def save_session(data: SaveSessionRequest):
         conn.execute(
             """INSERT INTO cherry_pick_items
                (session_id, mr_iid, mr_title, mr_url, author, merged_at,
-                merge_commit_sha, cherry_pick_branch, mr_create_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                merge_commit_sha, cherry_pick_branch, mr_create_url, cherry_pick_mr_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id, item.mr_iid, item.mr_title, item.mr_url,
                 item.author, item.merged_at, item.merge_commit_sha,
-                item.cherry_pick_branch, item.mr_create_url,
+                item.cherry_pick_branch, item.mr_create_url, item.cherry_pick_mr_url,
             ),
         )
     conn.commit()

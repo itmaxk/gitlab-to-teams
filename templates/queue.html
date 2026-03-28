@@ -391,6 +391,7 @@ async function saveSession() {
       merge_commit_sha: mr.merge_commit_sha || '',
       cherry_pick_branch: cp.branch || '',
       mr_create_url: cp.mr_url || '',
+      cherry_pick_mr_url: cp.mr_iid ? cp.mr_url : '',
     };
   });
 
@@ -511,12 +512,16 @@ async function viewSession(id) {
             <th class="px-3 py-2">MR</th>
             <th class="px-3 py-2">Автор</th>
             <th class="px-3 py-2">Дата мержа</th>
-            <th class="px-3 py-2">Cherry-pick ветка</th>
+            <th class="px-3 py-2">Cherry-pick MR</th>
+            <th class="px-3 py-2">Ветка</th>
           </tr>
         </thead>
         <tbody>
           ${items.map((item, i) => {
             const merged = item.merged_at ? new Date(item.merged_at).toLocaleString('ru-RU') : '—';
+            const cpMrLink = item.cherry_pick_mr_url
+              ? `<a href="${item.cherry_pick_mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">Открыть</a>`
+              : '<span class="text-slate-500 text-xs">—</span>';
             return `
               <tr class="border-b border-slate-700/50">
                 <td class="px-3 py-2 text-slate-500">${i + 1}</td>
@@ -526,12 +531,8 @@ async function viewSession(id) {
                 </td>
                 <td class="px-3 py-2 text-slate-300">${escapeHtml(item.author)}</td>
                 <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
-                <td class="px-3 py-2">
-                  ${item.mr_create_url
-                    ? `<a href="${item.mr_create_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">${escapeHtml(item.cherry_pick_branch)}</a>`
-                    : `<span class="text-slate-500 text-xs">${escapeHtml(item.cherry_pick_branch)}</span>`
-                  }
-                </td>
+                <td class="px-3 py-2">${cpMrLink}</td>
+                <td class="px-3 py-2 text-xs text-slate-400">${escapeHtml(item.cherry_pick_branch)}</td>
               </tr>`;
           }).join('')}
         </tbody>
