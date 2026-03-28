@@ -226,20 +226,21 @@ async def test_rule(rule_id: int):
     from services.email_client import send_changelog_email as send_email_fn
 
     conn = get_db()
-    row = conn.execute(
+    raw = conn.execute(
         "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
     ).fetchone()
-    if not row:
+    if not raw:
         conn.close()
         raise HTTPException(status_code=404, detail="Rule not found")
 
+    row = dict(raw)
     emails_rows = conn.execute(
         "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
     ).fetchall()
     conn.close()
 
     send_teams = bool(row.get("send_teams", 1))
-    send_email = bool(row["send_email"])
+    send_email = bool(row.get("send_email", 0))
 
     if not send_teams and not send_email:
         raise HTTPException(status_code=400, detail="Ни Teams, ни Email не включены в правиле")
