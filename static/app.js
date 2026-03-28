@@ -48,6 +48,27 @@ async function copyRule(id) {
   }
 }
 
+async function resendNotification(logId, btn) {
+  if (!confirm('Повторно отправить уведомление?')) return;
+  btn.textContent = '...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch(`/api/rules/logs/${logId}/resend`, { method: 'POST' });
+    if (resp.ok) {
+      btn.textContent = 'Отправлено';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      const data = await resp.json();
+      btn.textContent = 'Ошибка';
+      alert(data.detail || 'Ошибка отправки');
+      setTimeout(() => { btn.textContent = 'Повторить'; btn.disabled = false; }, 2000);
+    }
+  } catch (e) {
+    btn.textContent = 'Ошибка';
+    setTimeout(() => { btn.textContent = 'Повторить'; btn.disabled = false; }, 2000);
+  }
+}
+
 async function testRule(id) {
   const btn = event.target;
   btn.textContent = '...';

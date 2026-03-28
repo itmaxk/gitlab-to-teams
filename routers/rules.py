@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from db import get_db
 from models import RuleCreate, RuleUpdate
 from services.teams_client import send_teams_notification
+from services.notification_dispatcher import dispatch_notifications
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
@@ -240,3 +241,46 @@ async def test_rule(rule_id: int):
         rule_name=row["name"],
     )
     return {"status": "sent"}
+
+
+@router.post("/logs/{log_id}/resend")
+async def resend_notification(log_id: int):
+    conn = get_db()
+    row = conn.execute(
+        """SELECT l.*, r.name as rule_name, r.teams_webhook_url, r.send_email
+           FROM notification_log l
+           LEFT JOIN notification_rules r ON r.id = l.rule_id
+           WHERE l.id = ?""",
+        (log_id,),
+    ).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Log entry not found")
+
+    log = dict(row)
+    emails_rows = conn.execute(
+        "SELECT email FROM email_recipients WHERE rule_id = ?", (log["rule_id"],)
+    ).fetchall()
+    conn.close()
+
+    emails = [e["email"] for e in emails_rows]
+    if not emails:
+        default_email = os.getenv("DEFAULT_EMAIL", "")
+        if default_email:
+            emails = [e.strip() for e in default_email.split(",") if e.strip()]
+
+    match = {
+        "rule": {
+            "id": log["rule_id"],
+            "name": log.get("rule_name", ""),
+            "teams_webhook_url": log.get("teams_webhook_url", ""),
+            "send_email": log.get("send_email", 0),
+        },
+        "file_path": log["file_path"],
+        "file_content": log["file_content"],
+        "emails": emails,
+    }
+    await dispatch_notifications(
+        [match], log["mr_iid"], log["mr_title"], log["mr_url"], force=True,
+    )
+    return {"status": "resent"}
