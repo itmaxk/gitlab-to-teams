@@ -76,6 +76,7 @@ async def load_mrs(data: LoadMRsRequest):
 @router.post("/cherry-pick")
 async def api_cherry_pick(data: CherryPickRequest):
     """Cherry-pick: создаёт ветку от target, cherry-pick коммита, возвращает URL создания MR."""
+    logger.info("cherry-pick request: mr=!%s title=%r target=%s", data.source_mr_iid, data.source_mr_title, data.target_branch)
     project_id = await get_project_id()
     sha_short = data.merge_commit_sha[:8]
     cp_branch = f"cherry-pick-{sha_short}"
@@ -101,7 +102,7 @@ async def api_cherry_pick(data: CherryPickRequest):
         f"{web_url}/-/merge_requests/new"
         f"?merge_request%5Bsource_branch%5D={source_enc}"
         f"&merge_request%5Btarget_branch%5D={target_enc}"
-        f"&merge_request%5Btitle%5D={quote(data.source_mr_title + ' ' + data.target_branch, safe='')}"
+        f"&merge_request%5Btitle%5D={quote(data.source_mr_title + ' ' + data.target_branch, safe='/')}"
     )
 
     return {
