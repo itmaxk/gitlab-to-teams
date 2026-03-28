@@ -223,27 +223,55 @@ def copy_rule(rule_id: int) -> dict:
 
 @router.post("/{rule_id}/test")
 async def test_rule(rule_id: int):
+    from services.email_client import send_changelog_email as send_email_fn
+
     conn = get_db()
     row = conn.execute(
         "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
     ).fetchone()
-    conn.close()
     if not row:
+        conn.close()
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    webhook_url = row["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
-    if not webhook_url:
-        raise HTTPException(status_code=400, detail="No Teams webhook URL configured")
+    emails_rows = conn.execute(
+        "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
+    ).fetchall()
+    conn.close()
 
-    await send_teams_notification(
-        webhook_url=webhook_url,
-        mr_title="Test MR #0 — Тестовое уведомление",
-        mr_url="https://gitlab.example.com/test/mr/0",
-        file_path="changelogs/unreleased/test-001.md",
-        file_content="Это тестовое сообщение.\n\ntype: breaking\n",
-        rule_name=row["name"],
-    )
-    return {"status": "sent"}
+    send_teams = bool(row.get("send_teams", 1))
+    send_email = bool(row["send_email"])
+
+    if not send_teams and not send_email:
+        raise HTTPException(status_code=400, detail="Ни Teams, ни Email не включены в правиле")
+
+    test_data = {
+        "mr_title": "Test MR #0 — Тестовое уведомление",
+        "mr_url": "https://gitlab.example.com/test/mr/0",
+        "file_path": "changelogs/unreleased/test-001.md",
+        "file_content": "Это тестовое сообщение.\n\ntype: breaking\n",
+        "rule_name": row["name"],
+    }
+    results = []
+
+    if send_teams:
+        webhook_url = row["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
+        if not webhook_url:
+            raise HTTPException(status_code=400, detail="Teams включён, но webhook URL не настроен")
+        await send_teams_notification(webhook_url=webhook_url, **test_data)
+        results.append("teams")
+
+    if send_email:
+        emails = [e["email"] for e in emails_rows]
+        if not emails:
+            default_email = os.getenv("DEFAULT_EMAIL", "")
+            if default_email:
+                emails = [e.strip() for e in default_email.split(",") if e.strip()]
+        if not emails:
+            raise HTTPException(status_code=400, detail="Email включён, но получатели не настроены")
+        send_email_fn(recipients=emails, **test_data)
+        results.append("email")
+
+    return {"status": "sent", "channels": results}
 
 
 @router.post("/logs/{log_id}/resend")
