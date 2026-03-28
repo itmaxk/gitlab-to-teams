@@ -4,12 +4,12 @@ from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from db import get_db
 from services.gitlab_client import (
     get_project_id,
     get_mr_by_iid,
     create_branch,
     cherry_pick_commit,
-    find_mrs_by_source_branches,
     project_web_url,
 )
 
@@ -29,8 +29,20 @@ class CherryPickRequest(BaseModel):
     source_mr_title: str = ""
 
 
-class CheckCherryPicksRequest(BaseModel):
-    source_branches: list[str]
+class SaveSessionItem(BaseModel):
+    mr_iid: int
+    mr_title: str = ""
+    mr_url: str = ""
+    author: str = ""
+    merged_at: str = ""
+    merge_commit_sha: str = ""
+    cherry_pick_branch: str = ""
+    mr_create_url: str = ""
+
+
+class SaveSessionRequest(BaseModel):
+    target_branch: str
+    items: list[SaveSessionItem]
 
 
 @router.post("/load")
@@ -99,22 +111,70 @@ async def api_cherry_pick(data: CherryPickRequest):
     }
 
 
-@router.post("/check")
-async def check_cherry_picks(data: CheckCherryPicksRequest):
-    """Проверяет состояние MR по списку source_branch (для отслеживания cherry-pick MR)."""
-    if not data.source_branches:
-        return {"mrs": []}
-    project_id = await get_project_id()
-    mrs = await find_mrs_by_source_branches(project_id, data.source_branches)
-    return {
-        "mrs": [
-            {
-                "iid": mr["iid"],
-                "state": mr["state"],
-                "source_branch": mr["source_branch"],
-                "web_url": mr["web_url"],
-                "merged_at": mr.get("merged_at"),
-            }
-            for mr in mrs
-        ],
-    }
+@router.post("/save")
+def save_session(data: SaveSessionRequest):
+    """Сохраняет сессию cherry-pick в БД для истории."""
+    if not data.items:
+        raise HTTPException(status_code=400, detail="Нет элементов для сохранения")
+
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT INTO cherry_pick_sessions (target_branch, mr_count) VALUES (?, ?)",
+        (data.target_branch, len(data.items)),
+    )
+    session_id = cur.lastrowid
+    for item in data.items:
+        conn.execute(
+            """INSERT INTO cherry_pick_items
+               (session_id, mr_iid, mr_title, mr_url, author, merged_at,
+                merge_commit_sha, cherry_pick_branch, mr_create_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id, item.mr_iid, item.mr_title, item.mr_url,
+                item.author, item.merged_at, item.merge_commit_sha,
+                item.cherry_pick_branch, item.mr_create_url,
+            ),
+        )
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "session_id": session_id}
+
+
+@router.get("/history")
+def get_history():
+    """Возвращает список сессий cherry-pick."""
+    conn = get_db()
+    sessions = conn.execute(
+        "SELECT * FROM cherry_pick_sessions ORDER BY created_at DESC LIMIT 50"
+    ).fetchall()
+    conn.close()
+    return [dict(s) for s in sessions]
+
+
+@router.get("/history/{session_id}")
+def get_session(session_id: int):
+    """Возвращает детали сессии cherry-pick."""
+    conn = get_db()
+    session = conn.execute(
+        "SELECT * FROM cherry_pick_sessions WHERE id = ?", (session_id,)
+    ).fetchone()
+    if not session:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Сессия не найдена")
+    items = conn.execute(
+        "SELECT * FROM cherry_pick_items WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    conn.close()
+    return {"session": dict(session), "items": [dict(i) for i in items]}
+
+
+@router.delete("/history/{session_id}")
+def delete_session(session_id: int):
+    """Удаляет сессию cherry-pick."""
+    conn = get_db()
+    conn.execute("DELETE FROM cherry_pick_items WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM cherry_pick_sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "deleted"}

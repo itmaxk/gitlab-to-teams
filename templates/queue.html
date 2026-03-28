@@ -30,15 +30,10 @@
 <!-- Панель управления -->
 <div id="control-panel" class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6 hidden">
   <div class="flex items-center gap-4 flex-wrap">
-    <button onclick="refreshStatuses()" id="refresh-btn"
-      class="bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
-      Обновить статусы
+    <button onclick="saveSession()" id="save-btn"
+      class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
+      Сохранить в историю
     </button>
-    <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-      <input type="checkbox" id="auto-poll" onchange="toggleAutoPoll()" class="cursor-pointer">
-      Автоопрос каждую минуту
-    </label>
-    <span id="poll-status" class="text-xs text-slate-500"></span>
     <span class="ml-auto text-xs text-slate-500" id="stats-line"></span>
   </div>
 </div>
@@ -53,7 +48,7 @@
           <th class="px-3 py-2">Исходный MR</th>
           <th class="px-3 py-2">Автор</th>
           <th class="px-3 py-2">Дата мержа</th>
-          <th class="px-3 py-2">Cherry-pick статус</th>
+          <th class="px-3 py-2">Статус</th>
           <th class="px-3 py-2 text-right">Действия</th>
         </tr>
       </thead>
@@ -62,10 +57,28 @@
   </div>
 </div>
 
+<!-- История -->
+<div class="mt-10">
+  <h2 class="text-xl font-bold mb-4">История Cherry-Pick</h2>
+  <div id="history-list">
+    <p class="text-slate-500 text-sm">Загрузка...</p>
+  </div>
+</div>
+
+<!-- Модальное окно деталей сессии -->
+<div id="session-modal" class="fixed inset-0 bg-black/60 hidden z-50 flex items-center justify-center">
+  <div class="bg-slate-800 border border-slate-700 rounded-lg max-w-3xl w-full mx-4 max-h-[80vh] overflow-y-auto">
+    <div class="flex items-center justify-between p-4 border-b border-slate-700">
+      <h3 class="text-lg font-semibold" id="modal-title"></h3>
+      <button onclick="closeModal()" class="text-slate-400 hover:text-white text-xl cursor-pointer">&times;</button>
+    </div>
+    <div class="p-4" id="modal-body"></div>
+  </div>
+</div>
+
 <script>
 let loadedMRs = [];
-let cherryPickState = {};  // iid -> { branch, mr_url, status }
-let pollTimer = null;
+let cherryPickState = {};  // iid -> { branch, mr_url }
 
 async function loadMRs() {
   const input = document.getElementById('mr-input').value.trim();
@@ -132,6 +145,22 @@ function renderMRs() {
     tr.className = 'border-b border-slate-700/50 hover:bg-slate-800/50';
     tr.id = `mr-row-${mr.iid}`;
 
+    let statusHtml, actionsHtml;
+    if (cp) {
+      statusHtml = '<span class="inline-flex items-center bg-green-900/40 text-green-300 border border-green-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked</span>';
+      actionsHtml = `<a href="${cp.mr_url}" target="_blank"
+        class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer inline-block">
+        Открыть MR</a>`;
+    } else if (!hasCommit) {
+      statusHtml = '<span class="text-slate-500 text-xs">Нет merge commit</span>';
+      actionsHtml = '';
+    } else {
+      statusHtml = '<span class="text-slate-500 text-xs">Ожидает</span>';
+      actionsHtml = `<button onclick="cherryPickOne('${mr.merge_commit_sha}', ${mr.iid})" id="cp-btn-${mr.iid}"
+        class="bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer">
+        Cherry-pick</button>`;
+    }
+
     tr.innerHTML = `
       <td class="px-3 py-2 text-slate-500">${i + 1}</td>
       <td class="px-3 py-2">
@@ -140,51 +169,11 @@ function renderMRs() {
       </td>
       <td class="px-3 py-2 text-slate-300">${escapeHtml(mr.author)}</td>
       <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
-      <td class="px-3 py-2" id="cp-status-cell-${mr.iid}">
-        ${renderStatusCell(mr.iid, cp)}
-      </td>
-      <td class="px-3 py-2 text-right" id="cp-actions-${mr.iid}">
-        ${renderActionsCell(mr, hasCommit, cp)}
-      </td>
+      <td class="px-3 py-2">${statusHtml}</td>
+      <td class="px-3 py-2 text-right">${actionsHtml}</td>
     `;
     tbody.appendChild(tr);
   });
-}
-
-function renderStatusCell(iid, cp) {
-  if (!cp) {
-    return '<span class="text-slate-500 text-xs">Ожидает</span>';
-  }
-  if (cp.status === 'merged') {
-    return `<span class="inline-flex items-center gap-1 bg-purple-900/40 text-purple-300 border border-purple-700 rounded-full px-2 py-0.5 text-xs font-medium">Merged</span>`;
-  }
-  if (cp.status === 'opened') {
-    return `<a href="${cp.mr_url}" target="_blank" class="inline-flex items-center gap-1 bg-green-900/40 text-green-300 border border-green-700 rounded-full px-2 py-0.5 text-xs font-medium hover:bg-green-900/60">Opened</a>`;
-  }
-  if (cp.status === 'cherry-picked') {
-    return `<span class="inline-flex items-center gap-1 bg-orange-900/40 text-orange-300 border border-orange-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked, создайте MR</span>`;
-  }
-  if (cp.status === 'closed') {
-    return `<span class="inline-flex items-center gap-1 bg-red-900/40 text-red-300 border border-red-700 rounded-full px-2 py-0.5 text-xs font-medium">Closed</span>`;
-  }
-  return `<span class="text-slate-400 text-xs">${escapeHtml(cp.status)}</span>`;
-}
-
-function renderActionsCell(mr, hasCommit, cp) {
-  if (cp && cp.status === 'merged') {
-    return '<span class="text-purple-400 text-xs">Готово</span>';
-  }
-  if (cp && cp.mr_url) {
-    return `<a href="${cp.mr_url}" target="_blank"
-      class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer inline-block">
-      Открыть MR</a>`;
-  }
-  if (!hasCommit) {
-    return '<span class="text-slate-500 text-xs">Нет merge commit</span>';
-  }
-  return `<button onclick="cherryPickOne('${mr.merge_commit_sha}', ${mr.iid})" id="cp-btn-${mr.iid}"
-    class="bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer">
-    Cherry-pick</button>`;
 }
 
 function renderErrors(errors) {
@@ -231,9 +220,9 @@ async function cherryPickOne(sha, iid) {
       cherryPickState[iid] = {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_create_url,
-        status: 'cherry-picked',
       };
       renderMRs();
+      updateStatsLine();
       window.open(data.mr_create_url, '_blank');
     } else {
       alert(`MR !${iid}: ${data.detail || 'Ошибка cherry-pick'}`);
@@ -251,76 +240,168 @@ async function cherryPickOne(sha, iid) {
   }
 }
 
-async function refreshStatuses() {
-  const branches = Object.values(cherryPickState)
-    .filter(cp => cp.branch && cp.status !== 'merged')
-    .map(cp => cp.branch);
-
-  if (branches.length === 0) {
-    updateStatsLine();
+async function saveSession() {
+  const cpEntries = Object.keys(cherryPickState);
+  if (cpEntries.length === 0) {
+    alert('Нет выполненных cherry-pick для сохранения');
     return;
   }
 
-  const btn = document.getElementById('refresh-btn');
-  btn.textContent = 'Проверка...';
+  const targetBranch = document.getElementById('target-branch').value.trim();
+  const items = cpEntries.map(iidStr => {
+    const iid = parseInt(iidStr, 10);
+    const mr = loadedMRs.find(m => m.iid === iid) || {};
+    const cp = cherryPickState[iid];
+    return {
+      mr_iid: iid,
+      mr_title: mr.title || '',
+      mr_url: mr.web_url || '',
+      author: mr.author || '',
+      merged_at: mr.merged_at || '',
+      merge_commit_sha: mr.merge_commit_sha || '',
+      cherry_pick_branch: cp.branch || '',
+      mr_create_url: cp.mr_url || '',
+    };
+  });
+
+  const btn = document.getElementById('save-btn');
+  btn.textContent = 'Сохранение...';
   btn.disabled = true;
 
   try {
-    const resp = await fetch('/api/queue/check', {
+    const resp = await fetch('/api/queue/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source_branches: branches }),
+      body: JSON.stringify({ target_branch: targetBranch, items }),
     });
     const data = await resp.json();
 
     if (resp.ok) {
-      for (const mr of data.mrs) {
-        const iid = Object.keys(cherryPickState).find(
-          k => cherryPickState[k].branch === mr.source_branch
-        );
-        if (iid) {
-          cherryPickState[iid].status = mr.state;
-          cherryPickState[iid].mr_url = mr.web_url;
-        }
-      }
-      renderMRs();
-      updateStatsLine();
+      btn.textContent = 'Сохранено!';
+      btn.classList.replace('bg-green-600', 'bg-green-800');
+      loadHistory();
+      setTimeout(() => {
+        btn.textContent = 'Сохранить в историю';
+        btn.disabled = false;
+        btn.classList.replace('bg-green-800', 'bg-green-600');
+      }, 2000);
+    } else {
+      alert(data.detail || 'Ошибка сохранения');
+      btn.textContent = 'Сохранить в историю';
+      btn.disabled = false;
     }
   } catch (e) {
-    console.error('Ошибка обновления статусов:', e);
-  } finally {
-    btn.textContent = 'Обновить статусы';
+    alert('Ошибка: ' + e.message);
+    btn.textContent = 'Сохранить в историю';
     btn.disabled = false;
-    document.getElementById('poll-status').textContent =
-      'Обновлено: ' + new Date().toLocaleTimeString('ru-RU');
-  }
-}
-
-function toggleAutoPoll() {
-  const checked = document.getElementById('auto-poll').checked;
-  if (checked) {
-    refreshStatuses();
-    pollTimer = setInterval(refreshStatuses, 60000);
-    document.getElementById('poll-status').textContent = 'Автоопрос включён';
-  } else {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = null;
-    document.getElementById('poll-status').textContent = 'Автоопрос выключен';
   }
 }
 
 function updateStatsLine() {
   const total = loadedMRs.length;
-  const cpDone = Object.values(cherryPickState).filter(
-    cp => cp.status === 'merged'
-  ).length;
-  const cpPending = Object.values(cherryPickState).filter(
-    cp => cp.status === 'opened' || cp.status === 'cherry-picked'
-  ).length;
-  const waiting = total - Object.keys(cherryPickState).length;
-
+  const done = Object.keys(cherryPickState).length;
+  const waiting = total - done;
   document.getElementById('stats-line').textContent =
-    `Всего: ${total} | Merged: ${cpDone} | В процессе: ${cpPending} | Ожидают: ${waiting}`;
+    `Всего: ${total} | Cherry-picked: ${done} | Ожидают: ${waiting}`;
+}
+
+/* --- История --- */
+
+async function loadHistory() {
+  const el = document.getElementById('history-list');
+  try {
+    const resp = await fetch('/api/queue/history');
+    const sessions = await resp.json();
+
+    if (sessions.length === 0) {
+      el.innerHTML = '<p class="text-slate-500 text-sm">Нет сохранённых сессий</p>';
+      return;
+    }
+
+    el.innerHTML = sessions.map(s => {
+      const date = new Date(s.created_at).toLocaleString('ru-RU');
+      return `
+        <div class="bg-slate-800 rounded-lg border border-slate-700 p-3 mb-2 flex items-center justify-between">
+          <div>
+            <span class="text-white font-medium">${escapeHtml(s.target_branch)}</span>
+            <span class="text-slate-400 text-xs ml-2">${s.mr_count} MR</span>
+            <span class="text-slate-500 text-xs ml-2">${date}</span>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="viewSession(${s.id})"
+              class="text-blue-400 hover:text-blue-300 text-xs cursor-pointer">Подробнее</button>
+            <button onclick="deleteSession(${s.id})"
+              class="text-red-400 hover:text-red-300 text-xs cursor-pointer">Удалить</button>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = '<p class="text-red-400 text-sm">Ошибка загрузки истории</p>';
+  }
+}
+
+async function viewSession(id) {
+  try {
+    const resp = await fetch(`/api/queue/history/${id}`);
+    const data = await resp.json();
+    const s = data.session;
+    const items = data.items;
+
+    document.getElementById('modal-title').textContent =
+      `${s.target_branch} — ${s.mr_count} MR — ${new Date(s.created_at).toLocaleString('ru-RU')}`;
+
+    document.getElementById('modal-body').innerHTML = `
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400 border-b border-slate-700">
+            <th class="px-3 py-2 w-8">#</th>
+            <th class="px-3 py-2">MR</th>
+            <th class="px-3 py-2">Автор</th>
+            <th class="px-3 py-2">Дата мержа</th>
+            <th class="px-3 py-2">Cherry-pick ветка</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map((item, i) => {
+            const merged = item.merged_at ? new Date(item.merged_at).toLocaleString('ru-RU') : '—';
+            return `
+              <tr class="border-b border-slate-700/50">
+                <td class="px-3 py-2 text-slate-500">${i + 1}</td>
+                <td class="px-3 py-2">
+                  <a href="${item.mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${item.mr_iid}</a>
+                  <div class="text-xs text-slate-400 mt-0.5 truncate max-w-xs">${escapeHtml(item.mr_title)}</div>
+                </td>
+                <td class="px-3 py-2 text-slate-300">${escapeHtml(item.author)}</td>
+                <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
+                <td class="px-3 py-2">
+                  ${item.mr_create_url
+                    ? `<a href="${item.mr_create_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">${escapeHtml(item.cherry_pick_branch)}</a>`
+                    : `<span class="text-slate-500 text-xs">${escapeHtml(item.cherry_pick_branch)}</span>`
+                  }
+                </td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>`;
+
+    document.getElementById('session-modal').classList.remove('hidden');
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+function closeModal() {
+  document.getElementById('session-modal').classList.add('hidden');
+}
+
+async function deleteSession(id) {
+  if (!confirm('Удалить запись из истории?')) return;
+  try {
+    const resp = await fetch(`/api/queue/history/${id}`, { method: 'DELETE' });
+    if (resp.ok) loadHistory();
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
 }
 
 function escapeHtml(text) {
@@ -328,5 +409,8 @@ function escapeHtml(text) {
   div.textContent = text || '';
   return div.innerHTML;
 }
+
+// Загружаем историю при открытии страницы
+document.addEventListener('DOMContentLoaded', loadHistory);
 </script>
 {% endblock %}

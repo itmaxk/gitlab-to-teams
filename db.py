@@ -68,6 +68,27 @@ def init_db():
             UNIQUE(rule_id, mr_iid)
         );
 
+        CREATE TABLE IF NOT EXISTS cherry_pick_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            target_branch TEXT NOT NULL,
+            mr_count INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS cherry_pick_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            mr_iid INTEGER NOT NULL,
+            mr_title TEXT DEFAULT '',
+            mr_url TEXT DEFAULT '',
+            author TEXT DEFAULT '',
+            merged_at TEXT DEFAULT '',
+            merge_commit_sha TEXT DEFAULT '',
+            cherry_pick_branch TEXT DEFAULT '',
+            mr_create_url TEXT DEFAULT '',
+            FOREIGN KEY (session_id) REFERENCES cherry_pick_sessions(id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
