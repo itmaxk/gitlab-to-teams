@@ -84,6 +84,7 @@
 let loadedMRs = [];
 // iid -> { branch, mr_url, status: 'opened' | 'merged' }
 let cherryPickState = {};
+let pollTimer = null;
 
 async function loadMRs() {
   const input = document.getElementById('mr-input').value.trim();
@@ -233,6 +234,7 @@ async function cherryPickOne(sha, iid) {
       };
       renderMRs();
       updateStatsLine();
+      startAutoPoll();
       window.open(data.mr_create_url, '_blank');
     } else {
       alert(`MR !${iid}: ${data.detail || 'Ошибка cherry-pick'}`);
@@ -284,6 +286,7 @@ async function refreshStatuses() {
       }
       renderMRs();
       updateStatsLine();
+      if (!hasUnmerged()) stopAutoPoll();
     }
   } catch (e) {
     console.error('Ошибка обновления статусов:', e);
@@ -347,6 +350,28 @@ async function saveSession() {
     alert('Ошибка: ' + e.message);
     btn.textContent = 'Сохранить в историю';
     btn.disabled = false;
+  }
+}
+
+function hasUnmerged() {
+  return Object.values(cherryPickState).some(cp => cp.status !== 'merged');
+}
+
+function startAutoPoll() {
+  if (pollTimer) return;
+  pollTimer = setInterval(() => {
+    if (hasUnmerged()) {
+      refreshStatuses();
+    } else {
+      stopAutoPoll();
+    }
+  }, 60000);
+}
+
+function stopAutoPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
   }
 }
 
