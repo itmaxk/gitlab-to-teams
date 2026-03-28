@@ -91,6 +91,30 @@ async def cherry_pick_commit(project_id: int, sha: str, target_branch: str) -> d
     return resp.json()
 
 
+def project_web_url() -> str:
+    """Возвращает web-URL проекта для построения ссылок на MR."""
+    return f"{_base_url()}/{os.getenv('GITLAB_PROJECT', '')}"
+
+
+async def find_mrs_by_source_branches(
+    project_id: int, source_branches: list[str],
+) -> list[dict]:
+    """Ищет MR по списку source_branch (любое состояние)."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    result = []
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        for branch in source_branches:
+            resp = await client.get(url, headers=_headers(), params={
+                "source_branch": branch,
+                "per_page": 1,
+            })
+            if resp.status_code == 200:
+                mrs = resp.json()
+                if mrs:
+                    result.append(mrs[0])
+    return result
+
+
 async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Получает содержимое файла из репозитория GitLab."""
     encoded_path = quote(file_path, safe="")

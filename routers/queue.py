@@ -1,4 +1,5 @@
 import logging
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -8,6 +9,8 @@ from services.gitlab_client import (
     get_mr_by_iid,
     create_branch,
     cherry_pick_commit,
+    find_mrs_by_source_branches,
+    project_web_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,16 +25,11 @@ class LoadMRsRequest(BaseModel):
 class CherryPickRequest(BaseModel):
     merge_commit_sha: str
     target_branch: str
+    source_mr_iid: int
 
 
-class CreateBranchRequest(BaseModel):
-    branch_name: str
-    ref: str = "master"
-
-
-class BatchCherryPickRequest(BaseModel):
-    merge_commit_shas: list[str]
-    target_branch: str
+class CheckCherryPicksRequest(BaseModel):
+    source_branches: list[str]
 
 
 @router.post("/load")
@@ -62,39 +60,60 @@ async def load_mrs(data: LoadMRsRequest):
     return {"mrs": mrs, "errors": errors}
 
 
-@router.post("/branch")
-async def api_create_branch(data: CreateBranchRequest):
-    """Создаёт новую ветку в GitLab."""
-    project_id = await get_project_id()
-    try:
-        result = await create_branch(project_id, data.branch_name, data.ref)
-        return {"status": "ok", "branch": result["name"]}
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/cherry-pick")
 async def api_cherry_pick(data: CherryPickRequest):
-    """Cherry-pick одного коммита в указанную ветку."""
+    """Cherry-pick: создаёт ветку от target, cherry-pick коммита, возвращает URL создания MR."""
     project_id = await get_project_id()
+    sha_short = data.merge_commit_sha[:8]
+    cp_branch = f"cherry-pick-{sha_short}-into-{data.target_branch}"
+
     try:
-        result = await cherry_pick_commit(
-            project_id, data.merge_commit_sha, data.target_branch,
-        )
-        return {"status": "ok", "commit": result.get("id", "")}
+        await create_branch(project_id, cp_branch, data.target_branch)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        error_str = str(e)
+        if "Branch already exists" in error_str or "already exists" in error_str:
+            pass
+        else:
+            raise HTTPException(status_code=400, detail=f"Ошибка создания ветки: {error_str}")
+
+    try:
+        await cherry_pick_commit(project_id, data.merge_commit_sha, cp_branch)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка cherry-pick: {e}")
+
+    web_url = project_web_url()
+    source_enc = quote(cp_branch, safe="")
+    target_enc = quote(data.target_branch, safe="")
+    mr_create_url = (
+        f"{web_url}/-/merge_requests/new"
+        f"?merge_request%5Bsource_branch%5D={source_enc}"
+        f"&merge_request%5Btarget_branch%5D={target_enc}"
+        f"&merge_request%5Btitle%5D=Cherry-pick+!{data.source_mr_iid}+into+{target_enc}"
+    )
+
+    return {
+        "status": "ok",
+        "cherry_pick_branch": cp_branch,
+        "mr_create_url": mr_create_url,
+    }
 
 
-@router.post("/cherry-pick-batch")
-async def api_cherry_pick_batch(data: BatchCherryPickRequest):
-    """Cherry-pick списка коммитов последовательно в указанную ветку."""
+@router.post("/check")
+async def check_cherry_picks(data: CheckCherryPicksRequest):
+    """Проверяет состояние MR по списку source_branch (для отслеживания cherry-pick MR)."""
+    if not data.source_branches:
+        return {"mrs": []}
     project_id = await get_project_id()
-    results = []
-    for sha in data.merge_commit_shas:
-        try:
-            result = await cherry_pick_commit(project_id, sha, data.target_branch)
-            results.append({"sha": sha, "status": "ok", "commit": result.get("id", "")})
-        except Exception as e:
-            results.append({"sha": sha, "status": "error", "error": str(e)})
-    return {"results": results}
+    mrs = await find_mrs_by_source_branches(project_id, data.source_branches)
+    return {
+        "mrs": [
+            {
+                "iid": mr["iid"],
+                "state": mr["state"],
+                "source_branch": mr["source_branch"],
+                "web_url": mr["web_url"],
+                "merged_at": mr.get("merged_at"),
+            }
+            for mr in mrs
+        ],
+    }
