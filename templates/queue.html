@@ -61,6 +61,7 @@
           <th class="px-3 py-2">Автор</th>
           <th class="px-3 py-2">Дата мержа</th>
           <th class="px-3 py-2">Cherry-pick MR</th>
+          <th class="px-3 py-2">CP дата мержа</th>
           <th class="px-3 py-2">Статус</th>
           <th class="px-3 py-2 text-right">Действия</th>
         </tr>
@@ -198,6 +199,7 @@ function renderMRs() {
       <td class="px-3 py-2 text-slate-300">${escapeHtml(mr.author)}</td>
       <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
       <td class="px-3 py-2">${cpMrHtml}</td>
+      <td class="px-3 py-2 text-slate-300 whitespace-nowrap text-xs">${cp && cp.merged_at ? new Date(cp.merged_at).toLocaleString('ru-RU') : '—'}</td>
       <td class="px-3 py-2">${statusHtml}</td>
       <td class="px-3 py-2 text-right">${actionsHtml}</td>
     `;
@@ -315,6 +317,7 @@ async function autoCherryPickAll() {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_url,
         mr_iid: data.mr_iid,
+        merged_at: data.merged_at || '',
         status: 'merged',
       };
       renderMRs();
@@ -445,6 +448,7 @@ async function saveSession(auto = false) {
       cherry_pick_branch: cp.branch || '',
       mr_create_url: cp.mr_url || '',
       cherry_pick_mr_url: cp.mr_iid ? cp.mr_url : '',
+      cherry_pick_merged_at: cp.merged_at || '',
     };
   });
 
@@ -564,21 +568,26 @@ async function viewSession(id) {
         <thead>
           <tr class="text-left text-slate-400 border-b border-slate-700">
             <th class="px-3 py-2 w-8">#</th>
-            <th class="px-3 py-2">MR</th>
+            <th class="px-3 py-2">Исходный MR</th>
             <th class="px-3 py-2">Автор</th>
             <th class="px-3 py-2">Дата мержа</th>
             <th class="px-3 py-2">Cherry-pick MR</th>
-            <th class="px-3 py-2">Ветка</th>
+            <th class="px-3 py-2">CP дата мержа</th>
+            <th class="px-3 py-2">Статус</th>
           </tr>
         </thead>
         <tbody>
           ${items.map((item, i) => {
             const merged = item.merged_at ? new Date(item.merged_at).toLocaleString('ru-RU') : '—';
+            const cpMerged = item.cherry_pick_merged_at ? new Date(item.cherry_pick_merged_at).toLocaleString('ru-RU') : '—';
             const cpMrLink = item.cherry_pick_mr_url
               ? `<a href="${item.cherry_pick_mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">Открыть</a>`
               : '<span class="text-slate-500 text-xs">—</span>';
+            const statusBadge = item.cherry_pick_merged_at
+              ? '<span class="inline-flex items-center bg-purple-900/40 text-purple-300 border border-purple-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked</span>'
+              : '<span class="text-slate-500 text-xs">—</span>';
             return `
-              <tr class="border-b border-slate-700/50">
+              <tr class="border-b border-slate-700/50 hover:bg-slate-800/50">
                 <td class="px-3 py-2 text-slate-500">${i + 1}</td>
                 <td class="px-3 py-2">
                   <a href="${item.mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${item.mr_iid}</a>
@@ -587,7 +596,8 @@ async function viewSession(id) {
                 <td class="px-3 py-2 text-slate-300">${escapeHtml(item.author)}</td>
                 <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
                 <td class="px-3 py-2">${cpMrLink}</td>
-                <td class="px-3 py-2 text-xs text-slate-400">${escapeHtml(item.cherry_pick_branch)}</td>
+                <td class="px-3 py-2 text-slate-300 whitespace-nowrap text-xs">${cpMerged}</td>
+                <td class="px-3 py-2">${statusBadge}</td>
               </tr>`;
           }).join('')}
         </tbody>

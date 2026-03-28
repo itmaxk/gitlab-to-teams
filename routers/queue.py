@@ -43,6 +43,7 @@ class SaveSessionItem(BaseModel):
     cherry_pick_branch: str = ""
     mr_create_url: str = ""
     cherry_pick_mr_url: str = ""
+    cherry_pick_merged_at: str = ""
 
 
 class SaveSessionRequest(BaseModel):
@@ -160,7 +161,7 @@ async def api_auto_cherry_pick(data: CherryPickRequest):
 
     # 5. Merge
     try:
-        await merge_merge_request(project_id, mr_iid)
+        merge_result = await merge_merge_request(project_id, mr_iid)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"MR !{mr_iid} создан, но ошибка merge: {e}")
 
@@ -169,6 +170,7 @@ async def api_auto_cherry_pick(data: CherryPickRequest):
         "cherry_pick_branch": cp_branch,
         "mr_iid": mr_iid,
         "mr_url": mr_url,
+        "merged_at": merge_result.get("merged_at", ""),
     }
 
 
@@ -211,12 +213,14 @@ def save_session(data: SaveSessionRequest):
         conn.execute(
             """INSERT INTO cherry_pick_items
                (session_id, mr_iid, mr_title, mr_url, author, merged_at,
-                merge_commit_sha, cherry_pick_branch, mr_create_url, cherry_pick_mr_url)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                merge_commit_sha, cherry_pick_branch, mr_create_url,
+                cherry_pick_mr_url, cherry_pick_merged_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 session_id, item.mr_iid, item.mr_title, item.mr_url,
                 item.author, item.merged_at, item.merge_commit_sha,
-                item.cherry_pick_branch, item.mr_create_url, item.cherry_pick_mr_url,
+                item.cherry_pick_branch, item.mr_create_url,
+                item.cherry_pick_mr_url, item.cherry_pick_merged_at,
             ),
         )
     conn.commit()

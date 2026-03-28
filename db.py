@@ -88,6 +88,7 @@ def init_db():
             cherry_pick_branch TEXT DEFAULT '',
             mr_create_url TEXT DEFAULT '',
             cherry_pick_mr_url TEXT DEFAULT '',
+            cherry_pick_merged_at TEXT DEFAULT '',
             FOREIGN KEY (session_id) REFERENCES cherry_pick_sessions(id) ON DELETE CASCADE
         );
 
@@ -140,6 +141,8 @@ def _migrate(conn: sqlite3.Connection):
         cp_columns = {row[1] for row in cursor2.fetchall()}
         if cp_columns and "cherry_pick_mr_url" not in cp_columns:
             conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_mr_url TEXT DEFAULT ''")
+        if cp_columns and "cherry_pick_merged_at" not in cp_columns:
+            conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_merged_at TEXT DEFAULT ''")
     except Exception:
         pass
 
