@@ -13,8 +13,10 @@ def send_changelog_email(
     rule_name: str,
 ) -> None:
     host = os.getenv("SMTP_HOST", "")
-    if not host or not recipients:
-        return
+    if not recipients:
+        raise ValueError("Нет получателей email")
+    if not host:
+        raise ConnectionError("SMTP_HOST не настроен в .env")
 
     port = int(os.getenv("SMTP_PORT", "587"))
     user = os.getenv("SMTP_USER", "")
