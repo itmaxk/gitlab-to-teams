@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Опрошенные MR — GitLab → Teams{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Опрошенные MR</h1>
+  <div class="flex gap-4 text-sm">
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Всего: <span class="font-bold text-blue-400">{{ stats.total }}</span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Успешно: <span class="font-bold text-green-400">{{ stats.success }}</span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Ошибки: <span class="font-bold text-red-400">{{ stats.errors }}</span>
+    </div>
+  </div>
+</div>
+
+<form method="GET" action="/polled" class="flex flex-wrap gap-3 mb-4 items-end">
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Статус MR</label>
+    <select name="mr_state" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+      <option value="">Все</option>
+      {% for s in ["merged", "opened", "closed"] %}
+      <option value="{{ s }}" {{ 'selected' if filters.mr_state == s }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Результат</label>
+    <select name="success" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+      <option value="-1" {{ 'selected' if filters.success == -1 }}>Все</option>
+      <option value="1" {{ 'selected' if filters.success == 1 }}>Успешно</option>
+      <option value="0" {{ 'selected' if filters.success == 0 }}>С ошибками</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Совпадения</label>
+    <select name="has_matches" class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white">
+      <option value="-1" {{ 'selected' if filters.has_matches == -1 }}>Все</option>
+      <option value="1" {{ 'selected' if filters.has_matches == 1 }}>С совпадениями</option>
+      <option value="0" {{ 'selected' if filters.has_matches == 0 }}>Без совпадений</option>
+    </select>
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500 mb-1">Целевая ветка</label>
+    <input type="text" name="target_branch" value="{{ filters.target_branch }}"
+      class="bg-slate-800 border border-slate-600 rounded px-2 py-1 text-sm text-white w-32"
+      placeholder="все">
+  </div>
+  <button type="submit" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-3 py-1 rounded cursor-pointer">Фильтр</button>
+  <a href="/polled" class="text-slate-500 hover:text-white text-sm px-2 py-1">Сброс</a>
+</form>
+
+{% if rows %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-slate-700 text-slate-400">
+        <th class="text-left py-2 px-3">Дата опроса</th>
+        <th class="text-left py-2 px-3">MR</th>
+        <th class="text-left py-2 px-3">Автор</th>
+        <th class="text-left py-2 px-3">Ветки</th>
+        <th class="text-center py-2 px-3">Статус</th>
+        <th class="text-left py-2 px-3">Создан</th>
+        <th class="text-center py-2 px-3">Файлов</th>
+        <th class="text-center py-2 px-3">Правил / Совп.</th>
+        <th class="text-center py-2 px-3">Результат</th>
+        <th class="text-left py-2 px-3">Ошибка</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+        <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ row.polled_at[:19] }}</td>
+        <td class="py-2 px-3">
+          {% if row.mr_url %}
+            <a href="{{ row.mr_url }}" target="_blank" class="text-blue-400 hover:underline">!{{ row.mr_iid }} {{ row.mr_title }}</a>
+          {% else %}
+            !{{ row.mr_iid }} {{ row.mr_title }}
+          {% endif %}
+        </td>
+        <td class="py-2 px-3 text-slate-300 whitespace-nowrap">{{ row.mr_author or '—' }}</td>
+        <td class="py-2 px-3 font-mono text-xs text-slate-400 whitespace-nowrap">
+          {{ row.source_branch }} → {{ row.target_branch }}
+        </td>
+        <td class="py-2 px-3 text-center">
+          <span class="text-xs px-2 py-0.5 rounded-full
+            {% if row.mr_state == 'merged' %}bg-purple-900/40 text-purple-400 border border-purple-800
+            {% elif row.mr_state == 'opened' %}bg-green-900/40 text-green-400 border border-green-800
+            {% elif row.mr_state == 'closed' %}bg-red-900/40 text-red-400 border border-red-800
+            {% else %}bg-slate-900 text-slate-400 border border-slate-600{% endif %}">
+            {{ row.mr_state }}
+          </span>
+        </td>
+        <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ row.mr_created_at[:10] if row.mr_created_at else '—' }}</td>
+        <td class="py-2 px-3 text-center text-slate-300">{{ row.changed_files_count }}</td>
+        <td class="py-2 px-3 text-center">
+          <span class="text-slate-300">{{ row.rules_checked }}</span>
+          <span class="text-slate-600">/</span>
+          <span class="{% if row.rules_matched > 0 %}text-yellow-400 font-semibold{% else %}text-slate-500{% endif %}">{{ row.rules_matched }}</span>
+        </td>
+        <td class="py-2 px-3 text-center">
+          {% if row.success %}<span class="text-green-400">OK</span>{% else %}<span class="text-red-400">Ошибка</span>{% endif %}
+        </td>
+        <td class="py-2 px-3 text-red-400 text-xs max-w-xs truncate" title="{{ row.error or '' }}">{{ row.error or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="text-slate-500 py-8 text-center">Опрошенных MR пока нет.</p>
+{% endif %}
+{% endblock %}

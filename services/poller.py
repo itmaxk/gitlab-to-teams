@@ -41,6 +41,42 @@ def _mark_mr_processed(rule_id: int, mr_iid: int):
     conn.close()
 
 
+def _log_polled_mr(
+    mr: dict,
+    changed_files_count: int,
+    rules_checked: int,
+    rules_matched: int,
+    success: bool,
+    error: str = "",
+):
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO polled_mrs
+           (mr_iid, mr_title, mr_url, mr_state, mr_author,
+            source_branch, target_branch, mr_created_at,
+            changed_files_count, rules_checked, rules_matched,
+            success, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            mr["iid"],
+            mr.get("title", ""),
+            mr.get("web_url", ""),
+            mr.get("state", ""),
+            mr.get("author", {}).get("name", "") if isinstance(mr.get("author"), dict) else "",
+            mr.get("source_branch", ""),
+            mr.get("target_branch", ""),
+            mr.get("created_at", ""),
+            changed_files_count,
+            rules_checked,
+            rules_matched,
+            1 if success else 0,
+            error,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
 def _get_rules_grouped_by_schedule() -> dict[int, list[dict]]:
     """
     Группирует правила по интервалу опроса.
@@ -99,6 +135,7 @@ async def poll_once(rules: list[dict]):
                 changed_files = await get_mr_changes(project_id, mr_iid)
             except Exception as e:
                 logger.error("Failed to get changes for MR !%s: %s", mr_iid, e)
+                _log_polled_mr(mr, 0, len(pending_rule_ids), 0, False, str(e))
                 continue
 
             async def fetch_content(file_path: str) -> str:
@@ -108,6 +145,8 @@ async def poll_once(rules: list[dict]):
 
             if matches:
                 await dispatch_notifications(matches, mr_iid, mr_title, mr_url)
+
+            _log_polled_mr(mr, len(changed_files), len(pending_rule_ids), len(matches), True)
 
             # Помечаем MR как обработанный для всех правил в группе
             for rule_id in pending_rule_ids:

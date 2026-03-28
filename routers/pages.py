@@ -65,6 +65,54 @@ def dashboard(
     })
 
 
+@router.get("/polled", response_class=HTMLResponse)
+def polled_mrs(
+    request: Request,
+    mr_state: str = "",
+    success: int = -1,
+    has_matches: int = -1,
+    target_branch: str = "",
+):
+    conn = get_db()
+
+    query = "SELECT * FROM polled_mrs WHERE 1=1"
+    params: list = []
+    if mr_state:
+        query += " AND mr_state = ?"
+        params.append(mr_state)
+    if success >= 0:
+        query += " AND success = ?"
+        params.append(success)
+    if has_matches == 1:
+        query += " AND rules_matched > 0"
+    elif has_matches == 0:
+        query += " AND rules_matched = 0"
+    if target_branch:
+        query += " AND target_branch = ?"
+        params.append(target_branch)
+    query += " ORDER BY polled_at DESC LIMIT 500"
+
+    rows = conn.execute(query, params).fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM polled_mrs").fetchone()[0]
+    success_count = conn.execute("SELECT COUNT(*) FROM polled_mrs WHERE success = 1").fetchone()[0]
+    conn.close()
+
+    return templates.TemplateResponse(request, "polled.html", {
+        "rows": [dict(r) for r in rows],
+        "stats": {
+            "total": total,
+            "success": success_count,
+            "errors": total - success_count,
+        },
+        "filters": {
+            "mr_state": mr_state,
+            "success": success,
+            "has_matches": has_matches,
+            "target_branch": target_branch,
+        },
+    })
+
+
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))

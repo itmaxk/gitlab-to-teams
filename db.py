@@ -64,6 +64,24 @@ def init_db():
             FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE,
             UNIQUE(rule_id, mr_iid)
         );
+
+        CREATE TABLE IF NOT EXISTS polled_mrs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mr_iid INTEGER NOT NULL,
+            mr_title TEXT DEFAULT '',
+            mr_url TEXT DEFAULT '',
+            mr_state TEXT DEFAULT '',
+            mr_author TEXT DEFAULT '',
+            source_branch TEXT DEFAULT '',
+            target_branch TEXT DEFAULT '',
+            mr_created_at TEXT DEFAULT '',
+            changed_files_count INTEGER DEFAULT 0,
+            rules_checked INTEGER DEFAULT 0,
+            rules_matched INTEGER DEFAULT 0,
+            success INTEGER DEFAULT 1,
+            error TEXT DEFAULT '',
+            polled_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     """)
 
     _migrate(conn)
