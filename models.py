@@ -14,6 +14,7 @@ class RuleCreate(BaseModel):
     file_check_enabled: bool = False
     file_check_path_prefix: str = ""
     file_check_mode: str = "present"
+    send_teams: bool = True
     teams_webhook_url: str = ""
     send_email: bool = False
     emails: list[str] = []
@@ -38,6 +39,7 @@ class RuleOut(BaseModel):
     file_check_enabled: bool
     file_check_path_prefix: str
     file_check_mode: str
+    send_teams: bool
     teams_webhook_url: str
     send_email: bool
     created_at: str

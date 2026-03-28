@@ -128,6 +128,7 @@ def rules_list(request: Request):
         ).fetchall()
         d["emails"] = [e["email"] for e in emails]
         d["enabled"] = bool(d["enabled"])
+        d["send_teams"] = bool(d.get("send_teams", 1))
         d["send_email"] = bool(d["send_email"])
         d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
         d["effective_interval"] = d["poll_interval_seconds"] or default_interval
@@ -161,6 +162,7 @@ async def save_new_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
 ):
@@ -173,13 +175,13 @@ async def save_new_rule(
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            send_teams, teams_webhook_url, send_email)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
-            teams_webhook_url, 1 if send_email else 0,
+            1 if send_teams else 0, teams_webhook_url, 1 if send_email else 0,
         ),
     )
     rule_id = cur.lastrowid
@@ -210,6 +212,7 @@ def edit_rule_form(request: Request, rule_id: int):
     ).fetchall()
     rule["emails"] = [e["email"] for e in emails]
     rule["enabled"] = bool(rule["enabled"])
+    rule["send_teams"] = bool(rule.get("send_teams", 1))
     rule["send_email"] = bool(rule["send_email"])
     rule["file_check_enabled"] = bool(rule.get("file_check_enabled", 0))
     conn.close()
@@ -235,6 +238,7 @@ async def save_edit_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
     enabled: Optional[str] = Form(None),
@@ -248,14 +252,14 @@ async def save_edit_rule(
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
+           send_teams=?, teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             name, description, 1 if enabled else 0,
             file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
-            teams_webhook_url, 1 if send_email else 0, rule_id,
+            1 if send_teams else 0, teams_webhook_url, 1 if send_email else 0, rule_id,
         ),
     )
     conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))

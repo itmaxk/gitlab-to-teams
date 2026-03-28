@@ -22,6 +22,14 @@
           >
             {{ 'Вкл' if rule.enabled else 'Выкл' }}
           </button>
+          <span class="text-xs px-2 py-0.5 rounded-full border
+            {% if rule.send_teams %}bg-green-900/30 text-green-400 border-green-800{% else %}bg-slate-900 text-slate-500 border-slate-600{% endif %}">
+            Teams
+          </span>
+          <span class="text-xs px-2 py-0.5 rounded-full border
+            {% if rule.send_email %}bg-green-900/30 text-green-400 border-green-800{% else %}bg-slate-900 text-slate-500 border-slate-600{% endif %}">
+            Email
+          </span>
         </div>
         {% if rule.description %}
         <p class="text-slate-400 text-sm mb-2">{{ rule.description }}</p>

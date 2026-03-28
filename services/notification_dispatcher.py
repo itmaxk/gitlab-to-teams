@@ -39,7 +39,7 @@ async def dispatch_notifications(
         error = ""
 
         webhook_url = rule["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
-        if webhook_url:
+        if rule.get("send_teams", 1) and webhook_url:
             try:
                 await send_teams_notification(
                     webhook_url=webhook_url,

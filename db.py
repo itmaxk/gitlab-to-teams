@@ -29,6 +29,7 @@ def init_db():
             file_check_enabled INTEGER DEFAULT 0,
             file_check_path_prefix TEXT DEFAULT '',
             file_check_mode TEXT DEFAULT 'present',
+            send_teams INTEGER DEFAULT 1,
             teams_webhook_url TEXT DEFAULT '',
             send_email INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -103,6 +104,7 @@ def _migrate(conn: sqlite3.Connection):
         "file_check_path_prefix": "ALTER TABLE notification_rules ADD COLUMN file_check_path_prefix TEXT DEFAULT ''",
         "content_exclude": "ALTER TABLE notification_rules ADD COLUMN content_exclude TEXT DEFAULT ''",
         "file_check_mode": "ALTER TABLE notification_rules ADD COLUMN file_check_mode TEXT DEFAULT 'present'",
+        "send_teams": "ALTER TABLE notification_rules ADD COLUMN send_teams INTEGER DEFAULT 1",
     }
 
     for col, sql in migrations.items():
@@ -140,6 +142,7 @@ def seed_default_rule():
         "match_type": "contains",
         "target_branch": "master",
         "mr_state": "opened",
+        "send_teams": 1,
         "send_email": 1,
         "enabled": 0,
     })
@@ -155,6 +158,7 @@ def seed_default_rule():
         "file_check_enabled": 1,
         "file_check_path_prefix": "database/postgres/migration",
         "file_check_mode": "absent",
+        "send_teams": 1,
         "send_email": 1,
         "enabled": 0,
     })

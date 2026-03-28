@@ -120,13 +120,6 @@
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
     <legend class="text-sm text-slate-400 px-2">Уведомления</legend>
 
-    <div>
-      <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL (пусто = из .env)</label>
-      <input type="text" name="teams_webhook_url" value="{{ rule.teams_webhook_url if rule else '' }}"
-        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-        placeholder="https://outlook.office.com/webhook/...">
-    </div>
-
     {% if rule %}
     <div class="flex items-center gap-2">
       <input type="checkbox" name="enabled" id="enabled" {{ 'checked' if rule.enabled }}
@@ -136,13 +129,27 @@
     {% endif %}
 
     <div class="flex items-center gap-2">
-      <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
+      <input type="checkbox" name="send_teams" id="send_teams"
+        {{ 'checked' if not rule or rule.send_teams }}
         class="rounded bg-slate-800 border-slate-600">
-      <label for="send_email" class="text-sm text-slate-300">Дублировать на email</label>
+      <label for="send_teams" class="text-sm text-slate-300">Отправлять в Teams</label>
     </div>
 
     <div>
-      <label class="block text-sm text-slate-400 mb-1">Email-получатели</label>
+      <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL (пусто = из .env)</label>
+      <input type="text" name="teams_webhook_url" value="{{ rule.teams_webhook_url if rule else '' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+        placeholder="https://outlook.office.com/webhook/...">
+    </div>
+
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="send_email" class="text-sm text-slate-300">Отправлять на Email</label>
+    </div>
+
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Email-получатели (пусто = DEFAULT_EMAIL из .env)</label>
       <div id="email-list" class="space-y-2">
         {% if rule and rule.emails %}
           {% for email in rule.emails %}

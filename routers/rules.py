@@ -45,6 +45,7 @@ def _rule_to_out(row) -> dict:
     conn.close()
     d["emails"] = [e["email"] for e in emails]
     d["enabled"] = bool(d["enabled"])
+    d["send_teams"] = bool(d.get("send_teams", 1))
     d["send_email"] = bool(d["send_email"])
     d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
     return d
@@ -80,15 +81,15 @@ def create_rule(data: RuleCreate) -> dict:
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            send_teams, teams_webhook_url, send_email)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data.name, data.description, data.file_pattern,
             data.content_match, data.content_exclude, data.match_type,
             data.target_branch, data.mr_state, data.poll_interval_seconds,
             int(data.file_check_enabled), data.file_check_path_prefix,
             data.file_check_mode,
-            data.teams_webhook_url, int(data.send_email),
+            int(data.send_teams), data.teams_webhook_url, int(data.send_email),
         ),
     )
     rule_id = cur.lastrowid
@@ -122,7 +123,7 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
+           send_teams=?, teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             data.name, data.description, int(data.enabled),
@@ -130,7 +131,7 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
             data.target_branch, data.mr_state, data.poll_interval_seconds,
             int(data.file_check_enabled), data.file_check_path_prefix,
             data.file_check_mode,
-            data.teams_webhook_url, int(data.send_email), rule_id,
+            int(data.send_teams), data.teams_webhook_url, int(data.send_email), rule_id,
         ),
     )
     conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
@@ -249,7 +250,7 @@ async def test_rule(rule_id: int):
 async def resend_notification(log_id: int):
     conn = get_db()
     row = conn.execute(
-        """SELECT l.*, r.name as rule_name, r.teams_webhook_url, r.send_email
+        """SELECT l.*, r.name as rule_name, r.send_teams, r.teams_webhook_url, r.send_email
            FROM notification_log l
            LEFT JOIN notification_rules r ON r.id = l.rule_id
            WHERE l.id = ?""",
@@ -275,6 +276,7 @@ async def resend_notification(log_id: int):
         "rule": {
             "id": log["rule_id"],
             "name": log.get("rule_name", ""),
+            "send_teams": log.get("send_teams", 1),
             "teams_webhook_url": log.get("teams_webhook_url", ""),
             "send_email": log.get("send_email", 0),
         },
