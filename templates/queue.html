@@ -56,6 +56,7 @@
           <th class="px-3 py-2">Исходный MR</th>
           <th class="px-3 py-2">Автор</th>
           <th class="px-3 py-2">Дата мержа</th>
+          <th class="px-3 py-2">Cherry-pick MR</th>
           <th class="px-3 py-2">Статус</th>
           <th class="px-3 py-2 text-right">Действия</th>
         </tr>
@@ -158,6 +159,14 @@ function renderMRs() {
 
     let statusHtml, actionsHtml;
 
+    let cpMrHtml;
+    if (cp && cp.mr_url) {
+      const label = cp.mr_iid ? `!${cp.mr_iid}` : 'Открыть';
+      cpMrHtml = `<a href="${cp.mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">${label}</a>`;
+    } else {
+      cpMrHtml = '<span class="text-slate-500 text-xs">—</span>';
+    }
+
     if (cp && cp.status === 'merged') {
       statusHtml = '<span class="inline-flex items-center bg-purple-900/40 text-purple-300 border border-purple-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked</span>';
       actionsHtml = '<span class="text-purple-400 text-xs">Готово</span>';
@@ -184,6 +193,7 @@ function renderMRs() {
       </td>
       <td class="px-3 py-2 text-slate-300">${escapeHtml(mr.author)}</td>
       <td class="px-3 py-2 text-slate-300 whitespace-nowrap">${merged}</td>
+      <td class="px-3 py-2">${cpMrHtml}</td>
       <td class="px-3 py-2">${statusHtml}</td>
       <td class="px-3 py-2 text-right">${actionsHtml}</td>
     `;
@@ -300,6 +310,7 @@ async function autoCherryPickAll() {
       cherryPickState[mr.iid] = {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_url,
+        mr_iid: data.mr_iid,
         status: 'merged',
       };
       renderMRs();
