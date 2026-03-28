@@ -77,16 +77,17 @@ def create_rule(data: RuleCreate) -> dict:
     conn = get_db()
     cur = conn.execute(
         """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, match_type,
+           (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix,
+            file_check_enabled, file_check_path_prefix, file_check_mode,
             teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data.name, data.description, data.file_pattern,
-            data.content_match, data.match_type,
+            data.content_match, data.content_exclude, data.match_type,
             data.target_branch, data.mr_state, data.poll_interval_seconds,
             int(data.file_check_enabled), data.file_check_path_prefix,
+            data.file_check_mode,
             data.teams_webhook_url, int(data.send_email),
         ),
     )
@@ -119,15 +120,16 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
     conn.execute(
         """UPDATE notification_rules SET
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
-           match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
-           file_check_enabled=?, file_check_path_prefix=?,
+           content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
+           file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
            teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             data.name, data.description, int(data.enabled),
-            data.file_pattern, data.content_match, data.match_type,
+            data.file_pattern, data.content_match, data.content_exclude, data.match_type,
             data.target_branch, data.mr_state, data.poll_interval_seconds,
             int(data.file_check_enabled), data.file_check_path_prefix,
+            data.file_check_mode,
             data.teams_webhook_url, int(data.send_email), rule_id,
         ),
     )

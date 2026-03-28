@@ -71,6 +71,16 @@
       <input type="text" name="content_match" value="{{ rule.content_match if rule else 'type: breaking' }}"
         class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
     </div>
+
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Исключение (regex, без учёта регистра)</label>
+      <input type="text" name="content_exclude" value="{{ rule.content_exclude if rule else '' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+        placeholder="(?=.*\.sql)(?=.*etlservice)">
+      <p class="text-xs text-slate-500 mt-1">
+        Если regex совпадёт с содержимым — правило НЕ сработает. Пусто = без исключений
+      </p>
+    </div>
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
@@ -85,16 +95,26 @@
       </label>
     </div>
 
-    <div>
-      <label class="block text-sm text-slate-400 mb-1">Префикс пути для поиска файлов</label>
-      <input type="text" name="file_check_path_prefix"
-        value="{{ rule.file_check_path_prefix if rule else '' }}"
-        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
-        placeholder="database/postgres/migration">
-      <p class="text-xs text-slate-500 mt-1">
-        Если в changelog указан fileName.sql, проверяется наличие database/postgres/migration/fileName.sql в изменениях MR
-      </p>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Префикс пути для поиска файлов</label>
+        <input type="text" name="file_check_path_prefix"
+          value="{{ rule.file_check_path_prefix if rule else '' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="database/postgres/migration">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Режим проверки</label>
+        <select name="file_check_mode"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+          <option value="present" {{ 'selected' if not rule or rule.file_check_mode == 'present' }}>Файл должен быть в MR</option>
+          <option value="absent" {{ 'selected' if rule and rule.file_check_mode == 'absent' }}>Файл отсутствует в MR</option>
+        </select>
+      </div>
     </div>
+    <p class="text-xs text-slate-500">
+      present — правило сработает если файл найден в MR; absent — если файл указан в changelog, но НЕ найден в MR
+    </p>
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">

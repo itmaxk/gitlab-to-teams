@@ -25,8 +25,10 @@ def init_db():
             target_branch TEXT DEFAULT 'master',
             mr_state TEXT DEFAULT 'merged',
             poll_interval_seconds INTEGER DEFAULT 0,
+            content_exclude TEXT DEFAULT '',
             file_check_enabled INTEGER DEFAULT 0,
             file_check_path_prefix TEXT DEFAULT '',
+            file_check_mode TEXT DEFAULT 'present',
             teams_webhook_url TEXT DEFAULT '',
             send_email INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -99,6 +101,8 @@ def _migrate(conn: sqlite3.Connection):
         "poll_interval_seconds": "ALTER TABLE notification_rules ADD COLUMN poll_interval_seconds INTEGER DEFAULT 0",
         "file_check_enabled": "ALTER TABLE notification_rules ADD COLUMN file_check_enabled INTEGER DEFAULT 0",
         "file_check_path_prefix": "ALTER TABLE notification_rules ADD COLUMN file_check_path_prefix TEXT DEFAULT ''",
+        "content_exclude": "ALTER TABLE notification_rules ADD COLUMN content_exclude TEXT DEFAULT ''",
+        "file_check_mode": "ALTER TABLE notification_rules ADD COLUMN file_check_mode TEXT DEFAULT 'present'",
     }
 
     for col, sql in migrations.items():
@@ -126,4 +130,48 @@ def seed_default_rule():
             ),
         )
         conn.commit()
+
+    _seed_rule_if_missing(conn, {
+        "name": "MR нет инструкции breaking",
+        "description": "Breaking change без ссылки на .sql файл или без упоминания etlService",
+        "file_pattern": "changelogs/unreleased/*.md",
+        "content_match": "type: breaking",
+        "content_exclude": r"(?=.*\.sql)(?=.*etlservice)",
+        "match_type": "contains",
+        "target_branch": "master",
+        "mr_state": "opened",
+        "send_email": 1,
+        "enabled": 0,
+    })
+
+    _seed_rule_if_missing(conn, {
+        "name": "MR не найден файл",
+        "description": "Breaking change со ссылкой на .sql файл, но файл отсутствует в MR",
+        "file_pattern": "changelogs/unreleased/*.md",
+        "content_match": "type: breaking",
+        "match_type": "contains",
+        "target_branch": "master",
+        "mr_state": "opened",
+        "file_check_enabled": 1,
+        "file_check_path_prefix": "database/postgres/migration",
+        "file_check_mode": "absent",
+        "send_email": 1,
+        "enabled": 0,
+    })
+
     conn.close()
+
+
+def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
+    exists = conn.execute(
+        "SELECT 1 FROM notification_rules WHERE name = ?", (rule["name"],)
+    ).fetchone()
+    if exists:
+        return
+    cols = ", ".join(rule.keys())
+    placeholders = ", ".join("?" for _ in rule)
+    conn.execute(
+        f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders})",
+        list(rule.values()),
+    )
+    conn.commit()

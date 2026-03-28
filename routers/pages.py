@@ -153,12 +153,14 @@ async def save_new_rule(
     description: str = Form(""),
     file_pattern: str = Form("changelogs/unreleased/*.md"),
     content_match: str = Form("type: breaking"),
+    content_exclude: str = Form(""),
     match_type: str = Form("contains"),
     target_branch: str = Form("master"),
     mr_state: str = Form("merged"),
     poll_interval_seconds: int = Form(0),
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
+    file_check_mode: str = Form("present"),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
 ):
@@ -168,15 +170,15 @@ async def save_new_rule(
     conn = get_db()
     cur = conn.execute(
         """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, match_type,
+           (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix,
+            file_check_enabled, file_check_path_prefix, file_check_mode,
             teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            name, description, file_pattern, content_match, match_type,
+            name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
-            1 if file_check_enabled else 0, file_check_path_prefix,
+            1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
             teams_webhook_url, 1 if send_email else 0,
         ),
     )
@@ -225,12 +227,14 @@ async def save_edit_rule(
     description: str = Form(""),
     file_pattern: str = Form("changelogs/unreleased/*.md"),
     content_match: str = Form("type: breaking"),
+    content_exclude: str = Form(""),
     match_type: str = Form("contains"),
     target_branch: str = Form("master"),
     mr_state: str = Form("merged"),
     poll_interval_seconds: int = Form(0),
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
+    file_check_mode: str = Form("present"),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
     enabled: Optional[str] = Form(None),
@@ -242,15 +246,15 @@ async def save_edit_rule(
     conn.execute(
         """UPDATE notification_rules SET
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
-           match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
-           file_check_enabled=?, file_check_path_prefix=?,
+           content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
+           file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
            teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             name, description, 1 if enabled else 0,
-            file_pattern, content_match, match_type,
+            file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
-            1 if file_check_enabled else 0, file_check_path_prefix,
+            1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
             teams_webhook_url, 1 if send_email else 0, rule_id,
         ),
     )

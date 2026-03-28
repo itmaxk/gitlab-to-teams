@@ -45,7 +45,17 @@ async def evaluate_rules_for_mr(
             if not _match_content(content, rule["content_match"], rule["match_type"]):
                 continue
 
+            # Исключение: если content_exclude (regex, case-insensitive) совпал — пропускаем
+            content_exclude = rule.get("content_exclude") or ""
+            if content_exclude:
+                try:
+                    if re.search(content_exclude, content, re.IGNORECASE | re.DOTALL):
+                        continue
+                except re.error:
+                    pass
+
             # Проверка наличия файла из changelog в MR
+            file_check_mode = rule.get("file_check_mode") or "present"
             if rule["file_check_enabled"] and rule["file_check_path_prefix"]:
                 referenced_files = _extract_file_references(content)
                 prefix = rule["file_check_path_prefix"].rstrip("/")
@@ -55,8 +65,15 @@ async def evaluate_rules_for_mr(
                     if full_path in changed_files:
                         file_found = True
                         break
-                if not file_found and referenced_files:
-                    continue
+
+                if file_check_mode == "present":
+                    # Пропускаем если файл НЕ найден (нужен найденный)
+                    if not file_found and referenced_files:
+                        continue
+                elif file_check_mode == "absent":
+                    # Пропускаем если файл найден ИЛИ нет ссылок (нужен ненайденный)
+                    if file_found or not referenced_files:
+                        continue
 
             emails = rule["emails"].split(",") if rule["emails"] else []
             results.append({

@@ -6,12 +6,14 @@ class RuleCreate(BaseModel):
     description: str = ""
     file_pattern: str = "changelogs/unreleased/*.md"
     content_match: str = "type: breaking"
+    content_exclude: str = ""
     match_type: str = "contains"
     target_branch: str = "master"
     mr_state: str = "merged"
     poll_interval_seconds: int = 0
     file_check_enabled: bool = False
     file_check_path_prefix: str = ""
+    file_check_mode: str = "present"
     teams_webhook_url: str = ""
     send_email: bool = False
     emails: list[str] = []
@@ -28,12 +30,14 @@ class RuleOut(BaseModel):
     enabled: bool
     file_pattern: str
     content_match: str
+    content_exclude: str
     match_type: str
     target_branch: str
     mr_state: str
     poll_interval_seconds: int
     file_check_enabled: bool
     file_check_path_prefix: str
+    file_check_mode: str
     teams_webhook_url: str
     send_email: bool
     created_at: str
