@@ -30,6 +30,10 @@
 <!-- Панель управления -->
 <div id="control-panel" class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6 hidden">
   <div class="flex items-center gap-4 flex-wrap">
+    <button onclick="autoCherryPickAll()" id="auto-cp-btn"
+      class="bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
+      Auto Cherry-Pick
+    </button>
     <button onclick="refreshStatuses()" id="refresh-btn"
       class="bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
       Обновить статусы
@@ -85,6 +89,7 @@ let loadedMRs = [];
 // iid -> { branch, mr_url, status: 'opened' | 'merged' }
 let cherryPickState = {};
 let pollTimer = null;
+let autoRunning = false;
 
 async function loadMRs() {
   const input = document.getElementById('mr-input').value.trim();
@@ -250,6 +255,106 @@ async function cherryPickOne(sha, iid) {
       btn.disabled = false;
     }
   }
+}
+
+async function autoCherryPickAll() {
+  const targetBranch = document.getElementById('target-branch').value.trim();
+  if (!targetBranch) {
+    alert('Укажите релизную ветку');
+    return;
+  }
+
+  const pending = loadedMRs.filter(mr => mr.merge_commit_sha && !cherryPickState[mr.iid]);
+  if (pending.length === 0) {
+    alert('Нет MR для cherry-pick');
+    return;
+  }
+
+  autoRunning = true;
+  const btn = document.getElementById('auto-cp-btn');
+  btn.disabled = true;
+
+  for (const mr of pending) {
+    if (!autoRunning) break;
+
+    btn.textContent = `Cherry-pick !${mr.iid}...`;
+
+    // 1. Cherry-pick
+    try {
+      const resp = await fetch('/api/queue/cherry-pick', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          merge_commit_sha: mr.merge_commit_sha,
+          target_branch: targetBranch,
+          source_mr_iid: mr.iid,
+          source_mr_title: mr.title || '',
+        }),
+      });
+      const data = await resp.json();
+
+      if (!resp.ok) {
+        alert(`MR !${mr.iid}: ${data.detail || 'Ошибка cherry-pick'}`);
+        break;
+      }
+
+      cherryPickState[mr.iid] = {
+        branch: data.cherry_pick_branch,
+        mr_url: data.mr_create_url,
+        status: 'opened',
+      };
+      renderMRs();
+      updateStatsLine();
+      window.open(data.mr_create_url, '_blank');
+    } catch (e) {
+      alert(`MR !${mr.iid}: ${e.message}`);
+      break;
+    }
+
+    // 2. Ждём мержа
+    btn.textContent = `Ожидание мержа !${mr.iid}...`;
+    const merged = await waitForMerge(mr.iid);
+    if (!merged) break;
+  }
+
+  autoRunning = false;
+  btn.textContent = 'Auto Cherry-Pick';
+  btn.disabled = false;
+}
+
+async function waitForMerge(iid) {
+  const cp = cherryPickState[iid];
+  if (!cp || !cp.branch) return false;
+
+  while (autoRunning && cp.status !== 'merged') {
+    await sleep(15000);
+    if (!autoRunning) return false;
+
+    try {
+      const resp = await fetch('/api/queue/check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_branches: [cp.branch] }),
+      });
+      const data = await resp.json();
+
+      if (resp.ok && data.mrs.length > 0) {
+        const mr = data.mrs[0];
+        cp.status = mr.state;
+        if (mr.web_url) cp.mr_url = mr.web_url;
+        renderMRs();
+        updateStatsLine();
+      }
+    } catch (e) {
+      console.error('Ошибка проверки статуса:', e);
+    }
+  }
+
+  return cp.status === 'merged';
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function refreshStatuses() {
