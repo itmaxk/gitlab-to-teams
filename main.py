@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,6 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from db import init_db, seed_default_rule
+from services.poller import start_polling
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 BASE_DIR = Path(__file__).parent
 
@@ -21,7 +30,9 @@ BASE_DIR = Path(__file__).parent
 async def lifespan(app: FastAPI):
     init_db()
     seed_default_rule()
+    task = asyncio.create_task(start_polling())
     yield
+    task.cancel()
 
 
 app = FastAPI(title="GitLab to Teams", lifespan=lifespan)
@@ -30,9 +41,8 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-from routers import webhook, rules, pages  # noqa: E402
+from routers import rules, pages  # noqa: E402
 
-app.include_router(webhook.router)
 app.include_router(rules.router)
 app.include_router(pages.router)
 

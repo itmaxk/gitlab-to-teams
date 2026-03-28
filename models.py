@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 
 
 class RuleCreate(BaseModel):
@@ -7,6 +7,11 @@ class RuleCreate(BaseModel):
     file_pattern: str = "changelogs/unreleased/*.md"
     content_match: str = "type: breaking"
     match_type: str = "contains"
+    target_branch: str = "master"
+    mr_state: str = "merged"
+    poll_interval_seconds: int = 0
+    file_check_enabled: bool = False
+    file_check_path_prefix: str = ""
     teams_webhook_url: str = ""
     send_email: bool = False
     emails: list[str] = []
@@ -24,6 +29,11 @@ class RuleOut(BaseModel):
     file_pattern: str
     content_match: str
     match_type: str
+    target_branch: str
+    mr_state: str
+    poll_interval_seconds: int
+    file_check_enabled: bool
+    file_check_path_prefix: str
     teams_webhook_url: str
     send_email: bool
     created_at: str

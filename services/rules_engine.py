@@ -5,21 +5,24 @@ from typing import Any, Callable, Awaitable
 from db import get_db
 
 
-async def evaluate_rules(
+async def evaluate_rules_for_mr(
+    rule_ids: list[int],
     changed_files: list[str],
     get_content: Callable[[str], Awaitable[str]],
 ) -> list[dict[str, Any]]:
     """
-    Проверяет изменённые файлы на соответствие включённым правилам.
+    Проверяет изменённые файлы на соответствие указанным правилам.
     Возвращает список совпадений: [{rule, file_path, file_content}, ...]
     """
     conn = get_db()
+    placeholders = ",".join("?" for _ in rule_ids)
     rules = conn.execute(
-        """SELECT r.*, GROUP_CONCAT(e.email) as emails
+        f"""SELECT r.*, GROUP_CONCAT(e.email) as emails
            FROM notification_rules r
            LEFT JOIN email_recipients e ON e.rule_id = r.id
-           WHERE r.enabled = 1
-           GROUP BY r.id"""
+           WHERE r.id IN ({placeholders}) AND r.enabled = 1
+           GROUP BY r.id""",
+        rule_ids,
     ).fetchall()
     conn.close()
 
@@ -39,14 +42,29 @@ async def evaluate_rules(
                     continue
 
             content = content_cache[file_path]
-            if _match_content(content, rule["content_match"], rule["match_type"]):
-                emails = rule["emails"].split(",") if rule["emails"] else []
-                results.append({
-                    "rule": dict(rule),
-                    "file_path": file_path,
-                    "file_content": content,
-                    "emails": emails,
-                })
+            if not _match_content(content, rule["content_match"], rule["match_type"]):
+                continue
+
+            # Проверка наличия файла из changelog в MR
+            if rule["file_check_enabled"] and rule["file_check_path_prefix"]:
+                referenced_files = _extract_file_references(content)
+                prefix = rule["file_check_path_prefix"].rstrip("/")
+                file_found = False
+                for ref_file in referenced_files:
+                    full_path = f"{prefix}/{ref_file}"
+                    if full_path in changed_files:
+                        file_found = True
+                        break
+                if not file_found and referenced_files:
+                    continue
+
+            emails = rule["emails"].split(",") if rule["emails"] else []
+            results.append({
+                "rule": dict(rule),
+                "file_path": file_path,
+                "file_content": content,
+                "emails": emails,
+            })
 
     return results
 
@@ -59,3 +77,20 @@ def _match_content(content: str, match_value: str, match_type: str) -> bool:
     elif match_type == "exact":
         return content.strip() == match_value.strip()
     return False
+
+
+def _extract_file_references(content: str) -> list[str]:
+    """
+    Извлекает ссылки на файлы из содержимого changelog.
+    Ищет паттерны вида: fileName.sql, fileName.py и т.д.
+    Поддерживает форматы: `fileName.sql`, fileName.sql в строке.
+    """
+    # Ищем имена файлов с расширениями (в бэктиках или просто в тексте)
+    pattern = r'`?([a-zA-Z0-9_\-]+\.[a-zA-Z0-9]+)`?'
+    matches = re.findall(pattern, content)
+    # Фильтруем только файлы с типичными расширениями (не type: breaking и т.п.)
+    extensions = {
+        "sql", "py", "js", "ts", "sh", "yml", "yaml", "json", "xml",
+        "csv", "txt", "md", "html", "css", "java", "go", "rs", "rb",
+    }
+    return [m for m in matches if m.rsplit(".", 1)[-1].lower() in extensions]

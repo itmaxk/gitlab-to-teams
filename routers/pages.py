@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -11,26 +13,61 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 
 @router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(
+    request: Request,
+    rule_id: int = 0,
+    teams_sent: int = -1,
+    email_sent: int = -1,
+    has_error: int = -1,
+):
     conn = get_db()
-    logs = conn.execute(
-        """SELECT l.*, r.name as rule_name
-           FROM notification_log l
-           LEFT JOIN notification_rules r ON r.id = l.rule_id
-           ORDER BY l.created_at DESC LIMIT 50"""
+
+    query = """SELECT l.*, r.name as rule_name
+               FROM notification_log l
+               LEFT JOIN notification_rules r ON r.id = l.rule_id
+               WHERE 1=1"""
+    params: list = []
+    if rule_id > 0:
+        query += " AND l.rule_id = ?"
+        params.append(rule_id)
+    if teams_sent >= 0:
+        query += " AND l.teams_sent = ?"
+        params.append(teams_sent)
+    if email_sent >= 0:
+        query += " AND l.email_sent = ?"
+        params.append(email_sent)
+    if has_error == 1:
+        query += " AND l.error != ''"
+    elif has_error == 0:
+        query += " AND (l.error = '' OR l.error IS NULL)"
+    query += " ORDER BY l.created_at DESC LIMIT 200"
+
+    logs = conn.execute(query, params).fetchall()
+    rules_list = conn.execute(
+        "SELECT id, name FROM notification_rules ORDER BY name"
     ).fetchall()
     stats = {
         "rules_count": conn.execute("SELECT COUNT(*) FROM notification_rules").fetchone()[0],
         "notifications_count": conn.execute("SELECT COUNT(*) FROM notification_log").fetchone()[0],
     }
     conn.close()
+
     return templates.TemplateResponse(request, "dashboard.html", {
-        "logs": [dict(r) for r in logs], "stats": stats
+        "logs": [dict(r) for r in logs],
+        "stats": stats,
+        "rules_list": [dict(r) for r in rules_list],
+        "filters": {
+            "rule_id": rule_id,
+            "teams_sent": teams_sent,
+            "email_sent": email_sent,
+            "has_error": has_error,
+        },
     })
 
 
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
+    default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
     conn = get_db()
     rows = conn.execute(
         "SELECT * FROM notification_rules ORDER BY created_at DESC"
@@ -44,6 +81,8 @@ def rules_list(request: Request):
         d["emails"] = [e["email"] for e in emails]
         d["enabled"] = bool(d["enabled"])
         d["send_email"] = bool(d["send_email"])
+        d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
+        d["effective_interval"] = d["poll_interval_seconds"] or default_interval
         rules.append(d)
     conn.close()
     return templates.TemplateResponse(request, "rules/list.html", {
@@ -54,7 +93,8 @@ def rules_list(request: Request):
 @router.get("/rules/new", response_class=HTMLResponse)
 def new_rule_form(request: Request):
     return templates.TemplateResponse(request, "rules/form.html", {
-        "rule": None
+        "rule": None,
+        "mr_states": ["merged", "opened", "closed", "all"],
     })
 
 
@@ -66,6 +106,11 @@ async def save_new_rule(
     file_pattern: str = Form("changelogs/unreleased/*.md"),
     content_match: str = Form("type: breaking"),
     match_type: str = Form("contains"),
+    target_branch: str = Form("master"),
+    mr_state: str = Form("merged"),
+    poll_interval_seconds: int = Form(0),
+    file_check_enabled: Optional[str] = Form(None),
+    file_check_path_prefix: str = Form(""),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
 ):
@@ -75,9 +120,17 @@ async def save_new_rule(
     conn = get_db()
     cur = conn.execute(
         """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, match_type, teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (name, description, file_pattern, content_match, match_type, teams_webhook_url, 1 if send_email else 0),
+           (name, description, file_pattern, content_match, match_type,
+            target_branch, mr_state, poll_interval_seconds,
+            file_check_enabled, file_check_path_prefix,
+            teams_webhook_url, send_email)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            name, description, file_pattern, content_match, match_type,
+            target_branch, mr_state, poll_interval_seconds,
+            1 if file_check_enabled else 0, file_check_path_prefix,
+            teams_webhook_url, 1 if send_email else 0,
+        ),
     )
     rule_id = cur.lastrowid
     for email in emails:
@@ -108,9 +161,11 @@ def edit_rule_form(request: Request, rule_id: int):
     rule["emails"] = [e["email"] for e in emails]
     rule["enabled"] = bool(rule["enabled"])
     rule["send_email"] = bool(rule["send_email"])
+    rule["file_check_enabled"] = bool(rule.get("file_check_enabled", 0))
     conn.close()
     return templates.TemplateResponse(request, "rules/form.html", {
-        "rule": rule
+        "rule": rule,
+        "mr_states": ["merged", "opened", "closed", "all"],
     })
 
 
@@ -123,6 +178,11 @@ async def save_edit_rule(
     file_pattern: str = Form("changelogs/unreleased/*.md"),
     content_match: str = Form("type: breaking"),
     match_type: str = Form("contains"),
+    target_branch: str = Form("master"),
+    mr_state: str = Form("merged"),
+    poll_interval_seconds: int = Form(0),
+    file_check_enabled: Optional[str] = Form(None),
+    file_check_path_prefix: str = Form(""),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
     enabled: Optional[str] = Form(None),
@@ -134,10 +194,17 @@ async def save_edit_rule(
     conn.execute(
         """UPDATE notification_rules SET
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
-           match_type=?, teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
+           match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
+           file_check_enabled=?, file_check_path_prefix=?,
+           teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
-        (name, description, 1 if enabled else 0, file_pattern, content_match,
-         match_type, teams_webhook_url, 1 if send_email else 0, rule_id),
+        (
+            name, description, 1 if enabled else 0,
+            file_pattern, content_match, match_type,
+            target_branch, mr_state, poll_interval_seconds,
+            1 if file_check_enabled else 0, file_check_path_prefix,
+            teams_webhook_url, 1 if send_email else 0, rule_id,
+        ),
     )
     conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
     for email in emails:

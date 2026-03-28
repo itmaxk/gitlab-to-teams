@@ -22,6 +22,11 @@ def init_db():
             file_pattern TEXT DEFAULT 'changelogs/unreleased/*.md',
             content_match TEXT DEFAULT 'type: breaking',
             match_type TEXT DEFAULT 'contains',
+            target_branch TEXT DEFAULT 'master',
+            mr_state TEXT DEFAULT 'merged',
+            poll_interval_seconds INTEGER DEFAULT 0,
+            file_check_enabled INTEGER DEFAULT 0,
+            file_check_path_prefix TEXT DEFAULT '',
             teams_webhook_url TEXT DEFAULT '',
             send_email INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -50,8 +55,38 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE
         );
+
+        CREATE TABLE IF NOT EXISTS processed_mrs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id INTEGER NOT NULL,
+            mr_iid INTEGER NOT NULL,
+            processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE,
+            UNIQUE(rule_id, mr_iid)
+        );
     """)
+
+    _migrate(conn)
     conn.close()
+
+
+def _migrate(conn: sqlite3.Connection):
+    """Добавляет новые колонки если БД уже существовала."""
+    cursor = conn.execute("PRAGMA table_info(notification_rules)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    migrations = {
+        "target_branch": "ALTER TABLE notification_rules ADD COLUMN target_branch TEXT DEFAULT 'master'",
+        "mr_state": "ALTER TABLE notification_rules ADD COLUMN mr_state TEXT DEFAULT 'merged'",
+        "poll_interval_seconds": "ALTER TABLE notification_rules ADD COLUMN poll_interval_seconds INTEGER DEFAULT 0",
+        "file_check_enabled": "ALTER TABLE notification_rules ADD COLUMN file_check_enabled INTEGER DEFAULT 0",
+        "file_check_path_prefix": "ALTER TABLE notification_rules ADD COLUMN file_check_path_prefix TEXT DEFAULT ''",
+    }
+
+    for col, sql in migrations.items():
+        if col not in columns:
+            conn.execute(sql)
+    conn.commit()
 
 
 def seed_default_rule():
@@ -59,14 +94,17 @@ def seed_default_rule():
     count = conn.execute("SELECT COUNT(*) FROM notification_rules").fetchone()[0]
     if count == 0:
         conn.execute(
-            """INSERT INTO notification_rules (name, description, file_pattern, content_match, match_type)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO notification_rules
+               (name, description, file_pattern, content_match, match_type, target_branch, mr_state)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (
                 "Breaking Changes",
                 "Уведомление о breaking changes при merge MR",
                 "changelogs/unreleased/*.md",
                 "type: breaking",
                 "contains",
+                "master",
+                "merged",
             ),
         )
         conn.commit()

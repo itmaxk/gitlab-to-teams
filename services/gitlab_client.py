@@ -15,6 +15,40 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _project_path() -> str:
+    return quote(os.getenv("GITLAB_PROJECT", ""), safe="")
+
+
+async def get_project_id() -> int:
+    """Получает числовой ID проекта по его пути (GITLAB_PROJECT)."""
+    url = f"{_base_url()}/api/v4/projects/{_project_path()}"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+    return resp.json()["id"]
+
+
+async def get_merge_requests(
+    project_id: int,
+    state: str = "merged",
+    target_branch: str = "master",
+    per_page: int = 20,
+) -> list[dict]:
+    """Получает список MR по состоянию и целевой ветке, отсортированных по дате обновления."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    params = {
+        "state": state,
+        "target_branch": target_branch,
+        "order_by": "updated_at",
+        "sort": "desc",
+        "per_page": per_page,
+    }
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers(), params=params)
+        resp.raise_for_status()
+    return resp.json()
+
+
 async def get_mr_changes(project_id: int, mr_iid: int) -> list[str]:
     """Возвращает список путей изменённых файлов в MR."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes"

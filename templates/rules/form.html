@@ -17,68 +17,129 @@
       class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
   </div>
 
-  <div class="grid grid-cols-2 gap-4">
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">GitLab</legend>
+
+    <div class="grid grid-cols-3 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Целевая ветка</label>
+        <input type="text" name="target_branch" value="{{ rule.target_branch if rule else 'master' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Статус MR</label>
+        <select name="mr_state"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+          {% for state in mr_states %}
+          <option value="{{ state }}" {{ 'selected' if rule and rule.mr_state == state }}>{{ state }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Интервал опроса (сек)</label>
+        <input type="number" name="poll_interval_seconds" min="0" step="1"
+          value="{{ rule.poll_interval_seconds if rule else 0 }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="0 = из .env">
+        <p class="text-xs text-slate-500 mt-1">0 = значение из .env (POLL_INTERVAL_SECONDS)</p>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">Условия совпадения</legend>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Паттерн файла</label>
+        <input type="text" name="file_pattern" value="{{ rule.file_pattern if rule else 'changelogs/unreleased/*.md' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Тип совпадения</label>
+        <select name="match_type"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+          <option value="contains" {{ 'selected' if rule and rule.match_type == 'contains' }}>Содержит (contains)</option>
+          <option value="regex" {{ 'selected' if rule and rule.match_type == 'regex' }}>Регулярное выражение (regex)</option>
+          <option value="exact" {{ 'selected' if rule and rule.match_type == 'exact' }}>Точное совпадение (exact)</option>
+        </select>
+      </div>
+    </div>
+
     <div>
-      <label class="block text-sm text-slate-400 mb-1">Паттерн файла</label>
-      <input type="text" name="file_pattern" value="{{ rule.file_pattern if rule else 'changelogs/unreleased/*.md' }}"
+      <label class="block text-sm text-slate-400 mb-1">Условие в содержимом файла</label>
+      <input type="text" name="content_match" value="{{ rule.content_match if rule else 'type: breaking' }}"
         class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
     </div>
+  </fieldset>
+
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">Проверка ссылок на файлы в changelog</legend>
+
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="file_check_enabled" id="file_check_enabled"
+        {{ 'checked' if rule and rule.file_check_enabled }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="file_check_enabled" class="text-sm text-slate-300">
+        Проверять наличие файлов из changelog в MR
+      </label>
+    </div>
+
     <div>
-      <label class="block text-sm text-slate-400 mb-1">Тип совпадения</label>
-      <select name="match_type"
-        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
-        <option value="contains" {{ 'selected' if rule and rule.match_type == 'contains' }}>Содержит (contains)</option>
-        <option value="regex" {{ 'selected' if rule and rule.match_type == 'regex' }}>Регулярное выражение (regex)</option>
-        <option value="exact" {{ 'selected' if rule and rule.match_type == 'exact' }}>Точное совпадение (exact)</option>
-      </select>
+      <label class="block text-sm text-slate-400 mb-1">Префикс пути для поиска файлов</label>
+      <input type="text" name="file_check_path_prefix"
+        value="{{ rule.file_check_path_prefix if rule else '' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+        placeholder="database/postgres/migration">
+      <p class="text-xs text-slate-500 mt-1">
+        Если в changelog указан fileName.sql, проверяется наличие database/postgres/migration/fileName.sql в изменениях MR
+      </p>
     </div>
-  </div>
+  </fieldset>
 
-  <div>
-    <label class="block text-sm text-slate-400 mb-1">Условие в содержимом файла</label>
-    <input type="text" name="content_match" value="{{ rule.content_match if rule else 'type: breaking' }}"
-      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
-  </div>
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">Уведомления</legend>
 
-  <div>
-    <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL (пусто = из .env)</label>
-    <input type="text" name="teams_webhook_url" value="{{ rule.teams_webhook_url if rule else '' }}"
-      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-      placeholder="https://outlook.office.com/webhook/...">
-  </div>
-
-  {% if rule %}
-  <div class="flex items-center gap-2">
-    <input type="checkbox" name="enabled" id="enabled" {{ 'checked' if rule.enabled }}
-      class="rounded bg-slate-800 border-slate-600">
-    <label for="enabled" class="text-sm text-slate-300">Правило включено</label>
-  </div>
-  {% endif %}
-
-  <div class="flex items-center gap-2">
-    <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
-      class="rounded bg-slate-800 border-slate-600">
-    <label for="send_email" class="text-sm text-slate-300">Дублировать на email</label>
-  </div>
-
-  <div>
-    <label class="block text-sm text-slate-400 mb-1">Email-получатели</label>
-    <div id="email-list" class="space-y-2">
-      {% if rule and rule.emails %}
-        {% for email in rule.emails %}
-        <div class="flex gap-2 email-row">
-          <input type="text" name="emails" value="{{ email }}"
-            class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
-            placeholder="user@example.com">
-          <button type="button" onclick="this.parentElement.remove()"
-            class="text-red-400 hover:text-red-300 px-2 cursor-pointer">✕</button>
-        </div>
-        {% endfor %}
-      {% endif %}
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL (пусто = из .env)</label>
+      <input type="text" name="teams_webhook_url" value="{{ rule.teams_webhook_url if rule else '' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+        placeholder="https://outlook.office.com/webhook/...">
     </div>
-    <button type="button" onclick="addEmail()"
-      class="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer">+ Добавить email</button>
-  </div>
+
+    {% if rule %}
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="enabled" id="enabled" {{ 'checked' if rule.enabled }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="enabled" class="text-sm text-slate-300">Правило включено</label>
+    </div>
+    {% endif %}
+
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="send_email" class="text-sm text-slate-300">Дублировать на email</label>
+    </div>
+
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Email-получатели</label>
+      <div id="email-list" class="space-y-2">
+        {% if rule and rule.emails %}
+          {% for email in rule.emails %}
+          <div class="flex gap-2 email-row">
+            <input type="text" name="emails" value="{{ email }}"
+              class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
+              placeholder="user@example.com">
+            <button type="button" onclick="this.parentElement.remove()"
+              class="text-red-400 hover:text-red-300 px-2 cursor-pointer">✕</button>
+          </div>
+          {% endfor %}
+        {% endif %}
+      </div>
+      <button type="button" onclick="addEmail()"
+        class="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer">+ Добавить email</button>
+    </div>
+  </fieldset>
 
   <div class="flex gap-3 pt-4">
     <button type="submit"

@@ -27,8 +27,14 @@
         <p class="text-slate-400 text-sm mb-2">{{ rule.description }}</p>
         {% endif %}
         <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400">
-          <span>📁 <code class="text-slate-300">{{ rule.file_pattern }}</code></span>
-          <span>🔍 <code class="text-slate-300">{{ rule.content_match }}</code> ({{ rule.match_type }})</span>
+          <span title="Целевая ветка">🌿 <code class="text-slate-300">{{ rule.target_branch }}</code></span>
+          <span title="Статус MR">📋 <code class="text-slate-300">{{ rule.mr_state }}</code></span>
+          <span title="Интервал опроса">⏱ {{ rule.effective_interval }}с</span>
+          <span title="Паттерн файла">📁 <code class="text-slate-300">{{ rule.file_pattern }}</code></span>
+          <span title="Условие">🔍 <code class="text-slate-300">{{ rule.content_match }}</code> ({{ rule.match_type }})</span>
+          {% if rule.file_check_enabled %}
+          <span title="Проверка файлов">📎 <code class="text-slate-300">{{ rule.file_check_path_prefix }}/...</code></span>
+          {% endif %}
           {% if rule.send_email and rule.emails %}
           <span>📧 {{ rule.emails | length }} получател{{ 'ь' if rule.emails | length == 1 else ('я' if rule.emails | length < 5 else 'ей') }}</span>
           {% endif %}
