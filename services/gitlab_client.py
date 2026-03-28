@@ -113,6 +113,63 @@ def project_web_url() -> str:
     return f"{_base_url()}/{os.getenv('GITLAB_PROJECT', '')}"
 
 
+async def create_merge_request(
+    project_id: int,
+    source_branch: str,
+    target_branch: str,
+    title: str,
+) -> dict:
+    """Создаёт MR через API."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.post(url, headers=_headers(), json={
+            "source_branch": source_branch,
+            "target_branch": target_branch,
+            "title": title,
+        })
+        if resp.status_code >= 400:
+            body = resp.text
+            logger.error("create_mr %s → %s: %s %s", source_branch, target_branch, resp.status_code, body)
+            try:
+                msg = resp.json().get("message", body)
+            except Exception:
+                msg = body
+            raise RuntimeError(f"{resp.status_code}: {msg}")
+    return resp.json()
+
+
+async def approve_merge_request(project_id: int, mr_iid: int) -> dict:
+    """Approve MR через API."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/approve"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.post(url, headers=_headers())
+        if resp.status_code >= 400:
+            body = resp.text
+            logger.error("approve_mr !%s: %s %s", mr_iid, resp.status_code, body)
+            try:
+                msg = resp.json().get("message", body)
+            except Exception:
+                msg = body
+            raise RuntimeError(f"{resp.status_code}: {msg}")
+    return resp.json()
+
+
+async def merge_merge_request(project_id: int, mr_iid: int) -> dict:
+    """Merge MR через API."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/merge"
+    async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        resp = await client.put(url, headers=_headers())
+        if resp.status_code >= 400:
+            body = resp.text
+            logger.error("merge_mr !%s: %s %s", mr_iid, resp.status_code, body)
+            try:
+                msg = resp.json().get("message", body)
+            except Exception:
+                msg = body
+            raise RuntimeError(f"{resp.status_code}: {msg}")
+    return resp.json()
+
+
 async def find_mrs_by_source_branches(
     project_id: int, source_branches: list[str],
 ) -> list[dict]:

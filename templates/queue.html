@@ -279,9 +279,8 @@ async function autoCherryPickAll() {
 
     btn.textContent = `Cherry-pick !${mr.iid}...`;
 
-    // 1. Cherry-pick
     try {
-      const resp = await fetch('/api/queue/cherry-pick', {
+      const resp = await fetch('/api/queue/auto-cherry-pick', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -294,67 +293,26 @@ async function autoCherryPickAll() {
       const data = await resp.json();
 
       if (!resp.ok) {
-        alert(`MR !${mr.iid}: ${data.detail || 'Ошибка cherry-pick'}`);
+        alert(`MR !${mr.iid}: ${data.detail || 'Ошибка'}`);
         break;
       }
 
       cherryPickState[mr.iid] = {
         branch: data.cherry_pick_branch,
-        mr_url: data.mr_create_url,
-        status: 'opened',
+        mr_url: data.mr_url,
+        status: 'merged',
       };
       renderMRs();
       updateStatsLine();
-      window.open(data.mr_create_url, '_blank');
     } catch (e) {
       alert(`MR !${mr.iid}: ${e.message}`);
       break;
     }
-
-    // 2. Ждём мержа
-    btn.textContent = `Ожидание мержа !${mr.iid}...`;
-    const merged = await waitForMerge(mr.iid);
-    if (!merged) break;
   }
 
   autoRunning = false;
   btn.textContent = 'Auto Cherry-Pick';
   btn.disabled = false;
-}
-
-async function waitForMerge(iid) {
-  const cp = cherryPickState[iid];
-  if (!cp || !cp.branch) return false;
-
-  while (autoRunning && cp.status !== 'merged') {
-    await sleep(15000);
-    if (!autoRunning) return false;
-
-    try {
-      const resp = await fetch('/api/queue/check', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ source_branches: [cp.branch] }),
-      });
-      const data = await resp.json();
-
-      if (resp.ok && data.mrs.length > 0) {
-        const mr = data.mrs[0];
-        cp.status = mr.state;
-        if (mr.web_url) cp.mr_url = mr.web_url;
-        renderMRs();
-        updateStatsLine();
-      }
-    } catch (e) {
-      console.error('Ошибка проверки статуса:', e);
-    }
-  }
-
-  return cp.status === 'merged';
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 async function refreshStatuses() {

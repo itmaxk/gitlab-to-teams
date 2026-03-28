@@ -10,6 +10,9 @@ from services.gitlab_client import (
     get_mr_by_iid,
     create_branch,
     cherry_pick_commit,
+    create_merge_request,
+    approve_merge_request,
+    merge_merge_request,
     find_mrs_by_source_branches,
     project_web_url,
 )
@@ -110,6 +113,60 @@ async def api_cherry_pick(data: CherryPickRequest):
         "status": "ok",
         "cherry_pick_branch": cp_branch,
         "mr_create_url": mr_create_url,
+    }
+
+
+@router.post("/auto-cherry-pick")
+async def api_auto_cherry_pick(data: CherryPickRequest):
+    """Cherry-pick + создание MR + approve + merge — всё автоматически."""
+    logger.info("auto-cherry-pick: mr=!%s title=%r target=%s", data.source_mr_iid, data.source_mr_title, data.target_branch)
+    project_id = await get_project_id()
+    sha_short = data.merge_commit_sha[:8]
+    cp_branch = f"cherry-pick-{sha_short}"
+
+    # 1. Создаём ветку
+    try:
+        await create_branch(project_id, cp_branch, data.target_branch)
+    except Exception as e:
+        error_str = str(e)
+        if "already exists" in error_str:
+            pass
+        else:
+            raise HTTPException(status_code=400, detail=f"Ошибка создания ветки: {error_str}")
+
+    # 2. Cherry-pick
+    try:
+        await cherry_pick_commit(project_id, data.merge_commit_sha, cp_branch)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка cherry-pick: {e}")
+
+    # 3. Создаём MR
+    mr_title = f"{data.source_mr_title} {data.target_branch}".strip()
+    try:
+        mr = await create_merge_request(project_id, cp_branch, data.target_branch, mr_title)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Ошибка создания MR: {e}")
+
+    mr_iid = mr["iid"]
+    mr_url = mr["web_url"]
+
+    # 4. Approve
+    try:
+        await approve_merge_request(project_id, mr_iid)
+    except Exception as e:
+        logger.warning("approve failed for !%s: %s (continuing to merge)", mr_iid, e)
+
+    # 5. Merge
+    try:
+        await merge_merge_request(project_id, mr_iid)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"MR !{mr_iid} создан, но ошибка merge: {e}")
+
+    return {
+        "status": "ok",
+        "cherry_pick_branch": cp_branch,
+        "mr_iid": mr_iid,
+        "mr_url": mr_url,
     }
 
 
