@@ -208,10 +208,17 @@ function renderJiraResults(results, errors) {
 
   let html = '<div class="space-y-1 max-h-60 overflow-y-auto">';
   for (const r of results) {
+    const jiraLink = JIRA_URL
+      ? `<a href="${JIRA_URL}/browse/${encodeURIComponent(r.jira_id)}" target="_blank" class="text-indigo-400 hover:text-indigo-300 font-medium shrink-0">${escapeHtml(r.jira_id)}</a>`
+      : `<span class="text-indigo-400 font-medium shrink-0">${escapeHtml(r.jira_id)}</span>`;
+    const branchBadge = r.target_branch
+      ? `<span class="text-xs text-teal-400 bg-teal-900/30 border border-teal-800 rounded px-1.5 py-0.5 shrink-0">${escapeHtml(r.target_branch)}</span>`
+      : '';
     html += `<div class="flex items-center gap-2 py-1 px-2 rounded bg-slate-900/50 text-sm">
-      <span class="text-indigo-400 font-medium shrink-0">${escapeHtml(r.jira_id)}</span>
+      ${jiraLink}
       <a href="${r.web_url}" target="_blank" class="text-blue-400 hover:text-blue-300 shrink-0">!${r.mr_id}</a>
       <span class="text-slate-400 text-xs truncate">${escapeHtml(r.title)}</span>
+      ${branchBadge}
       <span class="ml-auto text-xs ${r.state === 'merged' ? 'text-purple-400' : 'text-yellow-400'}">${r.state}</span>
     </div>`;
   }

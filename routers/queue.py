@@ -80,6 +80,7 @@ async def search_jira(data: SearchJiraRequest):
                         "web_url": mr["web_url"],
                         "state": mr["state"],
                         "merged_at": mr.get("merged_at"),
+                        "target_branch": mr.get("target_branch", ""),
                     })
         except Exception as e:
             logger.warning("Ошибка поиска MR по Jira %s: %s", jira_id, e)
