@@ -5,7 +5,7 @@
 
 <!-- Ввод MR -->
 <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6">
-  <label class="block text-sm font-medium text-slate-300 mb-2">Список MR (IID через запятую или по одному на строку)</label>
+  <label class="block text-sm font-medium text-slate-300 mb-2">Список MR (ID через запятую или по одному на строку)</label>
   <textarea id="mr-input" rows="4"
     class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none font-mono"
     placeholder="123, 456, 789&#10;или&#10;123&#10;456&#10;789"></textarea>
@@ -92,7 +92,7 @@
 
 <script>
 let loadedMRs = [];
-// iid -> { branch, mr_url, status: 'opened' | 'merged' }
+// id -> { branch, mr_url, status: 'opened' | 'merged' }
 let cherryPickState = {};
 let pollTimer = null;
 let autoRunning = false;
@@ -107,13 +107,13 @@ async function loadMRs() {
     return;
   }
 
-  const iids = input
+  const ids = input
     .split(/[\s,]+/)
     .map(s => parseInt(s.replace(/[^0-9]/g, ''), 10))
     .filter(n => !isNaN(n) && n > 0);
 
-  if (iids.length === 0) {
-    alert('Не найдено валидных IID');
+  if (ids.length === 0) {
+    alert('Не найдено валидных ID');
     return;
   }
 
@@ -125,7 +125,7 @@ async function loadMRs() {
     const resp = await fetch('/api/queue/load', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mr_iids: iids }),
+      body: JSON.stringify({ mr_ids: ids }),
     });
     const data = await resp.json();
 
@@ -156,17 +156,17 @@ function renderMRs() {
   loadedMRs.forEach((mr, i) => {
     const merged = mr.merged_at ? new Date(mr.merged_at).toLocaleString('ru-RU') : '—';
     const hasCommit = !!mr.merge_commit_sha;
-    const cp = cherryPickState[mr.iid];
+    const cp = cherryPickState[mr.id];
 
     const tr = document.createElement('tr');
     tr.className = 'border-b border-slate-700/50 hover:bg-slate-800/50';
-    tr.id = `mr-row-${mr.iid}`;
+    tr.id = `mr-row-${mr.id}`;
 
     let statusHtml, actionsHtml;
 
     let cpMrHtml;
     if (cp && cp.mr_url) {
-      const label = cp.mr_iid ? `!${cp.mr_iid}` : 'Открыть';
+      const label = cp.mr_id ? `!${cp.mr_id}` : 'Открыть';
       cpMrHtml = `<a href="${cp.mr_url}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">${label}</a>`;
     } else {
       cpMrHtml = '<span class="text-slate-500 text-xs">—</span>';
@@ -185,7 +185,7 @@ function renderMRs() {
       actionsHtml = '';
     } else {
       statusHtml = '<span class="text-slate-500 text-xs">Ожидает</span>';
-      actionsHtml = `<button onclick="cherryPickOne('${mr.merge_commit_sha}', ${mr.iid})" id="cp-btn-${mr.iid}"
+      actionsHtml = `<button onclick="cherryPickOne('${mr.merge_commit_sha}', ${mr.id})" id="cp-btn-${mr.id}"
         class="bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer">
         Cherry-pick</button>`;
     }
@@ -193,7 +193,7 @@ function renderMRs() {
     tr.innerHTML = `
       <td class="px-3 py-2 text-slate-500">${i + 1}</td>
       <td class="px-3 py-2">
-        <a href="${mr.web_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${mr.iid}</a>
+        <a href="${mr.web_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${mr.id}</a>
         <div class="text-xs text-slate-400 mt-0.5 max-w-md truncate">${escapeHtml(mr.title)}</div>
       </td>
       <td class="px-3 py-2 text-slate-300">${escapeHtml(mr.author)}</td>
@@ -216,19 +216,19 @@ function renderErrors(errors) {
   el.classList.remove('hidden');
   el.innerHTML = errors.map(e =>
     `<div class="bg-red-900/30 border border-red-800 rounded-lg px-3 py-2 text-red-300 text-sm mb-1">
-      MR !${e.iid}: ${escapeHtml(e.error)}
+      MR !${e.id}: ${escapeHtml(e.error)}
     </div>`
   ).join('');
 }
 
-async function cherryPickOne(sha, iid) {
+async function cherryPickOne(sha, id) {
   const targetBranch = document.getElementById('target-branch').value.trim();
   if (!targetBranch) {
     alert('Укажите релизную ветку');
     return;
   }
 
-  const btn = document.getElementById(`cp-btn-${iid}`);
+  const btn = document.getElementById(`cp-btn-${id}`);
   if (btn) {
     btn.textContent = '...';
     btn.disabled = true;
@@ -241,14 +241,14 @@ async function cherryPickOne(sha, iid) {
       body: JSON.stringify({
         merge_commit_sha: sha,
         target_branch: targetBranch,
-        source_mr_iid: iid,
-        source_mr_title: (loadedMRs.find(m => m.iid === iid) || {}).title || '',
+        source_mr_id: id,
+        source_mr_title: (loadedMRs.find(m => m.id === id) || {}).title || '',
       }),
     });
     const data = await resp.json();
 
     if (resp.ok) {
-      cherryPickState[iid] = {
+      cherryPickState[id] = {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_create_url,
         status: 'opened',
@@ -258,7 +258,7 @@ async function cherryPickOne(sha, iid) {
       startAutoPoll();
       window.open(data.mr_create_url, '_blank');
     } else {
-      alert(`MR !${iid}: ${data.detail || 'Ошибка cherry-pick'}`);
+      alert(`MR !${id}: ${data.detail || 'Ошибка cherry-pick'}`);
       if (btn) {
         btn.textContent = 'Cherry-pick';
         btn.disabled = false;
@@ -280,7 +280,7 @@ async function autoCherryPickAll() {
     return;
   }
 
-  const pending = loadedMRs.filter(mr => mr.merge_commit_sha && !cherryPickState[mr.iid]);
+  const pending = loadedMRs.filter(mr => mr.merge_commit_sha && !cherryPickState[mr.id]);
   if (pending.length === 0) {
     alert('Нет MR для cherry-pick');
     return;
@@ -293,7 +293,7 @@ async function autoCherryPickAll() {
   for (const mr of pending) {
     if (!autoRunning) break;
 
-    btn.textContent = `Cherry-pick !${mr.iid}...`;
+    btn.textContent = `Cherry-pick !${mr.id}...`;
 
     try {
       const resp = await fetch('/api/queue/auto-cherry-pick', {
@@ -302,28 +302,28 @@ async function autoCherryPickAll() {
         body: JSON.stringify({
           merge_commit_sha: mr.merge_commit_sha,
           target_branch: targetBranch,
-          source_mr_iid: mr.iid,
+          source_mr_id: mr.id,
           source_mr_title: mr.title || '',
         }),
       });
       const data = await resp.json();
 
       if (!resp.ok) {
-        alert(`MR !${mr.iid}: ${data.detail || 'Ошибка'}`);
+        alert(`MR !${mr.id}: ${data.detail || 'Ошибка'}`);
         break;
       }
 
-      cherryPickState[mr.iid] = {
+      cherryPickState[mr.id] = {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_url,
-        mr_iid: data.mr_iid,
+        mr_id: data.mr_id,
         merged_at: data.merged_at || '',
         status: 'merged',
       };
       renderMRs();
       updateStatsLine();
     } catch (e) {
-      alert(`MR !${mr.iid}: ${e.message}`);
+      alert(`MR !${mr.id}: ${e.message}`);
       break;
     }
   }
@@ -363,12 +363,12 @@ async function refreshStatuses() {
 
     if (resp.ok) {
       for (const mr of data.mrs) {
-        const iid = Object.keys(cherryPickState).find(
+        const key = Object.keys(cherryPickState).find(
           k => cherryPickState[k].branch === mr.source_branch
         );
-        if (iid) {
-          cherryPickState[iid].status = mr.state;
-          if (mr.web_url) cherryPickState[iid].mr_url = mr.web_url;
+        if (key) {
+          cherryPickState[key].status = mr.state;
+          if (mr.web_url) cherryPickState[key].mr_url = mr.web_url;
         }
       }
       renderMRs();
@@ -385,10 +385,10 @@ async function refreshStatuses() {
 
 function showAllCpLinks() {
   const links = loadedMRs
-    .filter(mr => cherryPickState[mr.iid] && cherryPickState[mr.iid].mr_url)
+    .filter(mr => cherryPickState[mr.id] && cherryPickState[mr.id].mr_url)
     .map(mr => {
-      const cp = cherryPickState[mr.iid];
-      const label = cp.mr_iid ? `!${cp.mr_iid}` : `!${mr.iid} (cp)`;
+      const cp = cherryPickState[mr.id];
+      const label = cp.mr_id ? `!${cp.mr_id}` : `!${mr.id} (cp)`;
       return { label, url: cp.mr_url, title: mr.title };
     });
 
@@ -434,12 +434,12 @@ async function saveSession(auto = false) {
   }
 
   const targetBranch = document.getElementById('target-branch').value.trim();
-  const items = cpEntries.map(iidStr => {
-    const iid = parseInt(iidStr, 10);
-    const mr = loadedMRs.find(m => m.iid === iid) || {};
-    const cp = cherryPickState[iid];
+  const items = cpEntries.map(idStr => {
+    const mrId = parseInt(idStr, 10);
+    const mr = loadedMRs.find(m => m.id === mrId) || {};
+    const cp = cherryPickState[mrId];
     return {
-      mr_iid: iid,
+      mr_id: mrId,
       mr_title: mr.title || '',
       mr_url: mr.web_url || '',
       author: mr.author || '',
@@ -447,7 +447,7 @@ async function saveSession(auto = false) {
       merge_commit_sha: mr.merge_commit_sha || '',
       cherry_pick_branch: cp.branch || '',
       mr_create_url: cp.mr_url || '',
-      cherry_pick_mr_url: cp.mr_iid ? cp.mr_url : '',
+      cherry_pick_mr_url: cp.mr_id ? cp.mr_url : '',
       cherry_pick_merged_at: cp.merged_at || '',
     };
   });

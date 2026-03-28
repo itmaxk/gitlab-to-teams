@@ -23,18 +23,18 @@ router = APIRouter(prefix="/api/queue", tags=["queue"])
 
 
 class LoadMRsRequest(BaseModel):
-    mr_iids: list[int]
+    mr_ids: list[int]
 
 
 class CherryPickRequest(BaseModel):
     merge_commit_sha: str
     target_branch: str
-    source_mr_iid: int
+    source_mr_id: int
     source_mr_title: str = ""
 
 
 class SaveSessionItem(BaseModel):
-    mr_iid: int
+    mr_id: int
     mr_title: str = ""
     mr_url: str = ""
     author: str = ""
@@ -54,15 +54,15 @@ class SaveSessionRequest(BaseModel):
 
 @router.post("/load")
 async def load_mrs(data: LoadMRsRequest):
-    """Загружает информацию о MR по списку IID и сортирует по дате мержа."""
+    """Загружает информацию о MR по списку ID и сортирует по дате мержа."""
     project_id = await get_project_id()
     mrs = []
     errors = []
-    for iid in data.mr_iids:
+    for mr_id in data.mr_ids:
         try:
-            mr = await get_mr_by_iid(project_id, iid)
+            mr = await get_mr_by_iid(project_id, mr_id)
             mrs.append({
-                "iid": mr["iid"],
+                "id": mr["iid"],
                 "title": mr["title"],
                 "state": mr["state"],
                 "web_url": mr["web_url"],
@@ -73,8 +73,8 @@ async def load_mrs(data: LoadMRsRequest):
                 "merge_commit_sha": mr.get("merge_commit_sha"),
             })
         except Exception as e:
-            logger.warning("Не удалось загрузить MR !%s: %s", iid, e)
-            errors.append({"iid": iid, "error": str(e)})
+            logger.warning("Не удалось загрузить MR !%s: %s", mr_id, e)
+            errors.append({"id": mr_id, "error": str(e)})
 
     mrs.sort(key=lambda m: m["merged_at"] or "")
     return {"mrs": mrs, "errors": errors}
@@ -83,7 +83,7 @@ async def load_mrs(data: LoadMRsRequest):
 @router.post("/cherry-pick")
 async def api_cherry_pick(data: CherryPickRequest):
     """Cherry-pick: создаёт ветку от target, cherry-pick коммита, возвращает URL создания MR."""
-    logger.info("cherry-pick request: mr=!%s title=%r target=%s", data.source_mr_iid, data.source_mr_title, data.target_branch)
+    logger.info("cherry-pick request: mr=!%s title=%r target=%s", data.source_mr_id, data.source_mr_title, data.target_branch)
     project_id = await get_project_id()
     sha_short = data.merge_commit_sha[:8]
     cp_branch = f"cherry-pick-{sha_short}"
@@ -122,7 +122,7 @@ async def api_cherry_pick(data: CherryPickRequest):
 @router.post("/auto-cherry-pick")
 async def api_auto_cherry_pick(data: CherryPickRequest):
     """Cherry-pick + создание MR + approve + merge — всё автоматически."""
-    logger.info("auto-cherry-pick: mr=!%s title=%r target=%s", data.source_mr_iid, data.source_mr_title, data.target_branch)
+    logger.info("auto-cherry-pick: mr=!%s title=%r target=%s", data.source_mr_id, data.source_mr_title, data.target_branch)
     project_id = await get_project_id()
     sha_short = data.merge_commit_sha[:8]
     cp_branch = f"cherry-pick-{sha_short}"
@@ -150,25 +150,25 @@ async def api_auto_cherry_pick(data: CherryPickRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка создания MR: {e}")
 
-    mr_iid = mr["iid"]
+    mr_id = mr["iid"]
     mr_url = mr["web_url"]
 
     # 4. Approve
     try:
-        await approve_merge_request(project_id, mr_iid)
+        await approve_merge_request(project_id, mr_id)
     except Exception as e:
-        logger.warning("approve failed for !%s: %s (continuing to merge)", mr_iid, e)
+        logger.warning("approve failed for !%s: %s (continuing to merge)", mr_id, e)
 
     # 5. Merge
     try:
-        merge_result = await merge_merge_request(project_id, mr_iid)
+        merge_result = await merge_merge_request(project_id, mr_id)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"MR !{mr_iid} создан, но ошибка merge: {e}")
+        raise HTTPException(status_code=400, detail=f"MR !{mr_id} создан, но ошибка merge: {e}")
 
     return {
         "status": "ok",
         "cherry_pick_branch": cp_branch,
-        "mr_iid": mr_iid,
+        "mr_id": mr_id,
         "mr_url": mr_url,
         "merged_at": merge_result.get("merged_at", ""),
     }
@@ -217,7 +217,7 @@ def save_session(data: SaveSessionRequest):
                 cherry_pick_mr_url, cherry_pick_merged_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                session_id, item.mr_iid, item.mr_title, item.mr_url,
+                session_id, item.mr_id, item.mr_title, item.mr_url,
                 item.author, item.merged_at, item.merge_commit_sha,
                 item.cherry_pick_branch, item.mr_create_url,
                 item.cherry_pick_mr_url, item.cherry_pick_merged_at,
