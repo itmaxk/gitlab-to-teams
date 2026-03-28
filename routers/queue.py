@@ -10,6 +10,7 @@ from services.gitlab_client import (
     get_mr_by_iid,
     create_branch,
     cherry_pick_commit,
+    find_mrs_by_source_branches,
     project_web_url,
 )
 
@@ -109,6 +110,29 @@ async def api_cherry_pick(data: CherryPickRequest):
         "status": "ok",
         "cherry_pick_branch": cp_branch,
         "mr_create_url": mr_create_url,
+    }
+
+
+class CheckCherryPicksRequest(BaseModel):
+    source_branches: list[str]
+
+
+@router.post("/check")
+async def check_cherry_picks(data: CheckCherryPicksRequest):
+    """Проверяет состояние cherry-pick MR по source_branch."""
+    if not data.source_branches:
+        return {"mrs": []}
+    project_id = await get_project_id()
+    mrs = await find_mrs_by_source_branches(project_id, data.source_branches)
+    return {
+        "mrs": [
+            {
+                "source_branch": mr["source_branch"],
+                "state": mr["state"],
+                "web_url": mr["web_url"],
+            }
+            for mr in mrs
+        ],
     }
 
 

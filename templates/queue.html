@@ -30,6 +30,10 @@
 <!-- Панель управления -->
 <div id="control-panel" class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6 hidden">
   <div class="flex items-center gap-4 flex-wrap">
+    <button onclick="refreshStatuses()" id="refresh-btn"
+      class="bg-slate-600 hover:bg-slate-500 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
+      Обновить статусы
+    </button>
     <button onclick="saveSession()" id="save-btn"
       class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
       Сохранить в историю
@@ -78,7 +82,8 @@
 
 <script>
 let loadedMRs = [];
-let cherryPickState = {};  // iid -> { branch, mr_url }
+// iid -> { branch, mr_url, status: 'opened' | 'merged' }
+let cherryPickState = {};
 
 async function loadMRs() {
   const input = document.getElementById('mr-input').value.trim();
@@ -146,8 +151,12 @@ function renderMRs() {
     tr.id = `mr-row-${mr.iid}`;
 
     let statusHtml, actionsHtml;
-    if (cp) {
-      statusHtml = '<span class="inline-flex items-center bg-green-900/40 text-green-300 border border-green-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked</span>';
+
+    if (cp && cp.status === 'merged') {
+      statusHtml = '<span class="inline-flex items-center bg-purple-900/40 text-purple-300 border border-purple-700 rounded-full px-2 py-0.5 text-xs font-medium">Cherry-picked</span>';
+      actionsHtml = '<span class="text-purple-400 text-xs">Готово</span>';
+    } else if (cp && cp.status === 'opened') {
+      statusHtml = '<span class="inline-flex items-center bg-yellow-900/40 text-yellow-300 border border-yellow-700 rounded-full px-2 py-0.5 text-xs font-medium">MR создан</span>';
       actionsHtml = `<a href="${cp.mr_url}" target="_blank"
         class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1 rounded cursor-pointer inline-block">
         Открыть MR</a>`;
@@ -220,6 +229,7 @@ async function cherryPickOne(sha, iid) {
       cherryPickState[iid] = {
         branch: data.cherry_pick_branch,
         mr_url: data.mr_create_url,
+        status: 'opened',
       };
       renderMRs();
       updateStatsLine();
@@ -237,6 +247,49 @@ async function cherryPickOne(sha, iid) {
       btn.textContent = 'Cherry-pick';
       btn.disabled = false;
     }
+  }
+}
+
+async function refreshStatuses() {
+  const branches = Object.values(cherryPickState)
+    .filter(cp => cp.branch && cp.status !== 'merged')
+    .map(cp => cp.branch);
+
+  if (branches.length === 0) {
+    updateStatsLine();
+    return;
+  }
+
+  const btn = document.getElementById('refresh-btn');
+  btn.textContent = 'Проверка...';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/queue/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source_branches: branches }),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      for (const mr of data.mrs) {
+        const iid = Object.keys(cherryPickState).find(
+          k => cherryPickState[k].branch === mr.source_branch
+        );
+        if (iid) {
+          cherryPickState[iid].status = mr.state;
+          if (mr.web_url) cherryPickState[iid].mr_url = mr.web_url;
+        }
+      }
+      renderMRs();
+      updateStatsLine();
+    }
+  } catch (e) {
+    console.error('Ошибка обновления статусов:', e);
+  } finally {
+    btn.textContent = 'Обновить статусы';
+    btn.disabled = false;
   }
 }
 
@@ -299,10 +352,11 @@ async function saveSession() {
 
 function updateStatsLine() {
   const total = loadedMRs.length;
-  const done = Object.keys(cherryPickState).length;
-  const waiting = total - done;
+  const merged = Object.values(cherryPickState).filter(cp => cp.status === 'merged').length;
+  const opened = Object.values(cherryPickState).filter(cp => cp.status === 'opened').length;
+  const waiting = total - Object.keys(cherryPickState).length;
   document.getElementById('stats-line').textContent =
-    `Всего: ${total} | Cherry-picked: ${done} | Ожидают: ${waiting}`;
+    `Всего: ${total} | Cherry-picked: ${merged} | MR создан: ${opened} | Ожидают: ${waiting}`;
 }
 
 /* --- История --- */
@@ -410,7 +464,6 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// Загружаем историю при открытии страницы
 document.addEventListener('DOMContentLoaded', loadHistory);
 </script>
 {% endblock %}
