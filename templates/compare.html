@@ -51,7 +51,10 @@
 
 <!-- Results -->
 <div id="results" class="hidden">
-  <div id="stats" class="text-sm text-slate-400 mb-3"></div>
+  <div class="flex items-center gap-3 mb-3 flex-wrap">
+    <div id="stats" class="text-sm text-slate-400"></div>
+    <div id="copyButtons" class="flex gap-2 flex-wrap"></div>
+  </div>
 
   <!-- Main table -->
   <div class="overflow-x-auto">
@@ -215,12 +218,50 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+let lastData = null;
+
+function copyCol(type, branchIdx) {
+  if (!lastData) return;
+  const branch = branchIdx !== undefined ? lastData.branches[branchIdx] : null;
+  let items = [];
+  for (const row of lastData.rows) {
+    if (type === "jira") {
+      items.push(row.jira_id);
+      continue;
+    }
+    // type === "mr" — collect MR IDs for specific branch
+    const info = row.branches[branch];
+    if (info && info.mrs) {
+      for (const m of info.mrs) items.push("!" + m.mr_iid);
+    }
+  }
+  const unique = [...new Set(items)];
+  navigator.clipboard.writeText(unique.join("\n"));
+  return unique.length;
+}
+
+function flashBtn(btn, origText) {
+  btn.textContent = "Скопировано!";
+  setTimeout(() => { btn.textContent = origText; }, 1500);
+}
+
 function renderResults(data) {
+  lastData = data;
   const { rows, branches, total_mrs, no_jira } = data;
   const results = document.getElementById("results");
   const stats = document.getElementById("stats");
 
   stats.textContent = `Найдено ${rows.length} задач JIRA, ${total_mrs} MR по ${branches.length} веткам`;
+
+  // Copy buttons
+  const copyDiv = document.getElementById("copyButtons");
+  let btns = `<button onclick="copyCol('jira'); flashBtn(this, this.dataset.orig)" data-orig="JIRA ID"
+    class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-1 rounded">JIRA ID</button>`;
+  branches.forEach((b, i) => {
+    btns += `<button onclick="copyCol('mr',${i}); flashBtn(this, this.dataset.orig)" data-orig="MR ${escHtml(b)}"
+      class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-1 rounded">MR ${escHtml(b)}</button>`;
+  });
+  copyDiv.innerHTML = `<span class="text-xs text-slate-500">Копировать:</span> ${btns}`;
 
   // Header
   const thead = document.getElementById("tableHead");
