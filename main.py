@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
-app = FastAPI(title="GitLab to Teams", lifespan=lifespan)
+app = FastAPI(title="GitLab Manager", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 

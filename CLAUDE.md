@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-GitLab-to-Teams notification service. Polls GitLab API for merge requests and sends notifications to Microsoft Teams/email when changed files match configured rules. No webhook required — works via periodic API polling.
+GitLab Manager service. Polls GitLab API for merge requests and sends notifications to Microsoft Teams/email when changed files match configured rules. No webhook required — works via periodic API polling.
 
 ## Commands
 

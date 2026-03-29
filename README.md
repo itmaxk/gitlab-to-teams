@@ -1,4 +1,4 @@
-# GitLab → Teams
+# GitLab Manager
 
 Сервис уведомлений: периодически опрашивает GitLab API на предмет новых MR
 и отправляет уведомления в Microsoft Teams и/или на email,
