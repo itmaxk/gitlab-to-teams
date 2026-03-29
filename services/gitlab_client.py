@@ -154,12 +154,23 @@ async def approve_merge_request(project_id: int, mr_iid: int) -> dict:
     return resp.json()
 
 
-async def merge_merge_request(project_id: int, mr_iid: int) -> dict:
-    """Merge MR через API."""
+async def merge_merge_request(
+    project_id: int, mr_iid: int, retries: int = 12, delay: float = 5.0,
+) -> dict:
+    """Merge MR через API. Повторяет при 405 (MR ещё не готов к merge)."""
+    import asyncio
+
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/merge"
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        resp = await client.put(url, headers=_headers())
-        if resp.status_code >= 400:
+        for attempt in range(retries):
+            resp = await client.put(url, headers=_headers())
+            if resp.status_code < 400:
+                return resp.json()
+            # 405 = MR not ready yet (pipeline running, merge check pending)
+            if resp.status_code == 405 and attempt < retries - 1:
+                logger.info("merge_mr !%s: 405 not ready, retry %d/%d in %.0fs", mr_iid, attempt + 1, retries, delay)
+                await asyncio.sleep(delay)
+                continue
             body = resp.text
             logger.error("merge_mr !%s: %s %s", mr_iid, resp.status_code, body)
             try:
@@ -167,7 +178,7 @@ async def merge_merge_request(project_id: int, mr_iid: int) -> dict:
             except Exception:
                 msg = body
             raise RuntimeError(f"{resp.status_code}: {msg}")
-    return resp.json()
+    return {}
 
 
 async def find_mrs_by_source_branches(
