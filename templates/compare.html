@@ -51,10 +51,7 @@
 
 <!-- Results -->
 <div id="results" class="hidden">
-  <div class="flex items-center gap-3 mb-3 flex-wrap">
-    <div id="stats" class="text-sm text-slate-400"></div>
-    <div id="copyButtons" class="flex gap-2 flex-wrap"></div>
-  </div>
+  <div id="stats" class="text-sm text-slate-400 mb-3"></div>
 
   <!-- Main table -->
   <div class="overflow-x-auto">
@@ -240,9 +237,9 @@ function copyCol(type, branchIdx) {
   return unique.length;
 }
 
-function flashBtn(btn, origText) {
-  btn.textContent = "Скопировано!";
-  setTimeout(() => { btn.textContent = origText; }, 1500);
+function flashBtn(btn, origHtml) {
+  btn.innerHTML = "✓";
+  setTimeout(() => { btn.innerHTML = origHtml; }, 1000);
 }
 
 function renderResults(data) {
@@ -253,21 +250,16 @@ function renderResults(data) {
 
   stats.textContent = `Найдено ${rows.length} задач JIRA, ${total_mrs} MR по ${branches.length} веткам`;
 
-  // Copy buttons
-  const copyDiv = document.getElementById("copyButtons");
-  let btns = `<button onclick="copyCol('jira'); flashBtn(this, this.dataset.orig)" data-orig="JIRA ID"
-    class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-1 rounded">JIRA ID</button>`;
-  branches.forEach((b, i) => {
-    btns += `<button onclick="copyCol('mr',${i}); flashBtn(this, this.dataset.orig)" data-orig="MR ${escHtml(b)}"
-      class="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-1 rounded">MR ${escHtml(b)}</button>`;
-  });
-  copyDiv.innerHTML = `<span class="text-xs text-slate-500">Копировать:</span> ${btns}`;
-
-  // Header
+  // Header with copy buttons
   const thead = document.getElementById("tableHead");
+  const copyIcon = `<svg class="inline w-3.5 h-3.5 ml-1 opacity-50 group-hover:opacity-100" fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" stroke-width="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke-width="2"/></svg>`;
   thead.innerHTML = `<tr class="border-b border-slate-700 text-left">
-    <th class="py-2 px-3 text-slate-400 font-medium">JIRA</th>
-    ${branches.map(b => `<th class="py-2 px-3 text-slate-400 font-medium">${escHtml(b)}</th>`).join("")}
+    <th class="py-2 px-3">
+      <button onclick="copyCol('jira'); flashBtn(this, this.innerHTML)" class="group text-slate-400 hover:text-white font-medium cursor-pointer">JIRA${copyIcon}</button>
+    </th>
+    ${branches.map((b, i) => `<th class="py-2 px-3">
+      <button onclick="copyCol('mr',${i}); flashBtn(this, this.innerHTML)" class="group text-slate-400 hover:text-white font-medium cursor-pointer">${escHtml(b)}${copyIcon}</button>
+    </th>`).join("")}
   </tr>`;
 
   // Body
