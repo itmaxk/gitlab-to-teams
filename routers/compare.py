@@ -3,6 +3,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -14,6 +15,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 JIRA_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
+
+
+def _parse_dt(s: str) -> Optional[datetime]:
+    """Парсит ISO дату из GitLab (с миллисекундами, Z или +00:00)."""
+    if not s:
+        return None
+    s = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
 
 
 class CompareRequest(BaseModel):
@@ -35,6 +47,9 @@ async def run_compare(data: CompareRequest):
         date_from += "T00:00:00Z"
     if "T" not in date_to:
         date_to += "T23:59:59Z"
+
+    dt_from = _parse_dt(date_from)
+    dt_to = _parse_dt(date_to)
 
     project_id = await get_project_id()
 
@@ -58,8 +73,8 @@ async def run_compare(data: CompareRequest):
         # Filter by merged_at within date range
         filtered = []
         for mr in result:
-            merged_at = mr.get("merged_at") or ""
-            if merged_at and date_from <= merged_at <= date_to:
+            merged_dt = _parse_dt(mr.get("merged_at") or "")
+            if merged_dt and dt_from and dt_to and dt_from <= merged_dt <= dt_to:
                 filtered.append(mr)
         branch_mrs[branch] = filtered
         total_mrs += len(filtered)
