@@ -80,18 +80,25 @@ def _add_to_jira_map(
 async def default_branches():
     """Возвращает master + последнюю release ветку."""
     project_id = await get_project_id()
-    branches = await get_branches(project_id, search="release/")
-    # Find latest branch matching exactly "release/{number}"
+    # Paginate through all branches matching "release/" to find the latest
     release_re = re.compile(r"^release/(\d+)$")
     latest = None
     latest_num = -1
-    for b in branches:
-        m = release_re.match(b["name"])
-        if m:
-            num = int(m.group(1))
-            if num > latest_num:
-                latest_num = num
-                latest = b["name"]
+    page = 1
+    while True:
+        batch = await get_branches(project_id, search="release/", per_page=100, page=page)
+        if not batch:
+            break
+        for b in batch:
+            m = release_re.match(b["name"])
+            if m:
+                num = int(m.group(1))
+                if num > latest_num:
+                    latest_num = num
+                    latest = b["name"]
+        if len(batch) < 100:
+            break
+        page += 1
     result = ["master"]
     if latest:
         result.append(latest)

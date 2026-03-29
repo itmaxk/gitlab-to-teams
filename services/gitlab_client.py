@@ -266,10 +266,12 @@ async def get_all_merged_mrs(
     return result
 
 
-async def get_branches(project_id: int, search: str = "", per_page: int = 100) -> list[dict]:
+async def get_branches(
+    project_id: int, search: str = "", per_page: int = 100, page: int = 1,
+) -> list[dict]:
     """Получает список веток проекта, опционально фильтруя по search."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/branches"
-    params = {"per_page": per_page}
+    params = {"per_page": per_page, "page": page}
     if search:
         params["search"] = search
     async with httpx.AsyncClient(verify=False, timeout=30) as client:
