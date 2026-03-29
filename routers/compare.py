@@ -81,21 +81,17 @@ async def default_branches():
     """Возвращает master + последнюю release ветку."""
     project_id = await get_project_id()
     branches = await get_branches(project_id, search="release/")
-    # Find latest release branch by numeric suffix: release/99 > release/98
+    # Find latest branch matching exactly "release/{number}"
+    release_re = re.compile(r"^release/(\d+)$")
     latest = None
     latest_num = -1
     for b in branches:
-        name = b["name"]
-        # Extract number after last /
-        parts = name.rsplit("/", 1)
-        if len(parts) == 2:
-            try:
-                num = int(parts[1])
-                if num > latest_num:
-                    latest_num = num
-                    latest = name
-            except ValueError:
-                pass
+        m = release_re.match(b["name"])
+        if m:
+            num = int(m.group(1))
+            if num > latest_num:
+                latest_num = num
+                latest = b["name"]
     result = ["master"]
     if latest:
         result.append(latest)
