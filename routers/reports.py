@@ -31,7 +31,6 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 # ---------------------------------------------------------------------------
 
 # Официальные праздничные дни РФ (фиксированные даты, ст. 112 ТК РФ).
-# Переносы выходных не учитываются — при необходимости можно расширить.
 _RU_HOLIDAY_DATES = [
     (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
     (2, 23),
@@ -43,24 +42,58 @@ _RU_HOLIDAY_DATES = [
 ]
 
 
-def _ru_holidays(year: int) -> set[date]:
-    return {date(year, m, d) for m, d in _RU_HOLIDAY_DATES}
+def _load_overrides(year: int) -> dict[str, int]:
+    """Загружает переопределения из БД: {dt_str: day_type}.
+    day_type: 1=нерабочий (праздник), 0=рабочий (перенос)."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT dt, day_type FROM holiday_overrides WHERE dt LIKE ?",
+        (f"{year}-%",),
+    ).fetchall()
+    conn.close()
+    return {r["dt"]: r["day_type"] for r in rows}
 
 
 def is_workday(d: date) -> bool:
+    overrides = _load_overrides(d.year)
+    dt_str = d.isoformat()
+    if dt_str in overrides:
+        return overrides[dt_str] == 0  # 0=working, 1=holiday
     if d.weekday() >= 5:
         return False
-    if d in _ru_holidays(d.year):
+    if (d.month, d.day) in {(m, dy) for m, dy in _RU_HOLIDAY_DATES}:
         return False
     return True
 
 
+def _get_year_calendar(year: int) -> dict[str, int]:
+    """Возвращает {date_str: day_type} для всех дней года.
+    day_type: 0=рабочий, 1=нерабочий."""
+    overrides = _load_overrides(year)
+    holidays_set = {(m, d) for m, d in _RU_HOLIDAY_DATES}
+    result = {}
+    _, dec_last = calendar.monthrange(year, 12)
+    for month in range(1, 13):
+        _, last_day = calendar.monthrange(year, month)
+        for day in range(1, last_day + 1):
+            d = date(year, month, day)
+            dt_str = d.isoformat()
+            if dt_str in overrides:
+                result[dt_str] = overrides[dt_str]
+            elif d.weekday() >= 5 or (d.month, d.day) in holidays_set:
+                result[dt_str] = 1
+            else:
+                result[dt_str] = 0
+    return result
+
+
 def get_workdays_in_month(year: int, month: int) -> list[date]:
+    cal = _get_year_calendar(year)
     _, last_day = calendar.monthrange(year, month)
     return [
         date(year, month, d)
         for d in range(1, last_day + 1)
-        if is_workday(date(year, month, d))
+        if cal.get(date(year, month, d).isoformat(), 0) == 0
     ]
 
 
@@ -249,7 +282,7 @@ async def overtime_report(body: ReportRequest):
         user_ids, date_from, date_to,
     )
 
-    hols = _ru_holidays(body.year)
+    year_cal = _get_year_calendar(body.year)
     rows = []
 
     for uid in user_ids:
@@ -268,9 +301,10 @@ async def overtime_report(body: ReportRequest):
             total_seconds = sum(e["seconds"] for e in day_entries)
             total_hours = total_seconds / 3600
 
+            is_non_working = year_cal.get(day_str, 0) == 1
             is_weekend = d.weekday() >= 5
-            is_holiday = d in hols
-            is_wd = not is_weekend and not is_holiday
+            is_holiday = is_non_working and not is_weekend
+            is_wd = not is_non_working
 
             overtime = False
             if is_wd and total_hours > 8:
@@ -495,3 +529,86 @@ def update_settings(report_type: str, body: ReportSettingsUpdate):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# API: Holiday Calendar
+# ---------------------------------------------------------------------------
+
+@router.get("/api/reports/calendar/{year}")
+def get_calendar(year: int):
+    """Возвращает календарь на год: {date_str: day_type}."""
+    return _get_year_calendar(year)
+
+
+@router.put("/api/reports/calendar/{year}")
+def save_calendar(year: int, body: dict):
+    """Сохраняет переопределения календаря.
+    Body: {overrides: {date_str: day_type}} — только дни, отличающиеся от дефолта."""
+    overrides = body.get("overrides", {})
+    holidays_set = {(m, d) for m, d in _RU_HOLIDAY_DATES}
+
+    conn = get_db()
+    conn.execute("DELETE FROM holiday_overrides WHERE dt LIKE ?", (f"{year}-%",))
+
+    for dt_str, day_type in overrides.items():
+        d = date.fromisoformat(dt_str)
+        default_non_working = d.weekday() >= 5 or (d.month, d.day) in holidays_set
+        default_type = 1 if default_non_working else 0
+        if day_type != default_type:
+            conn.execute(
+                "INSERT OR REPLACE INTO holiday_overrides (dt, day_type) VALUES (?, ?)",
+                (dt_str, day_type),
+            )
+
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.post("/api/reports/calendar/{year}/fetch")
+async def fetch_calendar_from_isdayoff(year: int):
+    """Загружает производственный календарь из isdayoff.ru."""
+    import httpx
+
+    url = f"https://isdayoff.ru/api/getdata?year={year}"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(url)
+            if resp.status_code != 200:
+                return {"ok": False, "error": f"isdayoff.ru вернул {resp.status_code}"}
+            data = resp.text.strip()
+    except Exception as e:
+        return {"ok": False, "error": f"Не удалось подключиться к isdayoff.ru: {e}"}
+
+    if len(data) < 365:
+        return {"ok": False, "error": f"Некорректный ответ ({len(data)} символов)"}
+
+    holidays_set = {(m, d) for m, d in _RU_HOLIDAY_DATES}
+    conn = get_db()
+    conn.execute("DELETE FROM holiday_overrides WHERE dt LIKE ?", (f"{year}-%",))
+
+    idx = 0
+    for month in range(1, 13):
+        _, last_day = calendar.monthrange(year, month)
+        for day in range(1, last_day + 1):
+            if idx >= len(data):
+                break
+            ch = data[idx]
+            idx += 1
+
+            d = date(year, month, day)
+            is_non_working = ch in ("1", "2")
+            default_non_working = d.weekday() >= 5 or (d.month, d.day) in holidays_set
+            day_type = 1 if is_non_working else 0
+            default_type = 1 if default_non_working else 0
+
+            if day_type != default_type:
+                conn.execute(
+                    "INSERT OR REPLACE INTO holiday_overrides (dt, day_type) VALUES (?, ?)",
+                    (d.isoformat(), day_type),
+                )
+
+    conn.commit()
+    conn.close()
+    return {"ok": True, "days_total": idx}

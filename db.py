@@ -117,6 +117,11 @@ def init_db():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS holiday_overrides (
+            dt TEXT PRIMARY KEY,
+            day_type INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
