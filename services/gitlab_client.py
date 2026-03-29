@@ -231,6 +231,41 @@ async def search_merge_requests(
     return resp.json()
 
 
+async def get_all_merged_mrs(
+    project_id: int,
+    target_branch: str,
+    updated_after: str,
+    updated_before: str,
+    per_page: int = 100,
+) -> list[dict]:
+    """Получает все merged MR для ветки за период с пагинацией."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
+    params = {
+        "state": "merged",
+        "target_branch": target_branch,
+        "updated_after": updated_after,
+        "updated_before": updated_before,
+        "order_by": "updated_at",
+        "sort": "desc",
+        "per_page": per_page,
+        "page": 1,
+    }
+    result = []
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        while True:
+            resp = await client.get(url, headers=_headers(), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                break
+            result.extend(data)
+            next_page = resp.headers.get("x-next-page", "")
+            if not next_page:
+                break
+            params["page"] = int(next_page)
+    return result
+
+
 async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Получает содержимое файла из репозитория GitLab."""
     encoded_path = quote(file_path, safe="")

@@ -121,6 +121,14 @@ def queue_page(request: Request):
     })
 
 
+@router.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    return templates.TemplateResponse(request, "compare.html", {
+        "jira_url": os.getenv("JIRA_URL", ""),
+        "jira_project": os.getenv("JIRA_PROJECT", ""),
+    })
+
+
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
