@@ -20,11 +20,19 @@
              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
     </div>
   </div>
-  <div class="mb-4">
-    <label class="block text-sm text-slate-400 mb-1">JIRA / MR ID <span class="text-slate-500">(опционально, через запятую или по одному на строку)</span></label>
-    <textarea id="idsInput" rows="2"
-      class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm font-mono focus:border-blue-500 focus:outline-none"
-      placeholder="PROJ-6416, PROJ-6417, 123, 456&#10;https://jira.domain.com/browse/PROJ-6416&#10;https://gitlab.domain.com/project/-/merge_requests/789"></textarea>
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Поиск по Jira ID <span class="text-slate-500">(опционально)</span></label>
+      <textarea id="jiraInput" rows="2"
+        class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm font-mono focus:border-blue-500 focus:outline-none"
+        placeholder="PROJ-6416, PROJ-6417&#10;https://jira.domain.com/browse/PROJ-6416&#10;или номера: 6416, 6417"></textarea>
+    </div>
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Поиск по MR ID <span class="text-slate-500">(опционально)</span></label>
+      <textarea id="mrInput" rows="2"
+        class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm font-mono focus:border-blue-500 focus:outline-none"
+        placeholder="123, 456, 789&#10;https://gitlab.domain.com/project/-/merge_requests/123"></textarea>
+    </div>
   </div>
   <button onclick="runCompare()" id="btnCompare"
           class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-6 py-2 rounded-lg font-medium">
@@ -78,37 +86,34 @@ function daysAgo(n) {
 document.getElementById("dateTo").value = today();
 document.getElementById("dateFrom").value = daysAgo(30);
 
-function parseIds(raw) {
-  const jira_ids = [];
-  const mr_ids = [];
-  const tokens = raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean);
-  for (const s of tokens) {
-    // GitLab MR URL: .../merge_requests/123
-    const mrUrl = s.match(/\/merge_requests\/(\d+)/);
-    if (mrUrl) { mr_ids.push(parseInt(mrUrl[1], 10)); continue; }
-    // Jira URL: .../browse/PROJECT-123
-    const jiraUrl = s.match(/\/browse\/([A-Za-z][\w-]*-\d+)/);
-    if (jiraUrl) { jira_ids.push(jiraUrl[1]); continue; }
-    // Full Jira key: PROJECT-123
-    if (/^[A-Za-z][\w-]*-\d+$/.test(s)) { jira_ids.push(s); continue; }
-    // Bare number — could be MR ID or Jira number
-    if (/^\d+$/.test(s)) {
-      // If JIRA_PROJECT is set, treat as Jira; otherwise as MR ID
-      if (JIRA_PROJECT) { jira_ids.push(`${JIRA_PROJECT}-${s}`); }
-      else { mr_ids.push(parseInt(s, 10)); }
-      continue;
-    }
-  }
-  return { jira_ids, mr_ids };
+function parseJiraInput(raw) {
+  return raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(s => {
+    const urlMatch = s.match(/\/browse\/([A-Za-z][\w-]*-\d+)/);
+    if (urlMatch) return urlMatch[1];
+    if (/^[A-Za-z][\w-]*-\d+$/.test(s)) return s;
+    if (/^\d+$/.test(s) && JIRA_PROJECT) return `${JIRA_PROJECT}-${s}`;
+    return s;
+  });
+}
+
+function parseMrInput(raw) {
+  return raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(s => {
+    const urlMatch = s.match(/\/merge_requests\/(\d+)/);
+    if (urlMatch) return parseInt(urlMatch[1], 10);
+    const n = parseInt(s.replace(/[^0-9]/g, ''), 10);
+    return isNaN(n) || n <= 0 ? null : n;
+  }).filter(n => n !== null);
 }
 
 async function runCompare() {
   const dateFrom = document.getElementById("dateFrom").value;
   const dateTo = document.getElementById("dateTo").value;
   const branchesRaw = document.getElementById("branchesInput").value;
-  const idsRaw = document.getElementById("idsInput").value.trim();
+  const jiraRaw = document.getElementById("jiraInput").value.trim();
+  const mrRaw = document.getElementById("mrInput").value.trim();
 
-  const { jira_ids, mr_ids } = parseIds(idsRaw);
+  const jira_ids = jiraRaw ? parseJiraInput(jiraRaw) : [];
+  const mr_ids = mrRaw ? parseMrInput(mrRaw) : [];
   const hasIds = jira_ids.length > 0 || mr_ids.length > 0;
 
   if (!dateFrom && !hasIds) { alert("Укажите диапазон дат или список JIRA/MR ID"); return; }
@@ -128,9 +133,17 @@ async function runCompare() {
   results.classList.add("hidden");
 
   try {
-    const body = { branches, date_from: dateFrom || "", date_to: dateTo || "" };
-    if (jira_ids.length) body.jira_ids = jira_ids;
-    if (mr_ids.length) body.mr_ids = mr_ids;
+    // If IDs specified — search only by IDs, ignore dates
+    const body = { branches };
+    if (hasIds) {
+      body.date_from = "";
+      body.date_to = "";
+      if (jira_ids.length) body.jira_ids = jira_ids;
+      if (mr_ids.length) body.mr_ids = mr_ids;
+    } else {
+      body.date_from = dateFrom;
+      body.date_to = dateTo || "";
+    }
 
     const resp = await fetch("/api/compare/run", {
       method: "POST",
