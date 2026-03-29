@@ -86,6 +86,16 @@ function daysAgo(n) {
 document.getElementById("dateTo").value = today();
 document.getElementById("dateFrom").value = daysAgo(30);
 
+// Load default branches
+fetch("/api/compare/default-branches")
+  .then(r => r.json())
+  .then(data => {
+    if (data.branches && data.branches.length) {
+      document.getElementById("branchesInput").value = data.branches.join(", ");
+    }
+  })
+  .catch(() => {});
+
 function parseJiraInput(raw) {
   return raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(s => {
     const urlMatch = s.match(/\/browse\/([A-Za-z][\w-]*-\d+)/);

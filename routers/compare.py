@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from services.gitlab_client import (
     get_project_id,
     get_all_merged_mrs,
+    get_branches,
     get_mr_by_iid,
     search_merge_requests,
 )
@@ -73,6 +74,32 @@ def _add_to_jira_map(
             jira_map[jira_id][branch].append(mr_info)
     else:
         no_jira.append({**mr_info, "branch": branch})
+
+
+@router.get("/default-branches")
+async def default_branches():
+    """Возвращает master + последнюю release ветку."""
+    project_id = await get_project_id()
+    branches = await get_branches(project_id, search="release/")
+    # Find latest release branch by numeric suffix: release/99 > release/98
+    latest = None
+    latest_num = -1
+    for b in branches:
+        name = b["name"]
+        # Extract number after last /
+        parts = name.rsplit("/", 1)
+        if len(parts) == 2:
+            try:
+                num = int(parts[1])
+                if num > latest_num:
+                    latest_num = num
+                    latest = name
+            except ValueError:
+                pass
+    result = ["master"]
+    if latest:
+        result.append(latest)
+    return {"branches": result}
 
 
 @router.post("/run")
