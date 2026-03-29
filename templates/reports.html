@@ -1,0 +1,512 @@
+{% extends "base.html" %}
+{% block title %}Jira Reports — GitLab Manager{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Jira Reports</h1>
+
+<!-- Tab switcher -->
+<div class="flex gap-1 mb-6 border-b border-slate-700">
+  <button onclick="switchTab('time')" id="tab-btn-time"
+    class="px-4 py-2 text-sm font-medium rounded-t border-b-2 border-blue-500 text-white">
+    Учёт времени
+  </button>
+  <button onclick="switchTab('overtime')" id="tab-btn-overtime"
+    class="px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-white">
+    Переработки
+  </button>
+  <button onclick="switchTab('users')" id="tab-btn-users"
+    class="px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-white">
+    Пользователи
+  </button>
+  <button onclick="switchTab('settings')" id="tab-btn-settings"
+    class="px-4 py-2 text-sm font-medium rounded-t border-b-2 border-transparent text-slate-400 hover:text-white">
+    Настройки
+  </button>
+</div>
+
+<!-- ==================== TAB: Time Logging ==================== -->
+<div id="tab-time">
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-6">
+    <div class="flex items-end gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Месяц</label>
+        <select id="tlMonth" class="bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+          <option value="1">Январь</option><option value="2">Февраль</option>
+          <option value="3">Март</option><option value="4">Апрель</option>
+          <option value="5">Май</option><option value="6">Июнь</option>
+          <option value="7">Июль</option><option value="8">Август</option>
+          <option value="9">Сентябрь</option><option value="10">Октябрь</option>
+          <option value="11">Ноябрь</option><option value="12">Декабрь</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Год</label>
+        <input type="number" id="tlYear" class="w-24 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <button onclick="generateTimeLogging()" id="btnTL"
+        class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-6 py-2 rounded-lg font-medium">
+        Сформировать
+      </button>
+      <button onclick="notifyAllMissing()" id="btnNotifyAll"
+        class="hidden bg-orange-600 hover:bg-orange-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
+        Уведомить всех
+      </button>
+    </div>
+  </div>
+
+  <div id="tlLoading" class="hidden text-center py-8">
+    <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+    <p class="text-slate-400 mt-2">Загрузка данных из Jira...</p>
+  </div>
+  <div id="tlError" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-4 text-red-300"></div>
+
+  <div id="tlResults" class="hidden">
+    <div id="tlStats" class="text-sm text-slate-400 mb-3"></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400 border-b border-slate-700">
+            <th class="px-3 py-2"><input type="checkbox" id="tlCheckAll" onchange="toggleAllTL(this)"></th>
+            <th class="px-3 py-2">Пользователь</th>
+            <th class="px-3 py-2">Статус</th>
+            <th class="px-3 py-2">Дни</th>
+            <th class="px-3 py-2">{{ jira_project }}</th>
+            <th class="px-3 py-2">Другие</th>
+            <th class="px-3 py-2">Пропущено</th>
+            <th class="px-3 py-2">Действия</th>
+          </tr>
+        </thead>
+        <tbody id="tlBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB: Overtime ==================== -->
+<div id="tab-overtime" class="hidden">
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-6">
+    <div class="flex items-end gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Месяц</label>
+        <select id="otMonth" class="bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+          <option value="1">Январь</option><option value="2">Февраль</option>
+          <option value="3">Март</option><option value="4">Апрель</option>
+          <option value="5">Май</option><option value="6">Июнь</option>
+          <option value="7">Июль</option><option value="8">Август</option>
+          <option value="9">Сентябрь</option><option value="10">Октябрь</option>
+          <option value="11">Ноябрь</option><option value="12">Декабрь</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Год</label>
+        <input type="number" id="otYear" class="w-24 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <button onclick="generateOvertime()" id="btnOT"
+        class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-6 py-2 rounded-lg font-medium">
+        Сформировать
+      </button>
+    </div>
+  </div>
+
+  <div id="otLoading" class="hidden text-center py-8">
+    <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+    <p class="text-slate-400 mt-2">Загрузка данных из Jira...</p>
+  </div>
+  <div id="otError" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-4 text-red-300"></div>
+
+  <div id="otResults" class="hidden">
+    <div id="otStats" class="text-sm text-slate-400 mb-3"></div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400 border-b border-slate-700">
+            <th class="px-3 py-2">Пользователь</th>
+            <th class="px-3 py-2">Дата</th>
+            <th class="px-3 py-2">Тип дня</th>
+            <th class="px-3 py-2">Всего</th>
+            <th class="px-3 py-2">{{ jira_project }}</th>
+            <th class="px-3 py-2">Другие</th>
+            <th class="px-3 py-2">Сверх нормы</th>
+            <th class="px-3 py-2">Проекты</th>
+          </tr>
+        </thead>
+        <tbody id="otBody"></tbody>
+      </table>
+    </div>
+    <div class="mt-4 flex items-end gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Email получатели (через запятую)</label>
+        <input type="text" id="otEmails" placeholder="user@example.com, manager@example.com"
+          class="w-96 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <button onclick="sendOvertimeReport()" id="btnSendOT"
+        class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
+        Отправить отчёт
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== TAB: Users ==================== -->
+<div id="tab-users" class="hidden">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-slate-400 border-b border-slate-700">
+          <th class="px-3 py-2">Имя</th>
+          <th class="px-3 py-2">Email</th>
+          <th class="px-3 py-2">Статус</th>
+          <th class="px-3 py-2">Первое появление</th>
+          <th class="px-3 py-2">Последнее появление</th>
+          <th class="px-3 py-2">Действия</th>
+        </tr>
+      </thead>
+      <tbody id="usersBody">
+        {% for u in users %}
+        <tr class="border-b border-slate-700/50 hover:bg-slate-800/50" id="user-row-{{ u.account_id }}">
+          <td class="px-3 py-2">{{ u.display_name or u.account_id }}</td>
+          <td class="px-3 py-2 text-slate-400">{{ u.email_address }}</td>
+          <td class="px-3 py-2">
+            {% if u.active %}
+              <span class="text-green-400 text-xs font-medium px-2 py-0.5 rounded bg-green-900/30">Активен</span>
+            {% else %}
+              <span class="text-slate-500 text-xs font-medium px-2 py-0.5 rounded bg-slate-700/30">Удалён</span>
+            {% endif %}
+          </td>
+          <td class="px-3 py-2 text-slate-400 text-xs">{{ u.first_seen_at }}</td>
+          <td class="px-3 py-2 text-slate-400 text-xs">{{ u.last_seen_at }}</td>
+          <td class="px-3 py-2">
+            <button onclick="toggleUser('{{ u.account_id }}')"
+              class="text-xs px-2 py-1 rounded {% if u.active %}bg-red-600/20 text-red-400 hover:bg-red-600/40{% else %}bg-green-600/20 text-green-400 hover:bg-green-600/40{% endif %}">
+              {% if u.active %}Деактивировать{% else %}Восстановить{% endif %}
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not users %}
+        <tr><td colspan="6" class="px-3 py-8 text-center text-slate-500">Пользователи ещё не загружены. Сформируйте отчёт на вкладке «Учёт времени».</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ==================== TAB: Settings ==================== -->
+<div id="tab-settings" class="hidden">
+  {% for rt, label in [('time_logging', 'Учёт времени'), ('overtime', 'Переработки')] %}
+  {% set s = settings.get(rt, {}) %}
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-6">
+    <h3 class="text-lg font-semibold mb-4">{{ label }}</h3>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="s_{{ rt }}_auto" {% if s.get('auto_send_enabled') %}checked{% endif %}>
+        <label class="text-sm text-slate-300">Авто-отправка</label>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">День месяца</label>
+        <input type="number" id="s_{{ rt }}_day" min="1" max="28" value="{{ s.get('auto_send_day', 1) }}"
+          class="w-20 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Время</label>
+        <input type="time" id="s_{{ rt }}_time" value="{{ s.get('auto_send_time', '09:00') }}"
+          class="bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="s_{{ rt }}_email" {% if s.get('send_email') %}checked{% endif %}>
+        <label class="text-sm text-slate-300">Отправлять по email</label>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Email получатели</label>
+        <input type="text" id="s_{{ rt }}_recipients" value="{{ s.get('email_recipients', '') }}"
+          placeholder="user1@example.com, user2@example.com"
+          class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+    </div>
+    <div class="mb-4">
+      <label class="block text-sm text-slate-400 mb-1">Teams Webhook URL</label>
+      <input type="text" id="s_{{ rt }}_webhook" value="{{ s.get('teams_webhook_url', '') }}"
+        class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+    </div>
+    {% if rt == 'time_logging' %}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4 border-t border-slate-700 pt-4">
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="s_{{ rt }}_auto_notify" {% if s.get('missing_time_auto_notify') %}checked{% endif %}>
+        <label class="text-sm text-slate-300">Авто-уведомление о незалогированном времени</label>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Интервал (дней), 0 = отключено</label>
+        <input type="number" id="s_{{ rt }}_interval" min="0" value="{{ s.get('missing_time_interval_days', 0) }}"
+          class="w-20 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+    </div>
+    {% endif %}
+    <button onclick="saveSettings('{{ rt }}')"
+      class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-6 py-2 rounded-lg font-medium">
+      Сохранить
+    </button>
+    <span id="s_{{ rt }}_ok" class="hidden text-green-400 text-sm ml-3">Сохранено</span>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+const JIRA_PROJECT = "{{ jira_project }}";
+
+// Tab switching
+function switchTab(name) {
+  for (const t of ['time', 'overtime', 'users', 'settings']) {
+    document.getElementById('tab-' + t).classList.toggle('hidden', t !== name);
+    const btn = document.getElementById('tab-btn-' + t);
+    if (t === name) {
+      btn.classList.add('border-blue-500', 'text-white');
+      btn.classList.remove('border-transparent', 'text-slate-400');
+    } else {
+      btn.classList.remove('border-blue-500', 'text-white');
+      btn.classList.add('border-transparent', 'text-slate-400');
+    }
+  }
+}
+
+// Init month/year selectors
+const now = new Date();
+document.getElementById('tlMonth').value = now.getMonth() + 1;
+document.getElementById('tlYear').value = now.getFullYear();
+document.getElementById('otMonth').value = now.getMonth() + 1;
+document.getElementById('otYear').value = now.getFullYear();
+
+// ========== Time Logging ==========
+let tlData = null;
+
+async function generateTimeLogging() {
+  const year = parseInt(document.getElementById('tlYear').value);
+  const month = parseInt(document.getElementById('tlMonth').value);
+  const btn = document.getElementById('btnTL');
+  btn.disabled = true; btn.textContent = 'Загрузка...';
+  document.getElementById('tlLoading').classList.remove('hidden');
+  document.getElementById('tlResults').classList.add('hidden');
+  document.getElementById('tlError').classList.add('hidden');
+  document.getElementById('btnNotifyAll').classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/reports/time-logging', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year, month}),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    tlData = await resp.json();
+    renderTimeLogging(tlData);
+  } catch (e) {
+    document.getElementById('tlError').textContent = e.message;
+    document.getElementById('tlError').classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Сформировать';
+    document.getElementById('tlLoading').classList.add('hidden');
+  }
+}
+
+function renderTimeLogging(data) {
+  const rows = data.rows;
+  document.getElementById('tlStats').textContent =
+    `Проект: ${data.project} | Период: ${data.year}-${String(data.month).padStart(2,'0')} | Найдено пользователей: ${rows.length}`;
+
+  const tbody = document.getElementById('tlBody');
+  tbody.innerHTML = '';
+  let hasMissing = false;
+
+  for (const r of rows) {
+    const isMissing = r.missing_count > 0;
+    if (isMissing) hasMissing = true;
+
+    let statusBadge = '';
+    if (r.status === 'new') statusBadge = '<span class="text-green-400 text-xs font-medium px-1.5 py-0.5 rounded bg-green-900/30 ml-1">NEW</span>';
+    else if (r.status === 'removed') statusBadge = '<span class="text-slate-500 text-xs font-medium px-1.5 py-0.5 rounded bg-slate-700/30 ml-1">REMOVED</span>';
+
+    const missingTitle = r.missing_days.length > 0 ? r.missing_days.join(', ') : '';
+
+    tbody.innerHTML += `
+      <tr class="border-b border-slate-700/50 hover:bg-slate-800/50">
+        <td class="px-3 py-2"><input type="checkbox" class="tl-check" data-uid="${r.account_id}" ${isMissing ? 'checked' : ''}></td>
+        <td class="px-3 py-2">${r.display_name}</td>
+        <td class="px-3 py-2">${statusBadge || '<span class="text-slate-500 text-xs">—</span>'}</td>
+        <td class="px-3 py-2">${r.days_logged} / ${r.total_workdays}</td>
+        <td class="px-3 py-2 text-cyan-400 font-medium">${r.project_hours}h</td>
+        <td class="px-3 py-2 text-slate-400">${r.other_hours}h</td>
+        <td class="px-3 py-2 ${isMissing ? 'text-red-400 font-medium' : 'text-green-400'}" title="${missingTitle}">
+          ${isMissing ? r.missing_count + ' дн.' : '✓'}
+        </td>
+        <td class="px-3 py-2">
+          ${isMissing ? `<button onclick="notifyUser('${r.account_id}')" class="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/40">Уведомить</button>` : ''}
+        </td>
+      </tr>`;
+  }
+
+  if (hasMissing) document.getElementById('btnNotifyAll').classList.remove('hidden');
+  document.getElementById('tlResults').classList.remove('hidden');
+}
+
+function toggleAllTL(cb) {
+  document.querySelectorAll('.tl-check').forEach(c => c.checked = cb.checked);
+}
+
+async function notifyUser(uid) {
+  if (!tlData) return;
+  await _notifyUsers([uid]);
+}
+
+async function notifyAllMissing() {
+  const uids = [...document.querySelectorAll('.tl-check:checked')].map(c => c.dataset.uid);
+  if (!uids.length) return alert('Выберите пользователей');
+  await _notifyUsers(uids);
+}
+
+async function _notifyUsers(uids) {
+  const year = parseInt(document.getElementById('tlYear').value);
+  const month = parseInt(document.getElementById('tlMonth').value);
+  try {
+    const resp = await fetch('/api/reports/notify-missing', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({user_ids: uids, year, month}),
+    });
+    const data = await resp.json();
+    const sent = data.results.filter(r => r.sent).length;
+    alert(`Отправлено: ${sent} из ${data.results.length}`);
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+// ========== Overtime ==========
+let otData = null;
+
+async function generateOvertime() {
+  const year = parseInt(document.getElementById('otYear').value);
+  const month = parseInt(document.getElementById('otMonth').value);
+  const btn = document.getElementById('btnOT');
+  btn.disabled = true; btn.textContent = 'Загрузка...';
+  document.getElementById('otLoading').classList.remove('hidden');
+  document.getElementById('otResults').classList.add('hidden');
+  document.getElementById('otError').classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/reports/overtime', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year, month}),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    otData = await resp.json();
+    renderOvertime(otData);
+  } catch (e) {
+    document.getElementById('otError').textContent = e.message;
+    document.getElementById('otError').classList.remove('hidden');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Сформировать';
+    document.getElementById('otLoading').classList.add('hidden');
+  }
+}
+
+function renderOvertime(data) {
+  const rows = data.rows;
+  document.getElementById('otStats').textContent =
+    `Проект: ${data.project} | Период: ${data.year}-${String(data.month).padStart(2,'0')} | Записей: ${rows.length}`;
+
+  const tbody = document.getElementById('otBody');
+  tbody.innerHTML = '';
+
+  const dayLabels = {workday: 'Рабочий', weekend: 'Выходной', holiday: 'Праздник'};
+
+  for (const r of rows) {
+    const isNonWork = r.day_type !== 'workday';
+    const rowClass = isNonWork ? 'bg-red-900/10' : 'bg-orange-900/10';
+    const dayColor = isNonWork ? 'text-red-400' : 'text-orange-400';
+
+    tbody.innerHTML += `
+      <tr class="border-b border-slate-700/50 ${rowClass}">
+        <td class="px-3 py-2">${r.display_name}</td>
+        <td class="px-3 py-2">${r.date}</td>
+        <td class="px-3 py-2 ${dayColor} font-medium">${dayLabels[r.day_type] || r.day_type}</td>
+        <td class="px-3 py-2 font-medium">${r.total_hours}h</td>
+        <td class="px-3 py-2 text-cyan-400">${r.project_hours}h</td>
+        <td class="px-3 py-2 text-slate-400">${r.other_hours}h</td>
+        <td class="px-3 py-2 ${dayColor} font-medium">+${r.over_norm}h</td>
+        <td class="px-3 py-2 text-slate-400 text-xs">${r.projects.join(', ')}</td>
+      </tr>`;
+  }
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-slate-500">Переработок не найдено</td></tr>';
+  }
+
+  document.getElementById('otResults').classList.remove('hidden');
+}
+
+async function sendOvertimeReport() {
+  if (!otData) return alert('Сначала сформируйте отчёт');
+  const emailsStr = document.getElementById('otEmails').value.trim();
+  if (!emailsStr) return alert('Введите email получателей');
+  const emails = emailsStr.split(',').map(e => e.trim()).filter(Boolean);
+  const year = parseInt(document.getElementById('otYear').value);
+  const month = parseInt(document.getElementById('otMonth').value);
+
+  const btn = document.getElementById('btnSendOT');
+  btn.disabled = true; btn.textContent = 'Отправка...';
+
+  try {
+    const resp = await fetch('/api/reports/send-overtime', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year, month, emails}),
+    });
+    const data = await resp.json();
+    alert(data.sent ? 'Отчёт отправлен' : 'Не отправлено: ' + (data.reason || ''));
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Отправить отчёт';
+  }
+}
+
+// ========== Users ==========
+async function toggleUser(accountId) {
+  try {
+    const resp = await fetch(`/api/reports/users/${encodeURIComponent(accountId)}`, {method: 'PATCH'});
+    if (resp.ok) location.reload();
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+
+// ========== Settings ==========
+async function saveSettings(rt) {
+  const body = {
+    auto_send_enabled: document.getElementById(`s_${rt}_auto`).checked,
+    auto_send_day: parseInt(document.getElementById(`s_${rt}_day`).value) || 1,
+    auto_send_time: document.getElementById(`s_${rt}_time`).value || '09:00',
+    send_email: document.getElementById(`s_${rt}_email`).checked,
+    email_recipients: document.getElementById(`s_${rt}_recipients`).value,
+    teams_webhook_url: document.getElementById(`s_${rt}_webhook`).value,
+    missing_time_auto_notify: rt === 'time_logging' ? (document.getElementById(`s_${rt}_auto_notify`)?.checked || false) : false,
+    missing_time_interval_days: rt === 'time_logging' ? (parseInt(document.getElementById(`s_${rt}_interval`)?.value) || 0) : 0,
+  };
+
+  try {
+    const resp = await fetch(`/api/reports/settings/${rt}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    if (resp.ok) {
+      const ok = document.getElementById(`s_${rt}_ok`);
+      ok.classList.remove('hidden');
+      setTimeout(() => ok.classList.add('hidden'), 3000);
+    }
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  }
+}
+</script>
+{% endblock %}

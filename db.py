@@ -92,6 +92,31 @@ def init_db():
             FOREIGN KEY (session_id) REFERENCES cherry_pick_sessions(id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS jira_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL UNIQUE,
+            display_name TEXT DEFAULT '',
+            email_address TEXT DEFAULT '',
+            active INTEGER DEFAULT 1,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS report_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_type TEXT NOT NULL UNIQUE,
+            auto_send_enabled INTEGER DEFAULT 0,
+            auto_send_day INTEGER DEFAULT 1,
+            auto_send_time TEXT DEFAULT '09:00',
+            send_email INTEGER DEFAULT 0,
+            email_recipients TEXT DEFAULT '',
+            teams_webhook_url TEXT DEFAULT '',
+            missing_time_auto_notify INTEGER DEFAULT 0,
+            missing_time_interval_days INTEGER DEFAULT 0,
+            last_auto_sent_at TEXT DEFAULT '',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
@@ -208,6 +233,20 @@ def seed_default_rule():
         "enabled": 0,
     })
 
+    conn.close()
+
+
+def seed_report_settings():
+    conn = get_db()
+    for rt in ("time_logging", "overtime"):
+        exists = conn.execute(
+            "SELECT 1 FROM report_settings WHERE report_type = ?", (rt,)
+        ).fetchone()
+        if not exists:
+            conn.execute(
+                "INSERT INTO report_settings (report_type) VALUES (?)", (rt,)
+            )
+    conn.commit()
     conn.close()
 
 

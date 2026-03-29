@@ -1,0 +1,485 @@
+import calendar
+import logging
+import os
+import smtplib
+from datetime import date, datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from pathlib import Path
+
+import holidays
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+from db import get_db
+from models import (
+    NotifyMissingRequest,
+    ReportRequest,
+    ReportSettingsUpdate,
+    SendOvertimeRequest,
+)
+from services import jira_client
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["reports"])
+templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _ru_holidays(year: int) -> set[date]:
+    return set(holidays.Russia(years=year).keys())
+
+
+def is_workday(d: date) -> bool:
+    if d.weekday() >= 5:
+        return False
+    if d in _ru_holidays(d.year):
+        return False
+    return True
+
+
+def get_workdays_in_month(year: int, month: int) -> list[date]:
+    _, last_day = calendar.monthrange(year, month)
+    return [
+        date(year, month, d)
+        for d in range(1, last_day + 1)
+        if is_workday(date(year, month, d))
+    ]
+
+
+def _month_range(year: int, month: int) -> tuple[str, str]:
+    _, last_day = calendar.monthrange(year, month)
+    return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last_day:02d}"
+
+
+def _upsert_users(user_map: dict[str, dict]):
+    """Upsert пользователей в jira_users, пометить пропавших."""
+    conn = get_db()
+    existing = {
+        row["account_id"]: dict(row)
+        for row in conn.execute("SELECT * FROM jira_users").fetchall()
+    }
+
+    seen_ids = set(user_map.keys())
+    now = datetime.now().isoformat(timespec="seconds")
+
+    new_users = []
+    removed_users = []
+
+    for uid, info in user_map.items():
+        if uid in existing:
+            conn.execute(
+                "UPDATE jira_users SET display_name=?, email_address=?, active=1, last_seen_at=? WHERE account_id=?",
+                (info["display_name"], info["email"], now, uid),
+            )
+            if not existing[uid]["active"]:
+                new_users.append(uid)
+        else:
+            conn.execute(
+                "INSERT INTO jira_users (account_id, display_name, email_address, first_seen_at, last_seen_at) VALUES (?,?,?,?,?)",
+                (uid, info["display_name"], info["email"], now, now),
+            )
+            new_users.append(uid)
+
+    for uid, row in existing.items():
+        if uid not in seen_ids and row["active"]:
+            conn.execute(
+                "UPDATE jira_users SET active=0, last_seen_at=? WHERE account_id=?",
+                (now, uid),
+            )
+            removed_users.append(uid)
+
+    conn.commit()
+    conn.close()
+    return new_users, removed_users
+
+
+def _format_hours(seconds: int) -> str:
+    h = seconds / 3600
+    return f"{h:.1f}"
+
+
+def _send_email(recipients: list[str], subject: str, html_body: str):
+    host = os.getenv("SMTP_HOST", "")
+    if not recipients or not host:
+        raise ConnectionError("SMTP не настроен или нет получателей")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    sender = os.getenv("SMTP_FROM", user)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    with smtplib.SMTP(host, port) as server:
+        if port == 587:
+            server.starttls()
+        if user and password:
+            server.login(user, password)
+        server.sendmail(sender, recipients, msg.as_string())
+
+
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
+
+@router.get("/reports", response_class=HTMLResponse)
+def reports_page(request: Request):
+    conn = get_db()
+    users = [dict(r) for r in conn.execute("SELECT * FROM jira_users ORDER BY display_name").fetchall()]
+    settings_rows = conn.execute("SELECT * FROM report_settings").fetchall()
+    conn.close()
+    settings = {row["report_type"]: dict(row) for row in settings_rows}
+    return templates.TemplateResponse(request, "reports.html", {
+        "jira_url": os.getenv("JIRA_URL", ""),
+        "jira_project": os.getenv("JIRA_PROJECT", ""),
+        "users": users,
+        "settings": settings,
+    })
+
+
+# ---------------------------------------------------------------------------
+# API: Time Logging report
+# ---------------------------------------------------------------------------
+
+@router.post("/api/reports/time-logging")
+async def time_logging_report(body: ReportRequest):
+    project = os.getenv("JIRA_PROJECT", "")
+    date_from, date_to = _month_range(body.year, body.month)
+
+    project_worklogs = await jira_client.get_all_worklogs_for_project(
+        project, date_from, date_to,
+    )
+
+    user_info: dict[str, dict] = {}
+    for uid, entries in project_worklogs.items():
+        if entries:
+            user_info[uid] = {
+                "display_name": entries[0]["display_name"],
+                "email": entries[0]["email"],
+            }
+
+    new_users, removed_users = _upsert_users(user_info)
+
+    user_ids = list(project_worklogs.keys())
+    other_worklogs: dict[str, list[dict]] = {}
+    if user_ids:
+        other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+            user_ids, date_from, date_to,
+        )
+
+    workdays = get_workdays_in_month(body.year, body.month)
+    workday_strs = {d.isoformat() for d in workdays}
+
+    rows = []
+    for uid in sorted(user_ids, key=lambda u: (project_worklogs.get(u, [{}])[0].get("display_name", "") if project_worklogs.get(u) else "")):
+        proj_entries = project_worklogs.get(uid, [])
+        all_entries = other_worklogs.get(uid, proj_entries)
+
+        proj_seconds = sum(e["seconds"] for e in proj_entries)
+        proj_dates = {e["date"] for e in proj_entries}
+
+        other_entries = [e for e in all_entries if e["project"] != project]
+        other_seconds = sum(e["seconds"] for e in other_entries)
+        all_dates = {e["date"] for e in all_entries}
+
+        today = date.today()
+        relevant_workdays = {d for d in workday_strs if d <= today.isoformat()}
+        missing_days = sorted(relevant_workdays - all_dates)
+
+        display_name = proj_entries[0]["display_name"] if proj_entries else uid
+        email = proj_entries[0]["email"] if proj_entries else ""
+
+        status = "new" if uid in new_users else ("removed" if uid in removed_users else "active")
+
+        rows.append({
+            "account_id": uid,
+            "display_name": display_name,
+            "email": email,
+            "status": status,
+            "project_hours": _format_hours(proj_seconds),
+            "other_hours": _format_hours(other_seconds),
+            "days_logged": len(proj_dates),
+            "total_workdays": len(relevant_workdays),
+            "missing_days": missing_days,
+            "missing_count": len(missing_days),
+        })
+
+    return {"rows": rows, "year": body.year, "month": body.month, "project": project}
+
+
+# ---------------------------------------------------------------------------
+# API: Overtime report
+# ---------------------------------------------------------------------------
+
+@router.post("/api/reports/overtime")
+async def overtime_report(body: ReportRequest):
+    project = os.getenv("JIRA_PROJECT", "")
+    date_from, date_to = _month_range(body.year, body.month)
+
+    conn = get_db()
+    db_users = conn.execute("SELECT * FROM jira_users WHERE active = 1").fetchall()
+    conn.close()
+    user_ids = [r["account_id"] for r in db_users]
+
+    if not user_ids:
+        return {"rows": [], "year": body.year, "month": body.month}
+
+    all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+        user_ids, date_from, date_to,
+    )
+
+    hols = _ru_holidays(body.year)
+    rows = []
+
+    for uid in user_ids:
+        entries = all_worklogs.get(uid, [])
+        if not entries:
+            continue
+
+        display_name = entries[0]["display_name"] if entries else uid
+
+        by_date: dict[str, list[dict]] = {}
+        for e in entries:
+            by_date.setdefault(e["date"], []).append(e)
+
+        for day_str, day_entries in sorted(by_date.items()):
+            d = date.fromisoformat(day_str)
+            total_seconds = sum(e["seconds"] for e in day_entries)
+            total_hours = total_seconds / 3600
+
+            is_weekend = d.weekday() >= 5
+            is_holiday = d in hols
+            is_wd = not is_weekend and not is_holiday
+
+            overtime = False
+            if is_wd and total_hours > 8:
+                overtime = True
+            elif is_weekend or is_holiday:
+                overtime = True
+
+            if not overtime:
+                continue
+
+            proj_seconds = sum(e["seconds"] for e in day_entries if e["project"] == project)
+            other_seconds = total_seconds - proj_seconds
+
+            day_type = "holiday" if is_holiday else ("weekend" if is_weekend else "workday")
+
+            projects_list = sorted({e["project"] for e in day_entries})
+
+            rows.append({
+                "account_id": uid,
+                "display_name": display_name,
+                "date": day_str,
+                "day_type": day_type,
+                "total_hours": f"{total_hours:.1f}",
+                "project_hours": _format_hours(proj_seconds),
+                "other_hours": _format_hours(other_seconds),
+                "over_norm": f"{(total_hours - 8):.1f}" if is_wd else f"{total_hours:.1f}",
+                "projects": projects_list,
+            })
+
+    return {"rows": rows, "year": body.year, "month": body.month, "project": project}
+
+
+# ---------------------------------------------------------------------------
+# API: Users
+# ---------------------------------------------------------------------------
+
+@router.get("/api/reports/users")
+def list_users():
+    conn = get_db()
+    users = [dict(r) for r in conn.execute("SELECT * FROM jira_users ORDER BY display_name").fetchall()]
+    conn.close()
+    return users
+
+
+@router.patch("/api/reports/users/{account_id}")
+def toggle_user(account_id: str):
+    conn = get_db()
+    row = conn.execute("SELECT active FROM jira_users WHERE account_id = ?", (account_id,)).fetchone()
+    if not row:
+        conn.close()
+        return {"error": "not found"}
+    new_active = 0 if row["active"] else 1
+    conn.execute("UPDATE jira_users SET active = ? WHERE account_id = ?", (new_active, account_id))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "active": new_active}
+
+
+# ---------------------------------------------------------------------------
+# API: Notify missing time
+# ---------------------------------------------------------------------------
+
+@router.post("/api/reports/notify-missing")
+async def notify_missing(body: NotifyMissingRequest):
+    project = os.getenv("JIRA_PROJECT", "")
+    date_from, date_to = _month_range(body.year, body.month)
+    workdays = get_workdays_in_month(body.year, body.month)
+    today = date.today()
+    relevant_workdays = {d.isoformat() for d in workdays if d <= today}
+
+    all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+        body.user_ids, date_from, date_to,
+    )
+
+    conn = get_db()
+    settings_row = conn.execute(
+        "SELECT * FROM report_settings WHERE report_type = 'time_logging'"
+    ).fetchone()
+    conn.close()
+    webhook_url = (settings_row["teams_webhook_url"] if settings_row else "") or os.getenv("TEAMS_WEBHOOK_URL", "")
+
+    results = []
+    for uid in body.user_ids:
+        entries = all_worklogs.get(uid, [])
+        logged_dates = {e["date"] for e in entries}
+        missing = sorted(relevant_workdays - logged_dates)
+
+        if not missing:
+            results.append({"account_id": uid, "sent": False, "reason": "no missing days"})
+            continue
+
+        conn2 = get_db()
+        user_row = conn2.execute("SELECT * FROM jira_users WHERE account_id = ?", (uid,)).fetchone()
+        conn2.close()
+        display_name = user_row["display_name"] if user_row else uid
+
+        month_name = f"{body.year}-{body.month:02d}"
+        missing_str = ", ".join(missing)
+        message = (
+            f"Напоминание: у пользователя {display_name} не залогировано время "
+            f"за {month_name} в проекте {project}.\n"
+            f"Пропущенные дни: {missing_str}"
+        )
+
+        sent_teams = False
+        sent_email = False
+        error = ""
+
+        if webhook_url:
+            try:
+                from services.teams_client import send_teams_notification
+                await send_teams_notification(
+                    webhook_url=webhook_url,
+                    mr_title=f"Незалогированное время — {display_name}",
+                    mr_url=f"{os.getenv('JIRA_URL', '')}/secure/Dashboard.jspa",
+                    file_path=f"Проект: {project}",
+                    file_content=message,
+                    rule_name="Jira Time Logging",
+                )
+                sent_teams = True
+            except Exception as e:
+                error = str(e)
+                logger.error("notify_missing teams %s: %s", uid, e)
+
+        email = user_row["email_address"] if user_row else ""
+        if email:
+            try:
+                _send_email(
+                    [email],
+                    f"Незалогированное время — {month_name}",
+                    f"<h3>{message}</h3>",
+                )
+                sent_email = True
+            except Exception as e:
+                error += f" email: {e}"
+                logger.error("notify_missing email %s: %s", uid, e)
+
+        results.append({"account_id": uid, "sent": sent_teams or sent_email, "error": error})
+
+    return {"results": results}
+
+
+# ---------------------------------------------------------------------------
+# API: Send overtime report
+# ---------------------------------------------------------------------------
+
+@router.post("/api/reports/send-overtime")
+async def send_overtime_email(body: SendOvertimeRequest):
+    report = await overtime_report(ReportRequest(year=body.year, month=body.month))
+    rows = report["rows"]
+
+    if not rows:
+        return {"sent": False, "reason": "no overtime data"}
+
+    html_rows = ""
+    for r in rows:
+        day_class = "color:red" if r["day_type"] != "workday" else "color:orange"
+        html_rows += (
+            f'<tr style="{day_class}">'
+            f'<td style="padding:4px 8px">{r["display_name"]}</td>'
+            f'<td style="padding:4px 8px">{r["date"]}</td>'
+            f'<td style="padding:4px 8px">{r["day_type"]}</td>'
+            f'<td style="padding:4px 8px">{r["total_hours"]}h</td>'
+            f'<td style="padding:4px 8px">{r["project_hours"]}h</td>'
+            f'<td style="padding:4px 8px">{r["other_hours"]}h</td>'
+            f'<td style="padding:4px 8px">+{r["over_norm"]}h</td>'
+            f"</tr>"
+        )
+
+    month_name = f"{body.year}-{body.month:02d}"
+    html = f"""\
+<html><body style="font-family:Arial,sans-serif;color:#333">
+<h2>Отчёт по переработкам — {month_name}</h2>
+<table style="border-collapse:collapse;border:1px solid #ccc">
+<tr style="background:#f0f0f0;font-weight:bold">
+<td style="padding:4px 8px">Пользователь</td>
+<td style="padding:4px 8px">Дата</td>
+<td style="padding:4px 8px">Тип дня</td>
+<td style="padding:4px 8px">Всего</td>
+<td style="padding:4px 8px">{report['project']}</td>
+<td style="padding:4px 8px">Другие</td>
+<td style="padding:4px 8px">Сверх нормы</td>
+</tr>
+{html_rows}
+</table>
+</body></html>"""
+
+    _send_email(body.emails, f"Отчёт по переработкам — {month_name}", html)
+    return {"sent": True}
+
+
+# ---------------------------------------------------------------------------
+# API: Settings
+# ---------------------------------------------------------------------------
+
+@router.get("/api/reports/settings")
+def get_settings():
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM report_settings").fetchall()
+    conn.close()
+    return {row["report_type"]: dict(row) for row in rows}
+
+
+@router.put("/api/reports/settings/{report_type}")
+def update_settings(report_type: str, body: ReportSettingsUpdate):
+    conn = get_db()
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute(
+        """UPDATE report_settings SET
+            auto_send_enabled=?, auto_send_day=?, auto_send_time=?,
+            send_email=?, email_recipients=?, teams_webhook_url=?,
+            missing_time_auto_notify=?, missing_time_interval_days=?,
+            updated_at=?
+           WHERE report_type=?""",
+        (
+            int(body.auto_send_enabled), body.auto_send_day, body.auto_send_time,
+            int(body.send_email), body.email_recipients, body.teams_webhook_url,
+            int(body.missing_time_auto_notify), body.missing_time_interval_days,
+            now, report_type,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}

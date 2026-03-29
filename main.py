@@ -14,8 +14,9 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from db import init_db, seed_default_rule
+from db import init_db, seed_default_rule, seed_report_settings
 from services.poller import start_polling
+from services.reports_scheduler import start_reports_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,9 +31,12 @@ BASE_DIR = Path(__file__).parent
 async def lifespan(app: FastAPI):
     init_db()
     seed_default_rule()
-    task = asyncio.create_task(start_polling())
+    seed_report_settings()
+    poll_task = asyncio.create_task(start_polling())
+    reports_task = asyncio.create_task(start_reports_scheduler())
     yield
-    task.cancel()
+    poll_task.cancel()
+    reports_task.cancel()
 
 
 app = FastAPI(title="GitLab Manager", lifespan=lifespan)
@@ -41,12 +45,13 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-from routers import rules, pages, queue, compare  # noqa: E402
+from routers import rules, pages, queue, compare, reports  # noqa: E402
 
 app.include_router(rules.router)
 app.include_router(pages.router)
 app.include_router(queue.router)
 app.include_router(compare.router)
+app.include_router(reports.router)
 
 if __name__ == "__main__":
     import uvicorn

@@ -47,6 +47,34 @@ class RuleOut(BaseModel):
     emails: list[str] = []
 
 
+class ReportRequest(BaseModel):
+    year: int
+    month: int
+
+
+class NotifyMissingRequest(BaseModel):
+    user_ids: list[str]
+    year: int
+    month: int
+
+
+class SendOvertimeRequest(BaseModel):
+    year: int
+    month: int
+    emails: list[str]
+
+
+class ReportSettingsUpdate(BaseModel):
+    auto_send_enabled: bool = False
+    auto_send_day: int = 1
+    auto_send_time: str = "09:00"
+    send_email: bool = False
+    email_recipients: str = ""
+    teams_webhook_url: str = ""
+    missing_time_auto_notify: bool = False
+    missing_time_interval_days: int = 0
+
+
 class LogOut(BaseModel):
     id: int
     rule_id: int
