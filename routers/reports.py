@@ -7,7 +7,6 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-import holidays
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -31,8 +30,21 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 # Helpers
 # ---------------------------------------------------------------------------
 
+# Официальные праздничные дни РФ (фиксированные даты, ст. 112 ТК РФ).
+# Переносы выходных не учитываются — при необходимости можно расширить.
+_RU_HOLIDAY_DATES = [
+    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
+    (2, 23),
+    (3, 8),
+    (5, 1),
+    (5, 9),
+    (6, 12),
+    (11, 4),
+]
+
+
 def _ru_holidays(year: int) -> set[date]:
-    return set(holidays.Russia(years=year).keys())
+    return {date(year, m, d) for m, d in _RU_HOLIDAY_DATES}
 
 
 def is_workday(d: date) -> bool:
