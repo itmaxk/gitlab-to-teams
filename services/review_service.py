@@ -61,18 +61,29 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
         "temperature": 0.1,
     }
 
-    timeout = httpx.Timeout(connect=10, read=600, write=10, pool=10)
+    timeout = httpx.Timeout(connect=10, read=600, write=30, pool=10)
+    last_exc = None
     async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
         for attempt in range(3):
-            resp = await client.post(api_url, headers=headers, json=payload)
+            try:
+                resp = await client.post(api_url, headers=headers, json=payload)
+            except (httpx.ReadError, httpx.ReadTimeout, httpx.ConnectError) as e:
+                last_exc = e
+                delay = (attempt + 1) * 10
+                logger.warning("LLM network error (%s), retry %d/3 in %ds", type(e).__name__, attempt + 1, delay)
+                await asyncio.sleep(delay)
+                continue
             if resp.status_code == 429:
                 delay = (attempt + 1) * 10
                 logger.warning("LLM rate limit (429), retry %d/3 in %ds", attempt + 1, delay)
                 await asyncio.sleep(delay)
                 continue
             resp.raise_for_status()
+            last_exc = None
             break
         else:
+            if last_exc:
+                raise last_exc
             resp.raise_for_status()
         data = resp.json()
 
