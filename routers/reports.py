@@ -1,3 +1,4 @@
+import asyncio
 import calendar
 import logging
 import os
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reports"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -620,13 +622,18 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         lookup_diagnostics_error = ""
         if lookup_candidates:
             try:
-                lookup_diagnostics = (
-                    await jira_client.diagnose_worklog_author_candidates(
+                lookup_diagnostics = await asyncio.wait_for(
+                    jira_client.diagnose_worklog_author_candidates(
                         lookup_candidates,
                         date_from,
                         date_to,
                         issue_key=issue_key,
-                    )
+                    ),
+                    timeout=_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                lookup_diagnostics_error = (
+                    f"lookup timeout after {_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS}s"
                 )
             except Exception as exc:
                 lookup_diagnostics_error = str(exc)

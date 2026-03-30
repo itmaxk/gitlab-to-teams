@@ -277,3 +277,55 @@ def test_overtime_debug_issue_survives_lookup_diagnostics_failure(
     assert users["user-a"]["included_due_to_issue"] is True
     assert users["user-a"]["lookup_diagnostics"] == {}
     assert users["user-a"]["lookup_diagnostics_error"] == "connect failed"
+
+
+def test_overtime_debug_issue_times_out_slow_lookup_diagnostics(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "debug-timeout-data.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+    monkeypatch.setattr(reports, "_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS", 0.01)
+
+    async def fake_get_issue_worklogs(issue_key, start_at=0, max_results=1000):
+        return {
+            "worklogs": [
+                {
+                    "author": {
+                        "accountId": "user-a",
+                        "displayName": "User A",
+                        "emailAddress": "a@example.com",
+                    },
+                    "started": "2026-03-02T09:00:00.000+0000",
+                    "timeSpentSeconds": 10 * 3600,
+                }
+            ]
+        }
+
+    async def fake_diagnose_worklog_author_candidates(
+        candidate_ids, date_from, date_to, issue_key=""
+    ):
+        await asyncio.sleep(0.05)
+        return {"user-a": {"issues_found": 1}}
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_issue_worklogs",
+        fake_get_issue_worklogs,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "diagnose_worklog_author_candidates",
+        fake_diagnose_worklog_author_candidates,
+    )
+
+    result = asyncio.run(
+        reports.overtime_debug_issue(
+            OvertimeDebugRequest(year=2026, month=3, issue_key="main-1")
+        )
+    )
+
+    users = {user["account_id"]: user for user in result["users"]}
+    assert users["user-a"]["lookup_diagnostics"] == {}
+    assert users["user-a"]["lookup_diagnostics_error"] == "lookup timeout after 0.01s"
