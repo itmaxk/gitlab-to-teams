@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from services.gitlab_client import get_mr_diff, get_project_id
 
 logger = logging.getLogger(__name__)
 
-MAX_DIFF_CHARS = 100_000
+MAX_DIFF_CHARS = int(os.getenv("REVIEW_MAX_DIFF_CHARS", "60000"))
 
 
 def _get_system_prompt() -> str:
@@ -62,8 +63,17 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
 
     timeout = httpx.Timeout(connect=10, read=600, write=10, pool=10)
     async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
-        resp = await client.post(api_url, headers=headers, json=payload)
-        resp.raise_for_status()
+        for attempt in range(3):
+            resp = await client.post(api_url, headers=headers, json=payload)
+            if resp.status_code == 429:
+                delay = (attempt + 1) * 10
+                logger.warning("LLM rate limit (429), retry %d/3 in %ds", attempt + 1, delay)
+                await asyncio.sleep(delay)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
         data = resp.json()
 
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
