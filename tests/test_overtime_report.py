@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fastapi.templating
+from fastapi import HTTPException
 
 
 class _DummyJinja2Templates:
@@ -329,3 +330,28 @@ def test_overtime_debug_issue_times_out_slow_lookup_diagnostics(
     users = {user["account_id"]: user for user in result["users"]}
     assert users["user-a"]["lookup_diagnostics"] == {}
     assert users["user-a"]["lookup_diagnostics_error"] == "lookup timeout after 0.01s"
+
+
+def test_overtime_report_returns_http_502_when_jira_project_lookup_fails(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "overtime-http-error.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_all_worklogs_for_project(project, date_from, date_to):
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_all_worklogs_for_project",
+        fake_get_all_worklogs_for_project,
+    )
+
+    try:
+        asyncio.run(reports.overtime_report(ReportRequest(year=2026, month=3)))
+        assert False, "Expected HTTPException"
+    except HTTPException as exc:
+        assert exc.status_code == 502
+        assert exc.detail == "Failed to load Jira worklogs for overtime report"

@@ -588,11 +588,14 @@ async function sendTimeLoggingReport() {
 
 // ========== Overtime ==========
 let otData = null;
+let otRequestInFlight = false;
 
 async function generateOvertime() {
+  if (otRequestInFlight) return;
   const year = parseInt(document.getElementById('otYear').value);
   const month = parseInt(document.getElementById('otMonth').value);
   const btn = document.getElementById('btnOT');
+  otRequestInFlight = true;
   btn.disabled = true; btn.textContent = 'Загрузка...';
   document.getElementById('otLoading').classList.remove('hidden');
   document.getElementById('otResults').classList.add('hidden');
@@ -611,6 +614,7 @@ async function generateOvertime() {
     document.getElementById('otError').textContent = e.message;
     document.getElementById('otError').classList.remove('hidden');
   } finally {
+    otRequestInFlight = false;
     btn.disabled = false; btn.textContent = 'Сформировать';
     document.getElementById('otLoading').classList.add('hidden');
   }

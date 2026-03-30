@@ -8,7 +8,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -387,11 +387,18 @@ async def time_logging_report(body: ReportRequest):
     project = os.getenv("JIRA_PROJECT", "")
     date_from, date_to = _month_range(body.year, body.month)
 
-    project_worklogs = await jira_client.get_all_worklogs_for_project(
-        project,
-        date_from,
-        date_to,
-    )
+    try:
+        project_worklogs = await jira_client.get_all_worklogs_for_project(
+            project,
+            date_from,
+            date_to,
+        )
+    except Exception as exc:
+        logger.error("time_logging_report project worklogs failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load Jira worklogs for time logging report",
+        ) from exc
 
     user_info: dict[str, dict] = {}
     for uid, entries in project_worklogs.items():
@@ -516,11 +523,18 @@ async def overtime_report(body: ReportRequest):
     date_from, date_to = _month_range(body.year, body.month)
 
     # 1. Собираем пользователей из проекта за период
-    project_worklogs = await jira_client.get_all_worklogs_for_project(
-        project,
-        date_from,
-        date_to,
-    )
+    try:
+        project_worklogs = await jira_client.get_all_worklogs_for_project(
+            project,
+            date_from,
+            date_to,
+        )
+    except Exception as exc:
+        logger.error("overtime_report project worklogs failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load Jira worklogs for overtime report",
+        ) from exc
     project_user_ids = set(project_worklogs.keys())
 
     # 2. Добавляем сохранённых в БД пользователей
@@ -534,11 +548,18 @@ async def overtime_report(body: ReportRequest):
         return {"rows": [], "year": body.year, "month": body.month}
 
     # 3. Для всех пользователей ищем ворклоги во всех проектах
-    all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-        all_user_ids,
-        date_from,
-        date_to,
-    )
+    try:
+        all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+            all_user_ids,
+            date_from,
+            date_to,
+        )
+    except Exception as exc:
+        logger.error("overtime_report user worklogs failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load Jira user worklogs for overtime report",
+        ) from exc
 
     year_cal = _get_year_calendar(body.year)
     rows = []
