@@ -117,6 +117,15 @@ def init_db():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS user_vacations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id TEXT NOT NULL,
+            date_from TEXT NOT NULL,
+            date_to TEXT NOT NULL,
+            note TEXT DEFAULT '',
+            FOREIGN KEY (account_id) REFERENCES jira_users(account_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS holiday_overrides (
             dt TEXT PRIMARY KEY,
             day_type INTEGER NOT NULL

@@ -168,6 +168,7 @@
           <th class="px-3 py-2">Имя</th>
           <th class="px-3 py-2">Email</th>
           <th class="px-3 py-2">Статус</th>
+          <th class="px-3 py-2">Отпуска</th>
           <th class="px-3 py-2">Первое появление</th>
           <th class="px-3 py-2">Последнее появление</th>
           <th class="px-3 py-2">Действия</th>
@@ -175,7 +176,8 @@
       </thead>
       <tbody id="usersBody">
         {% for u in users %}
-        <tr class="border-b border-slate-700/50 hover:bg-slate-800/50" id="user-row-{{ u.account_id }}">
+        {% set uvacs = vacations.get(u.account_id, []) %}
+        <tr class="border-b border-slate-700/50 hover:bg-slate-800/50">
           <td class="px-3 py-2">{{ u.display_name or u.account_id }}</td>
           <td class="px-3 py-2 text-slate-400">{{ u.email_address }}</td>
           <td class="px-3 py-2">
@@ -185,21 +187,63 @@
               <span class="text-slate-500 text-xs font-medium px-2 py-0.5 rounded bg-slate-700/30">Удалён</span>
             {% endif %}
           </td>
+          <td class="px-3 py-2">
+            {% if uvacs %}
+              <span class="text-blue-400 text-xs">{{ uvacs|length }} период{{ 'ов' if uvacs|length > 1 else '' }}</span>
+            {% else %}
+              <span class="text-slate-500 text-xs">—</span>
+            {% endif %}
+          </td>
           <td class="px-3 py-2 text-slate-400 text-xs">{{ u.first_seen_at }}</td>
           <td class="px-3 py-2 text-slate-400 text-xs">{{ u.last_seen_at }}</td>
-          <td class="px-3 py-2">
+          <td class="px-3 py-2 flex gap-1">
             <button onclick="toggleUser('{{ u.account_id }}')"
               class="text-xs px-2 py-1 rounded {% if u.active %}bg-red-600/20 text-red-400 hover:bg-red-600/40{% else %}bg-green-600/20 text-green-400 hover:bg-green-600/40{% endif %}">
               {% if u.active %}Деактивировать{% else %}Восстановить{% endif %}
+            </button>
+            <button onclick="openVacationModal('{{ u.account_id }}', '{{ u.display_name or u.account_id }}')"
+              class="text-xs px-2 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/40">
+              Отпуска
             </button>
           </td>
         </tr>
         {% endfor %}
         {% if not users %}
-        <tr><td colspan="6" class="px-3 py-8 text-center text-slate-500">Пользователи ещё не загружены. Сформируйте отчёт на вкладке «Учёт времени».</td></tr>
+        <tr><td colspan="7" class="px-3 py-8 text-center text-slate-500">Пользователи ещё не загружены. Сформируйте отчёт на вкладке «Учёт времени».</td></tr>
         {% endif %}
       </tbody>
     </table>
+  </div>
+</div>
+
+<!-- Vacation modal -->
+<div id="vacModal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50" onclick="if(event.target===this)closeVacModal()">
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-6 w-full max-w-lg">
+    <div class="flex justify-between items-center mb-4">
+      <h3 class="text-lg font-semibold" id="vacModalTitle">Отпуска</h3>
+      <button onclick="closeVacModal()" class="text-slate-400 hover:text-white text-xl">&times;</button>
+    </div>
+    <div id="vacList" class="mb-4 max-h-60 overflow-y-auto"></div>
+    <div class="border-t border-slate-700 pt-4">
+      <div class="text-sm text-slate-400 mb-2">Добавить период отпуска</div>
+      <div class="flex gap-2 items-end">
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">С</label>
+          <input type="date" id="vacFrom" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">По</label>
+          <input type="date" id="vacTo" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-500 mb-1">Заметка</label>
+          <input type="text" id="vacNote" placeholder="Отпуск" class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white text-sm w-28">
+        </div>
+        <button onclick="addVacation()" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-3 py-1 rounded font-medium">
+          Добавить
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -637,6 +681,69 @@ async function toggleUser(accountId) {
   } catch (e) {
     alert('Ошибка: ' + e.message);
   }
+}
+
+// ========== Vacations ==========
+let vacCurrentUser = '';
+
+function openVacationModal(accountId, displayName) {
+  vacCurrentUser = accountId;
+  document.getElementById('vacModalTitle').textContent = `Отпуска — ${displayName}`;
+  document.getElementById('vacModal').classList.remove('hidden');
+  loadVacations();
+}
+
+function closeVacModal() {
+  document.getElementById('vacModal').classList.add('hidden');
+  vacCurrentUser = '';
+}
+
+async function loadVacations() {
+  const resp = await fetch(`/api/reports/users/${encodeURIComponent(vacCurrentUser)}/vacations`);
+  const vacs = await resp.json();
+  const list = document.getElementById('vacList');
+  if (!vacs.length) {
+    list.innerHTML = '<div class="text-slate-500 text-sm py-2">Нет периодов отпуска</div>';
+    return;
+  }
+  let html = '<table class="w-full text-sm"><thead><tr class="text-slate-400 text-xs border-b border-slate-700">' +
+    '<th class="px-2 py-1 text-left">С</th><th class="px-2 py-1 text-left">По</th>' +
+    '<th class="px-2 py-1 text-left">Заметка</th><th class="px-2 py-1"></th></tr></thead><tbody>';
+  for (const v of vacs) {
+    html += `<tr class="border-b border-slate-700/30">
+      <td class="px-2 py-1">${v.date_from}</td>
+      <td class="px-2 py-1">${v.date_to}</td>
+      <td class="px-2 py-1 text-slate-400">${v.note || ''}</td>
+      <td class="px-2 py-1"><button onclick="deleteVacation(${v.id})" class="text-red-400 hover:text-red-300 text-xs">Удалить</button></td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  list.innerHTML = html;
+}
+
+async function addVacation() {
+  const date_from = document.getElementById('vacFrom').value;
+  const date_to = document.getElementById('vacTo').value;
+  const note = document.getElementById('vacNote').value;
+  if (!date_from || !date_to) return alert('Укажите даты');
+  if (date_from > date_to) return alert('Дата начала должна быть раньше даты окончания');
+  await fetch(`/api/reports/users/${encodeURIComponent(vacCurrentUser)}/vacations`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({date_from, date_to, note}),
+  });
+  document.getElementById('vacFrom').value = '';
+  document.getElementById('vacTo').value = '';
+  document.getElementById('vacNote').value = '';
+  loadVacations();
+  // Reload page to update vacation counts
+  setTimeout(() => location.reload(), 500);
+}
+
+async function deleteVacation(id) {
+  await fetch(`/api/reports/vacations/${id}`, {method: 'DELETE'});
+  loadVacations();
+  setTimeout(() => location.reload(), 500);
 }
 
 // ========== Settings ==========

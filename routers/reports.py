@@ -2,7 +2,7 @@ import calendar
 import logging
 import os
 import smtplib
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -180,6 +180,9 @@ def _send_email(recipients: list[str], subject: str, html_body: str):
 def reports_page(request: Request):
     conn = get_db()
     users = [dict(r) for r in conn.execute("SELECT * FROM jira_users ORDER BY display_name").fetchall()]
+    vacations = {}
+    for v in conn.execute("SELECT * FROM user_vacations ORDER BY date_from").fetchall():
+        vacations.setdefault(v["account_id"], []).append(dict(v))
     settings_rows = conn.execute("SELECT * FROM report_settings").fetchall()
     conn.close()
     settings = {row["report_type"]: dict(row) for row in settings_rows}
@@ -187,6 +190,7 @@ def reports_page(request: Request):
         "jira_url": os.getenv("JIRA_URL", ""),
         "jira_project": os.getenv("JIRA_PROJECT", ""),
         "users": users,
+        "vacations": vacations,
         "settings": settings,
     })
 
@@ -229,6 +233,9 @@ async def time_logging_report(body: ReportRequest):
     # Рабочие дни строго до сегодняшнего дня (сегодня не учитывается)
     past_workdays = {d for d in workday_strs if d < today_str}
 
+    # Загрузить отпуска пользователей
+    vacation_dates = _get_vacation_dates(user_ids, date_from, date_to) if user_ids else {}
+
     rows = []
     for uid in sorted(user_ids, key=lambda u: (project_worklogs.get(u, [{}])[0].get("display_name", "") if project_worklogs.get(u) else "")):
         proj_entries = project_worklogs.get(uid, [])
@@ -242,7 +249,8 @@ async def time_logging_report(body: ReportRequest):
         other_entries = [e for e in all_entries if e["project"] != project]
         other_seconds = sum(e["seconds"] for e in other_entries)
 
-        missing_days = sorted(past_workdays - all_dates)
+        user_vacation = vacation_dates.get(uid, set())
+        missing_days = sorted(past_workdays - all_dates - user_vacation)
 
         display_name = proj_entries[0]["display_name"] if proj_entries else uid
         email = proj_entries[0]["email"] if proj_entries else ""
@@ -385,6 +393,73 @@ def toggle_user(account_id: str):
     conn.commit()
     conn.close()
     return {"ok": True, "active": new_active}
+
+
+# ---------------------------------------------------------------------------
+# API: Vacations
+# ---------------------------------------------------------------------------
+
+@router.get("/api/reports/users/{account_id}/vacations")
+def get_vacations(account_id: str):
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM user_vacations WHERE account_id = ? ORDER BY date_from",
+        (account_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.post("/api/reports/users/{account_id}/vacations")
+def add_vacation(account_id: str, body: dict):
+    date_from = body.get("date_from", "")
+    date_to = body.get("date_to", "")
+    note = body.get("note", "")
+    if not date_from or not date_to:
+        return {"error": "date_from and date_to required"}
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO user_vacations (account_id, date_from, date_to, note) VALUES (?,?,?,?)",
+        (account_id, date_from, date_to, note),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.delete("/api/reports/vacations/{vacation_id}")
+def delete_vacation(vacation_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM user_vacations WHERE id = ?", (vacation_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+def _get_vacation_dates(user_ids: list[str], date_from: str, date_to: str) -> dict[str, set[str]]:
+    """Возвращает {account_id: set of vacation date strings} для периода."""
+    conn = get_db()
+    placeholders = ",".join("?" for _ in user_ids)
+    rows = conn.execute(
+        f"SELECT * FROM user_vacations WHERE account_id IN ({placeholders}) "
+        f"AND date_to >= ? AND date_from <= ?",
+        [*user_ids, date_from, date_to],
+    ).fetchall()
+    conn.close()
+
+    result: dict[str, set[str]] = {}
+    d_from = date.fromisoformat(date_from)
+    d_to = date.fromisoformat(date_to)
+    for r in rows:
+        vac_from = max(date.fromisoformat(r["date_from"]), d_from)
+        vac_to = min(date.fromisoformat(r["date_to"]), d_to)
+        uid = r["account_id"]
+        result.setdefault(uid, set())
+        d = vac_from
+        while d <= vac_to:
+            result[uid].add(d.isoformat())
+            d += timedelta(days=1)
+    return result
 
 
 # ---------------------------------------------------------------------------
