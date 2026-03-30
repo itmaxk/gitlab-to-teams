@@ -35,6 +35,21 @@ def _auth_headers() -> dict[str, str]:
     }
 
 
+def _author_identifier_values(author: dict) -> list[str]:
+    values = [
+        author.get("accountId", ""),
+        author.get("key", ""),
+        author.get("name", ""),
+    ]
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
+
+
 async def _get_with_client(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict | list:
     url = f"{_base_url()}{path}"
     async with _get_sem():
@@ -75,6 +90,7 @@ def _extract_worklogs(worklogs: list[dict], issue_key: str, issue_project: str,
     for wl in worklogs:
         author = wl.get("author", {})
         author_key = author.get("accountId") or author.get("key") or author.get("name", "")
+        author_candidates = _author_identifier_values(author)
         if not author_key:
             continue
         if author_filter and author_key != author_filter:
@@ -93,8 +109,20 @@ def _extract_worklogs(worklogs: list[dict], issue_key: str, issue_project: str,
             "display_name": author.get("displayName", ""),
             "email": author.get("emailAddress", ""),
             "author_key": author_key,
+            "author_account_id": author.get("accountId", ""),
+            "author_key_field": author.get("key", ""),
+            "author_name": author.get("name", ""),
+            "author_candidates": author_candidates,
         })
     return entries
+
+
+def _match_candidate_entries(entries: list[dict], candidate: str) -> list[dict]:
+    return [
+        entry
+        for entry in entries
+        if candidate and candidate in entry.get("author_candidates", [])
+    ]
 
 
 async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
@@ -190,5 +218,72 @@ async def get_worklogs_for_users_all_projects(
                 ))
 
             result[user_id] = entries
+
+    return result
+
+
+async def diagnose_worklog_author_candidates(
+    candidate_ids: list[str], date_from: str, date_to: str, issue_key: str = "",
+) -> dict[str, dict]:
+    d_from = date.fromisoformat(date_from)
+    d_to = date.fromisoformat(date_to)
+    result: dict[str, dict] = {}
+    unique_candidates = [candidate for candidate in dict.fromkeys(candidate_ids) if candidate]
+
+    async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        for candidate in unique_candidates:
+            jql_parts = []
+            if issue_key:
+                jql_parts.append(f'issue = "{issue_key}"')
+            jql_parts.append(f'worklogAuthor = "{candidate}"')
+            jql_parts.append(f'worklogDate >= "{date_from}"')
+            jql_parts.append(f'worklogDate <= "{date_to}"')
+            jql = " AND ".join(jql_parts)
+            issues = await _fetch_all_issues(client, jql)
+
+            strict_entries: list[dict] = []
+            candidate_matched_entries: list[dict] = []
+            for issue in issues:
+                issue_key = issue["key"]
+                issue_project = issue["fields"]["project"]["key"]
+                worklogs = await _fetch_issue_worklogs(client, issue_key)
+                extracted_entries = _extract_worklogs(
+                    worklogs,
+                    issue_key,
+                    issue_project,
+                    d_from,
+                    d_to,
+                )
+                strict_entries.extend(
+                    _extract_worklogs(
+                        worklogs,
+                        issue_key,
+                        issue_project,
+                        d_from,
+                        d_to,
+                        author_filter=candidate,
+                    )
+                )
+                candidate_matched_entries.extend(
+                    _match_candidate_entries(extracted_entries, candidate)
+                )
+
+            result[candidate] = {
+                "issue_key_filter": issue_key,
+                "issues_found": len(issues),
+                "issue_keys": sorted({issue["key"] for issue in issues}),
+                "strict_entry_count": len(strict_entries),
+                "strict_hours": round(
+                    sum(entry["seconds"] for entry in strict_entries) / 3600, 1
+                ),
+                "candidate_match_entry_count": len(candidate_matched_entries),
+                "candidate_match_hours": round(
+                    sum(entry["seconds"] for entry in candidate_matched_entries) / 3600,
+                    1,
+                ),
+                "candidate_match_issue_keys": sorted(
+                    {entry["issue_key"] for entry in candidate_matched_entries}
+                ),
+            }
 
     return result

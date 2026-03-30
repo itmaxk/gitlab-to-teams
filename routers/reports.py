@@ -295,6 +295,20 @@ def _build_issue_debug_entries(
                 "author_key": author_key,
                 "display_name": author.get("displayName", ""),
                 "email": author.get("emailAddress", ""),
+                "author_account_id": author.get("accountId", ""),
+                "author_key_field": author.get("key", ""),
+                "author_name": author.get("name", ""),
+                "author_candidates": [
+                    value
+                    for value in dict.fromkeys(
+                        [
+                            author.get("accountId", ""),
+                            author.get("key", ""),
+                            author.get("name", ""),
+                        ]
+                    )
+                    if value
+                ],
                 "started": started,
                 "date": started_date,
                 "seconds": seconds,
@@ -605,6 +619,26 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         issue_specific_entries = [
             entry for entry in issue_entries if entry["author_key"] == uid
         ]
+        raw_author = issue_specific_entries[0] if issue_specific_entries else {}
+        lookup_candidates = list(
+            dict.fromkeys(
+                [
+                    raw_author.get("author_account_id", ""),
+                    raw_author.get("author_key_field", ""),
+                    raw_author.get("author_name", ""),
+                    uid,
+                ]
+            )
+        )
+        lookup_candidates = [candidate for candidate in lookup_candidates if candidate]
+        lookup_diagnostics = {}
+        if lookup_candidates:
+            lookup_diagnostics = await jira_client.diagnose_worklog_author_candidates(
+                lookup_candidates,
+                date_from,
+                date_to,
+                issue_key=issue_key,
+            )
 
         if issue_specific_rows:
             exclusion_reason = "included_via_issue"
@@ -641,6 +675,14 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
                 "issue_worklogs": issue_specific_entries,
                 "issue_day_checks": issue_specific_checks,
                 "report_rows": user_rows,
+                "author_identifiers": {
+                    "account_id": raw_author.get("author_account_id", ""),
+                    "key": raw_author.get("author_key_field", ""),
+                    "name": raw_author.get("author_name", ""),
+                    "primary": raw_author.get("author_key", uid),
+                },
+                "lookup_candidates": lookup_candidates,
+                "lookup_diagnostics": lookup_diagnostics,
             }
         )
 

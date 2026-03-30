@@ -159,6 +159,33 @@ def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path
             ],
         }
 
+    async def fake_diagnose_worklog_author_candidates(
+        candidate_ids, date_from, date_to, issue_key=""
+    ):
+        assert issue_key == "MAIN-1"
+        return {
+            "user-a": {
+                "issue_key_filter": issue_key,
+                "issues_found": 1,
+                "issue_keys": ["MAIN-1"],
+                "strict_entry_count": 1,
+                "strict_hours": 10.0,
+                "candidate_match_entry_count": 1,
+                "candidate_match_hours": 10.0,
+                "candidate_match_issue_keys": ["MAIN-1"],
+            },
+            "user-b": {
+                "issue_key_filter": issue_key,
+                "issues_found": 1,
+                "issue_keys": ["MAIN-1"],
+                "strict_entry_count": 1,
+                "strict_hours": 6.0,
+                "candidate_match_entry_count": 1,
+                "candidate_match_hours": 6.0,
+                "candidate_match_issue_keys": ["MAIN-1"],
+            },
+        }
+
     monkeypatch.setattr(
         reports.jira_client,
         "get_issue_worklogs",
@@ -174,6 +201,11 @@ def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path
         "get_worklogs_for_users_all_projects",
         fake_get_worklogs_for_users_all_projects,
     )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "diagnose_worklog_author_candidates",
+        fake_diagnose_worklog_author_candidates,
+    )
 
     result = asyncio.run(
         reports.overtime_debug_issue(
@@ -188,6 +220,7 @@ def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path
     assert users["user-a"]["included_in_monthly_report"] is True
     assert users["user-a"]["included_due_to_issue"] is True
     assert users["user-a"]["exclusion_reason"] == "included_via_issue"
+    assert users["user-a"]["lookup_diagnostics"]["user-a"]["issue_key_filter"] == "MAIN-1"
 
     assert users["user-b"]["included_in_monthly_report"] is False
     assert users["user-b"]["included_due_to_issue"] is False
