@@ -222,6 +222,60 @@ async def get_worklogs_for_users_all_projects(
     return result
 
 
+def _dedupe_worklog_entries(entries: list[dict]) -> list[dict]:
+    seen: set[tuple] = set()
+    result: list[dict] = []
+    for entry in entries:
+        key = (
+            entry.get("issue_key", ""),
+            entry.get("date", ""),
+            entry.get("seconds", 0),
+            entry.get("project", ""),
+            entry.get("display_name", ""),
+            entry.get("email", ""),
+            entry.get("author_key", ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(entry)
+    return result
+
+
+async def get_worklogs_for_users_all_projects_by_candidates(
+    user_candidates: dict[str, list[str]], date_from: str, date_to: str,
+) -> dict[str, list[dict]]:
+    d_from = date.fromisoformat(date_from)
+    d_to = date.fromisoformat(date_to)
+    result: dict[str, list[dict]] = {}
+
+    async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        for user_id, candidates in user_candidates.items():
+            entries: list[dict] = []
+            unique_candidates = [
+                candidate for candidate in dict.fromkeys(candidates) if candidate
+            ]
+            for candidate in unique_candidates:
+                jql = (
+                    f'worklogAuthor = "{candidate}" '
+                    f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
+                )
+                issues = await _fetch_all_issues(client, jql)
+
+                for issue in issues:
+                    issue_key = issue["key"]
+                    issue_project = issue["fields"]["project"]["key"]
+                    worklogs = await _fetch_issue_worklogs(client, issue_key)
+                    extracted_entries = _extract_worklogs(
+                        worklogs, issue_key, issue_project, d_from, d_to
+                    )
+                    entries.extend(_match_candidate_entries(extracted_entries, candidate))
+
+            result[user_id] = _dedupe_worklog_entries(entries)
+
+    return result
+
+
 async def diagnose_worklog_author_candidates(
     candidate_ids: list[str], date_from: str, date_to: str, issue_key: str = "",
 ) -> dict[str, dict]:

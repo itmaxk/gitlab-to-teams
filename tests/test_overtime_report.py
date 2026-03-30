@@ -64,8 +64,10 @@ def test_overtime_report_includes_inactive_user_with_overtime(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         reports.jira_client,
-        "get_worklogs_for_users_all_projects",
-        fake_get_worklogs_for_users_all_projects,
+        "get_worklogs_for_users_all_projects_by_candidates",
+        lambda user_candidates, date_from, date_to: fake_get_worklogs_for_users_all_projects(
+            list(user_candidates.keys()), date_from, date_to
+        ),
     )
 
     result = asyncio.run(reports.overtime_report(ReportRequest(year=2026, month=3)))
@@ -74,6 +76,77 @@ def test_overtime_report_includes_inactive_user_with_overtime(monkeypatch, tmp_p
     assert result["rows"][0]["account_id"] == "inactive-user"
     assert result["rows"][0]["display_name"] == "Inactive User"
     assert result["rows"][0]["day_type"] == "workday"
+    assert result["rows"][0]["over_norm"] == "2.0"
+
+
+def test_overtime_report_uses_author_candidates_for_user_lookup(monkeypatch, tmp_path):
+    test_db = tmp_path / "candidate-lookup.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_all_worklogs_for_project(project, date_from, date_to):
+        return {
+            "JIRAUSER42213": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 4 * 3600,
+                    "project": "MAIN",
+                    "display_name": "Eka",
+                    "email": "eka@example.com",
+                    "author_key": "JIRAUSER42213",
+                    "author_account_id": "acc-123",
+                    "author_key_field": "JIRAUSER42213",
+                    "author_name": "eka.login",
+                    "author_candidates": [
+                        "acc-123",
+                        "JIRAUSER42213",
+                        "eka.login",
+                    ],
+                }
+            ]
+        }
+
+    async def fake_get_worklogs_for_users_all_projects_by_candidates(
+        user_candidates, date_from, date_to
+    ):
+        assert user_candidates["JIRAUSER42213"] == [
+            "JIRAUSER42213",
+            "acc-123",
+            "eka.login",
+        ]
+        return {
+            "JIRAUSER42213": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 10 * 3600,
+                    "project": "MAIN",
+                    "display_name": "Eka",
+                    "email": "eka@example.com",
+                    "author_key": "acc-123",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_all_worklogs_for_project",
+        fake_get_all_worklogs_for_project,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_worklogs_for_users_all_projects_by_candidates",
+        fake_get_worklogs_for_users_all_projects_by_candidates,
+    )
+
+    result = asyncio.run(reports.overtime_report(ReportRequest(year=2026, month=3)))
+
+    assert len(result["rows"]) == 1
+    assert result["rows"][0]["account_id"] == "JIRAUSER42213"
+    assert result["rows"][0]["display_name"] == "Eka"
+    assert result["rows"][0]["total_hours"] == "10.0"
     assert result["rows"][0]["over_norm"] == "2.0"
 
 

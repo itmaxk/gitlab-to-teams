@@ -174,6 +174,32 @@ def _resolve_display_name(
     return uid
 
 
+def _collect_user_lookup_candidates(
+    uid: str,
+    project_worklogs: dict[str, list[dict]],
+    db_users: list[dict] | None = None,
+) -> list[str]:
+    candidates = [uid]
+    for entry in project_worklogs.get(uid, []):
+        for candidate in entry.get("author_candidates", []):
+            if candidate not in candidates:
+                candidates.append(candidate)
+        for field in (
+            entry.get("author_account_id", ""),
+            entry.get("author_key_field", ""),
+            entry.get("author_name", ""),
+        ):
+            if field and field not in candidates:
+                candidates.append(field)
+
+    for user in db_users or []:
+        account_id = user["account_id"] if hasattr(user, "__getitem__") else user.get("account_id")
+        if account_id == uid and uid not in candidates:
+            candidates.append(uid)
+
+    return candidates
+
+
 def _evaluate_overtime_day(
     day_str: str,
     day_entries: list[dict],
@@ -548,9 +574,14 @@ async def overtime_report(body: ReportRequest):
         return {"rows": [], "year": body.year, "month": body.month}
 
     # 3. Для всех пользователей ищем ворклоги во всех проектах
+    user_lookup_candidates = {
+        uid: _collect_user_lookup_candidates(uid, project_worklogs, db_users)
+        for uid in all_user_ids
+    }
+
     try:
-        all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-            all_user_ids,
+        all_worklogs = await jira_client.get_worklogs_for_users_all_projects_by_candidates(
+            user_lookup_candidates,
             date_from,
             date_to,
         )
