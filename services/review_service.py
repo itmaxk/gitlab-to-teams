@@ -60,7 +60,8 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
         "temperature": 0.1,
     }
 
-    async with httpx.AsyncClient(verify=False, timeout=120) as client:
+    timeout = httpx.Timeout(connect=10, read=600, write=10, pool=10)
+    async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
         resp = await client.post(api_url, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()
