@@ -223,27 +223,45 @@ async def time_logging_report(body: ReportRequest):
 
     workdays = get_workdays_in_month(body.year, body.month)
     workday_strs = {d.isoformat() for d in workdays}
+    today = date.today()
+    today_str = today.isoformat()
+
+    # Рабочие дни строго до сегодняшнего дня (сегодня не учитывается)
+    past_workdays = {d for d in workday_strs if d < today_str}
 
     rows = []
     for uid in sorted(user_ids, key=lambda u: (project_worklogs.get(u, [{}])[0].get("display_name", "") if project_worklogs.get(u) else "")):
         proj_entries = project_worklogs.get(uid, [])
-        all_entries = other_worklogs.get(uid, proj_entries)
+        all_entries = other_worklogs.get(uid, [])
+
+        # Объединяем даты из проектных и всех остальных ворклогов
+        proj_dates = {e["date"] for e in proj_entries}
+        all_dates = {e["date"] for e in proj_entries} | {e["date"] for e in all_entries}
 
         proj_seconds = sum(e["seconds"] for e in proj_entries)
-        proj_dates = {e["date"] for e in proj_entries}
-
         other_entries = [e for e in all_entries if e["project"] != project]
         other_seconds = sum(e["seconds"] for e in other_entries)
-        all_dates = {e["date"] for e in all_entries}
 
-        today = date.today()
-        relevant_workdays = {d for d in workday_strs if d <= today.isoformat()}
-        missing_days = sorted(relevant_workdays - all_dates)
+        missing_days = sorted(past_workdays - all_dates)
 
         display_name = proj_entries[0]["display_name"] if proj_entries else uid
         email = proj_entries[0]["email"] if proj_entries else ""
 
         status = "new" if uid in new_users else ("removed" if uid in removed_users else "active")
+
+        # Список задач пользователя с часами
+        issues_map: dict[str, dict] = {}
+        for e in proj_entries:
+            ik = e["issue_key"]
+            if ik not in issues_map:
+                issues_map[ik] = {"issue_key": ik, "project": e["project"], "seconds": 0}
+            issues_map[ik]["seconds"] += e["seconds"]
+        for e in all_entries:
+            ik = e["issue_key"]
+            if ik not in issues_map:
+                issues_map[ik] = {"issue_key": ik, "project": e["project"], "seconds": 0}
+            issues_map[ik]["seconds"] += e["seconds"]
+        user_issues = sorted(issues_map.values(), key=lambda x: x["issue_key"])
 
         rows.append({
             "account_id": uid,
@@ -253,9 +271,13 @@ async def time_logging_report(body: ReportRequest):
             "project_hours": _format_hours(proj_seconds),
             "other_hours": _format_hours(other_seconds),
             "days_logged": len(proj_dates),
-            "total_workdays": len(relevant_workdays),
+            "total_workdays": len(past_workdays),
             "missing_days": missing_days,
             "missing_count": len(missing_days),
+            "issues": [
+                {"issue_key": i["issue_key"], "project": i["project"], "hours": _format_hours(i["seconds"])}
+                for i in user_issues
+            ],
         })
 
     return {"rows": rows, "year": body.year, "month": body.month, "project": project}

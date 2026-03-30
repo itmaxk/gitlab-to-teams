@@ -353,13 +353,14 @@ async function generateTimeLogging() {
 function renderTimeLogging(data) {
   const rows = data.rows;
   document.getElementById('tlStats').textContent =
-    `Проект: ${data.project} | Период: ${data.year}-${String(data.month).padStart(2,'0')} | Найдено пользователей: ${rows.length}`;
+    `Проект: ${data.project} | Период: ${data.year}-${String(data.month).padStart(2,'0')} | Найдено пользователей: ${rows.length} | Дата формирования: ${new Date().toLocaleDateString('ru-RU')}`;
 
   const tbody = document.getElementById('tlBody');
   tbody.innerHTML = '';
   let hasMissing = false;
 
-  for (const r of rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
     const isMissing = r.missing_count > 0;
     if (isMissing) hasMissing = true;
 
@@ -367,12 +368,16 @@ function renderTimeLogging(data) {
     if (r.status === 'new') statusBadge = '<span class="text-green-400 text-xs font-medium px-1.5 py-0.5 rounded bg-green-900/30 ml-1">NEW</span>';
     else if (r.status === 'removed') statusBadge = '<span class="text-slate-500 text-xs font-medium px-1.5 py-0.5 rounded bg-slate-700/30 ml-1">REMOVED</span>';
 
-    const missingTitle = r.missing_days.length > 0 ? r.missing_days.join(', ') : '';
+    const missingTitle = r.missing_days.length > 0 ? 'Пропущено: ' + r.missing_days.join(', ') : '';
+
+    const notifyBtn = isMissing
+      ? `<button onclick="notifyUser('${r.account_id}')" class="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/40">Уведомить</button>`
+      : `<button disabled class="text-xs px-2 py-1 rounded bg-slate-700/30 text-slate-500 cursor-not-allowed">Уведомить</button>`;
 
     tbody.innerHTML += `
-      <tr class="border-b border-slate-700/50 hover:bg-slate-800/50">
-        <td class="px-3 py-2"><input type="checkbox" class="tl-check" data-uid="${r.account_id}" ${isMissing ? 'checked' : ''}></td>
-        <td class="px-3 py-2">${r.display_name}</td>
+      <tr class="border-b border-slate-700/50 hover:bg-slate-800/50 cursor-pointer" onclick="toggleUserDetails(${i}, event)">
+        <td class="px-3 py-2" onclick="event.stopPropagation()"><input type="checkbox" class="tl-check" data-uid="${r.account_id}" ${isMissing ? 'checked' : ''}></td>
+        <td class="px-3 py-2">${r.display_name} <span class="text-slate-500 text-xs ml-1">▶</span></td>
         <td class="px-3 py-2">${statusBadge || '<span class="text-slate-500 text-xs">—</span>'}</td>
         <td class="px-3 py-2">${r.days_logged} / ${r.total_workdays}</td>
         <td class="px-3 py-2 text-cyan-400 font-medium">${r.project_hours}h</td>
@@ -380,14 +385,67 @@ function renderTimeLogging(data) {
         <td class="px-3 py-2 ${isMissing ? 'text-red-400 font-medium' : 'text-green-400'}" title="${missingTitle}">
           ${isMissing ? r.missing_count + ' дн.' : '✓'}
         </td>
-        <td class="px-3 py-2">
-          ${isMissing ? `<button onclick="notifyUser('${r.account_id}')" class="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/40">Уведомить</button>` : ''}
+        <td class="px-3 py-2" onclick="event.stopPropagation()">
+          ${notifyBtn}
+        </td>
+      </tr>
+      <tr id="tl-details-${i}" class="hidden">
+        <td colspan="8" class="px-3 py-3 bg-slate-900/50">
+          ${renderUserDetails(r)}
         </td>
       </tr>`;
   }
 
   if (hasMissing) document.getElementById('btnNotifyAll').classList.remove('hidden');
   document.getElementById('tlResults').classList.remove('hidden');
+}
+
+function renderUserDetails(r) {
+  const issues = r.issues || [];
+  if (!issues.length && !r.missing_days.length) return '<span class="text-slate-500 text-sm">Нет данных</span>';
+
+  let html = '<div class="grid grid-cols-1 md:grid-cols-2 gap-4">';
+
+  // Issues table
+  if (issues.length) {
+    html += '<div>';
+    html += '<div class="text-sm font-medium text-slate-300 mb-2">Задачи</div>';
+    html += '<table class="w-full text-xs"><thead><tr class="text-slate-400 border-b border-slate-700">';
+    html += '<th class="px-2 py-1 text-left">Задача</th><th class="px-2 py-1 text-left">Проект</th><th class="px-2 py-1 text-right">Часы</th></tr></thead><tbody>';
+    for (const iss of issues) {
+      const isMain = iss.project === JIRA_PROJECT;
+      html += `<tr class="border-b border-slate-700/30">
+        <td class="px-2 py-1"><a href="${JIRA_URL}/browse/${iss.issue_key}" target="_blank" class="text-blue-400 hover:underline">${iss.issue_key}</a></td>
+        <td class="px-2 py-1 ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${iss.project}</td>
+        <td class="px-2 py-1 text-right ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${iss.hours}h</td>
+      </tr>`;
+    }
+    html += '</tbody></table></div>';
+  }
+
+  // Missing days
+  if (r.missing_days.length) {
+    html += '<div>';
+    html += '<div class="text-sm font-medium text-red-400 mb-2">Пропущенные дни</div>';
+    html += '<div class="flex flex-wrap gap-1">';
+    for (const d of r.missing_days) {
+      html += `<span class="text-xs px-2 py-0.5 rounded bg-red-900/30 text-red-300">${d}</span>`;
+    }
+    html += '</div></div>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function toggleUserDetails(idx, event) {
+  if (event.target.tagName === 'INPUT') return;
+  const row = document.getElementById(`tl-details-${idx}`);
+  row.classList.toggle('hidden');
+  // Toggle arrow
+  const mainRow = row.previousElementSibling;
+  const arrow = mainRow.querySelector('.text-slate-500.text-xs.ml-1');
+  if (arrow) arrow.textContent = row.classList.contains('hidden') ? '▶' : '▼';
 }
 
 function toggleAllTL(cb) {
