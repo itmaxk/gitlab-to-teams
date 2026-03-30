@@ -78,6 +78,17 @@
         <tbody id="tlBody"></tbody>
       </table>
     </div>
+    <div class="mt-4 flex items-end gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Email получатели (через запятую)</label>
+        <input type="text" id="tlEmails" placeholder="user@example.com, manager@example.com"
+          class="w-96 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <button onclick="sendTimeLoggingReport()" id="btnSendTL"
+        class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
+        Отправить отчёт
+      </button>
+    </div>
   </div>
 </div>
 
@@ -126,6 +137,7 @@
             <th class="px-3 py-2">{{ jira_project }}</th>
             <th class="px-3 py-2">Другие</th>
             <th class="px-3 py-2">Сверх нормы</th>
+            <th class="px-3 py-2">Задачи</th>
             <th class="px-3 py-2">Проекты</th>
           </tr>
         </thead>
@@ -282,6 +294,7 @@
 
 <script>
 const JIRA_PROJECT = "{{ jira_project }}";
+const JIRA_URL = "{{ jira_url }}";
 
 // Tab switching
 function switchTab(name) {
@@ -408,6 +421,32 @@ async function _notifyUsers(uids) {
   }
 }
 
+async function sendTimeLoggingReport() {
+  if (!tlData) return alert('Сначала сформируйте отчёт');
+  const emailsStr = document.getElementById('tlEmails').value.trim();
+  if (!emailsStr) return alert('Введите email получателей');
+  const emails = emailsStr.split(',').map(e => e.trim()).filter(Boolean);
+  const year = parseInt(document.getElementById('tlYear').value);
+  const month = parseInt(document.getElementById('tlMonth').value);
+
+  const btn = document.getElementById('btnSendTL');
+  btn.disabled = true; btn.textContent = 'Отправка...';
+
+  try {
+    const resp = await fetch('/api/reports/send-time-logging', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year, month, emails}),
+    });
+    const data = await resp.json();
+    alert(data.sent ? 'Отчёт отправлен' : 'Не отправлено: ' + (data.reason || ''));
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Отправить отчёт';
+  }
+}
+
 // ========== Overtime ==========
 let otData = null;
 
@@ -462,12 +501,13 @@ function renderOvertime(data) {
         <td class="px-3 py-2 text-cyan-400">${r.project_hours}h</td>
         <td class="px-3 py-2 text-slate-400">${r.other_hours}h</td>
         <td class="px-3 py-2 ${dayColor} font-medium">+${r.over_norm}h</td>
+        <td class="px-3 py-2 text-xs">${(r.issues||[]).map(ik => `<a href="${JIRA_URL}/browse/${ik}" target="_blank" class="text-blue-400 hover:underline">${ik}</a>`).join(', ')}</td>
         <td class="px-3 py-2 text-slate-400 text-xs">${r.projects.join(', ')}</td>
       </tr>`;
   }
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-slate-500">Переработок не найдено</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-8 text-center text-slate-500">Переработок не найдено</td></tr>';
   }
 
   document.getElementById('otResults').classList.remove('hidden');
