@@ -577,21 +577,19 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         }
     issue_user_ids = set(issue_user_map.keys())
 
-    project_worklogs = await jira_client.get_all_worklogs_for_project(
-        project,
-        date_from,
-        date_to,
-    )
-    project_user_ids = set(project_worklogs.keys())
-
     conn = get_db()
     db_rows = conn.execute("SELECT * FROM jira_users").fetchall()
     conn.close()
     db_users = {row["account_id"]: dict(row) for row in db_rows}
     db_user_ids = set(db_users.keys())
 
+    project_user_ids = {
+        entry["author_key"]
+        for entry in issue_entries
+        if entry.get("project") == project
+    }
     report_scope_user_ids = sorted(project_user_ids | db_user_ids)
-    diagnostic_user_ids = sorted(project_user_ids | db_user_ids | issue_user_ids)
+    diagnostic_user_ids = sorted(issue_user_ids | db_user_ids)
 
     year_cal = _get_year_calendar(body.year)
     users = []
