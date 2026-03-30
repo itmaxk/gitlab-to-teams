@@ -52,6 +52,12 @@ class ReportRequest(BaseModel):
     month: int
 
 
+class OvertimeDebugRequest(BaseModel):
+    year: int
+    month: int
+    issue_key: str
+
+
 class NotifyMissingRequest(BaseModel):
     user_ids: list[str]
     year: int

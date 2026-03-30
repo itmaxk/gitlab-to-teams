@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from db import get_db
 from models import (
     NotifyMissingRequest,
+    OvertimeDebugRequest,
     ReportRequest,
     ReportSettingsUpdate,
     SendReportRequest,
@@ -154,6 +155,154 @@ def _upsert_users(user_map: dict[str, dict]):
 def _format_hours(seconds: int) -> str:
     h = seconds / 3600
     return f"{h:.1f}"
+
+
+def _resolve_display_name(
+    uid: str,
+    entries: list[dict],
+    db_users: dict[str, dict] | None = None,
+    fallback_users: dict[str, dict] | None = None,
+) -> str:
+    if entries:
+        return entries[0].get("display_name") or uid
+    if fallback_users and uid in fallback_users:
+        return fallback_users[uid].get("display_name") or uid
+    if db_users and uid in db_users:
+        return db_users[uid].get("display_name") or uid
+    return uid
+
+
+def _evaluate_overtime_day(
+    day_str: str,
+    day_entries: list[dict],
+    project: str,
+    year_cal: dict[str, int],
+) -> dict:
+    d = date.fromisoformat(day_str)
+    total_seconds = sum(e["seconds"] for e in day_entries)
+    total_hours = total_seconds / 3600
+
+    is_non_working = year_cal.get(day_str, 0) == 1
+    is_weekend = d.weekday() >= 5
+    is_holiday = is_non_working and not is_weekend
+    is_wd = not is_non_working
+
+    decision_reason = "workday_not_over_8h"
+    qualifies_overtime = False
+    if is_wd and total_hours > 8:
+        qualifies_overtime = True
+        decision_reason = "workday_over_8h"
+    elif is_weekend:
+        qualifies_overtime = True
+        decision_reason = "weekend"
+    elif is_holiday:
+        qualifies_overtime = True
+        decision_reason = "holiday"
+
+    proj_seconds = sum(e["seconds"] for e in day_entries if e["project"] == project)
+    other_seconds = total_seconds - proj_seconds
+    day_type = "holiday" if is_holiday else ("weekend" if is_weekend else "workday")
+    issues_list = sorted({e["issue_key"] for e in day_entries})
+    projects_list = sorted({e["project"] for e in day_entries})
+
+    report_row = None
+    if qualifies_overtime:
+        report_row = {
+            "date": day_str,
+            "day_type": day_type,
+            "total_hours": f"{total_hours:.1f}",
+            "project_hours": _format_hours(proj_seconds),
+            "other_hours": _format_hours(other_seconds),
+            "over_norm": f"{(total_hours - 8):.1f}" if is_wd else f"{total_hours:.1f}",
+            "projects": projects_list,
+            "issues": issues_list,
+        }
+
+    return {
+        "date": day_str,
+        "day_type": day_type,
+        "is_weekend": is_weekend,
+        "is_holiday": is_holiday,
+        "is_workday": is_wd,
+        "entry_count": len(day_entries),
+        "total_hours": f"{total_hours:.1f}",
+        "project_hours": _format_hours(proj_seconds),
+        "other_hours": _format_hours(other_seconds),
+        "qualifies_overtime": qualifies_overtime,
+        "decision_reason": decision_reason,
+        "issues": issues_list,
+        "projects": projects_list,
+        "report_row": report_row,
+    }
+
+
+def _build_overtime_rows_and_checks(
+    uid: str,
+    display_name: str,
+    entries: list[dict],
+    project: str,
+    year_cal: dict[str, int],
+) -> tuple[list[dict], list[dict]]:
+    by_date: dict[str, list[dict]] = {}
+    for entry in entries:
+        by_date.setdefault(entry["date"], []).append(entry)
+
+    rows: list[dict] = []
+    day_checks: list[dict] = []
+    for day_str, day_entries in sorted(by_date.items()):
+        check = _evaluate_overtime_day(day_str, day_entries, project, year_cal)
+        day_checks.append(check)
+        if not check["qualifies_overtime"]:
+            continue
+        row = dict(check["report_row"])
+        row["account_id"] = uid
+        row["display_name"] = display_name
+        rows.append(row)
+
+    return rows, day_checks
+
+
+def _build_issue_debug_entries(
+    issue_key: str,
+    raw_worklogs: list[dict],
+    date_from: str,
+    date_to: str,
+) -> list[dict]:
+    issue_project = issue_key.split("-", 1)[0] if "-" in issue_key else ""
+    d_from = date.fromisoformat(date_from)
+    d_to = date.fromisoformat(date_to)
+    entries = []
+
+    for worklog in raw_worklogs:
+        author = worklog.get("author", {})
+        author_key = (
+            author.get("accountId") or author.get("key") or author.get("name", "")
+        )
+        started = worklog.get("started", "")
+        if not author_key or not started:
+            continue
+
+        started_date = started[:10]
+        wl_date = date.fromisoformat(started_date)
+        if wl_date < d_from or wl_date > d_to:
+            continue
+
+        seconds = worklog.get("timeSpentSeconds", 0)
+        entries.append(
+            {
+                "issue_key": issue_key,
+                "project": issue_project,
+                "author_key": author_key,
+                "display_name": author.get("displayName", ""),
+                "email": author.get("emailAddress", ""),
+                "started": started,
+                "date": started_date,
+                "seconds": seconds,
+                "hours": _format_hours(seconds),
+            }
+        )
+
+    return entries
 
 
 def _send_email(recipients: list[str], subject: str, html_body: str):
@@ -383,61 +532,130 @@ async def overtime_report(body: ReportRequest):
         if not entries:
             continue
 
-        display_name = entries[0]["display_name"] if entries else uid
-
-        by_date: dict[str, list[dict]] = {}
-        for e in entries:
-            by_date.setdefault(e["date"], []).append(e)
-
-        for day_str, day_entries in sorted(by_date.items()):
-            d = date.fromisoformat(day_str)
-            total_seconds = sum(e["seconds"] for e in day_entries)
-            total_hours = total_seconds / 3600
-
-            is_non_working = year_cal.get(day_str, 0) == 1
-            is_weekend = d.weekday() >= 5
-            is_holiday = is_non_working and not is_weekend
-            is_wd = not is_non_working
-
-            overtime = False
-            if is_wd and total_hours > 8:
-                overtime = True
-            elif is_weekend or is_holiday:
-                overtime = True
-
-            if not overtime:
-                continue
-
-            proj_seconds = sum(
-                e["seconds"] for e in day_entries if e["project"] == project
-            )
-            other_seconds = total_seconds - proj_seconds
-
-            day_type = (
-                "holiday" if is_holiday else ("weekend" if is_weekend else "workday")
-            )
-
-            projects_list = sorted({e["project"] for e in day_entries})
-            issues_list = sorted({e["issue_key"] for e in day_entries})
-
-            rows.append(
-                {
-                    "account_id": uid,
-                    "display_name": display_name,
-                    "date": day_str,
-                    "day_type": day_type,
-                    "total_hours": f"{total_hours:.1f}",
-                    "project_hours": _format_hours(proj_seconds),
-                    "other_hours": _format_hours(other_seconds),
-                    "over_norm": f"{(total_hours - 8):.1f}"
-                    if is_wd
-                    else f"{total_hours:.1f}",
-                    "projects": projects_list,
-                    "issues": issues_list,
-                }
-            )
+        display_name = _resolve_display_name(uid, entries)
+        user_rows, _ = _build_overtime_rows_and_checks(
+            uid, display_name, entries, project, year_cal
+        )
+        rows.extend(user_rows)
 
     return {"rows": rows, "year": body.year, "month": body.month, "project": project}
+
+
+@router.post("/api/reports/overtime/debug-issue")
+async def overtime_debug_issue(body: OvertimeDebugRequest):
+    project = os.getenv("JIRA_PROJECT", "")
+    issue_key = body.issue_key.strip().upper()
+    date_from, date_to = _month_range(body.year, body.month)
+
+    raw_issue_worklogs = await jira_client.get_issue_worklogs(issue_key)
+    issue_entries = _build_issue_debug_entries(
+        issue_key,
+        raw_issue_worklogs.get("worklogs", []),
+        date_from,
+        date_to,
+    )
+
+    issue_user_map: dict[str, dict] = {}
+    for entry in issue_entries:
+        issue_user_map[entry["author_key"]] = {
+            "display_name": entry["display_name"],
+            "email": entry["email"],
+        }
+    issue_user_ids = set(issue_user_map.keys())
+
+    project_worklogs = await jira_client.get_all_worklogs_for_project(
+        project,
+        date_from,
+        date_to,
+    )
+    project_user_ids = set(project_worklogs.keys())
+
+    conn = get_db()
+    db_rows = conn.execute("SELECT * FROM jira_users").fetchall()
+    conn.close()
+    db_users = {row["account_id"]: dict(row) for row in db_rows}
+    db_user_ids = set(db_users.keys())
+
+    report_scope_user_ids = sorted(project_user_ids | db_user_ids)
+    diagnostic_user_ids = sorted(project_user_ids | db_user_ids | issue_user_ids)
+
+    all_worklogs = {}
+    if diagnostic_user_ids:
+        all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+            diagnostic_user_ids,
+            date_from,
+            date_to,
+        )
+
+    year_cal = _get_year_calendar(body.year)
+    users = []
+
+    for uid in diagnostic_user_ids:
+        entries = all_worklogs.get(uid, [])
+        display_name = _resolve_display_name(uid, entries, db_users, issue_user_map)
+        user_rows, day_checks = _build_overtime_rows_and_checks(
+            uid, display_name, entries, project, year_cal
+        )
+        issue_specific_checks = [
+            check for check in day_checks if issue_key in check.get("issues", [])
+        ]
+        issue_specific_rows = [
+            row for row in user_rows if issue_key in row.get("issues", [])
+        ]
+        issue_specific_entries = [
+            entry for entry in issue_entries if entry["author_key"] == uid
+        ]
+
+        if issue_specific_rows:
+            exclusion_reason = "included_via_issue"
+        elif not issue_specific_entries:
+            exclusion_reason = "no_issue_worklogs_in_period"
+        elif uid not in report_scope_user_ids:
+            exclusion_reason = "user_not_in_report_scope"
+        elif not entries:
+            exclusion_reason = "user_lookup_returned_no_entries"
+        elif issue_specific_checks:
+            exclusion_reason = ",".join(
+                sorted({check["decision_reason"] for check in issue_specific_checks})
+            )
+        else:
+            exclusion_reason = "issue_not_present_in_user_period_entries"
+
+        users.append(
+            {
+                "account_id": uid,
+                "display_name": display_name,
+                "in_issue_worklogs": bool(issue_specific_entries),
+                "in_project_scope": uid in project_user_ids,
+                "in_db_scope": uid in db_user_ids,
+                "in_report_scope": uid in report_scope_user_ids,
+                "issue_entry_count": len(issue_specific_entries),
+                "issue_hours": _format_hours(
+                    sum(entry["seconds"] for entry in issue_specific_entries)
+                ),
+                "period_entry_count": len(entries),
+                "period_hours": _format_hours(sum(entry["seconds"] for entry in entries)),
+                "included_in_monthly_report": bool(user_rows),
+                "included_due_to_issue": bool(issue_specific_rows),
+                "exclusion_reason": exclusion_reason,
+                "issue_worklogs": issue_specific_entries,
+                "issue_day_checks": issue_specific_checks,
+                "report_rows": user_rows,
+            }
+        )
+
+    return {
+        "year": body.year,
+        "month": body.month,
+        "project": project,
+        "issue_key": issue_key,
+        "issue_worklogs": issue_entries,
+        "project_user_ids": sorted(project_user_ids),
+        "db_user_ids": sorted(db_user_ids),
+        "report_scope_user_ids": report_scope_user_ids,
+        "diagnostic_user_ids": diagnostic_user_ids,
+        "users": users,
+    }
 
 
 # ---------------------------------------------------------------------------

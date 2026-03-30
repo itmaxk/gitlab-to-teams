@@ -15,7 +15,7 @@ class _DummyJinja2Templates:
 fastapi.templating.Jinja2Templates = _DummyJinja2Templates
 
 import db
-from models import ReportRequest
+from models import OvertimeDebugRequest, ReportRequest
 from routers import reports
 
 
@@ -74,3 +74,122 @@ def test_overtime_report_includes_inactive_user_with_overtime(monkeypatch, tmp_p
     assert result["rows"][0]["display_name"] == "Inactive User"
     assert result["rows"][0]["day_type"] == "workday"
     assert result["rows"][0]["over_norm"] == "2.0"
+
+
+def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path):
+    test_db = tmp_path / "debug-data.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_issue_worklogs(issue_key, start_at=0, max_results=1000):
+        assert issue_key == "MAIN-1"
+        return {
+            "worklogs": [
+                {
+                    "author": {
+                        "accountId": "user-a",
+                        "displayName": "User A",
+                        "emailAddress": "a@example.com",
+                    },
+                    "started": "2026-03-02T09:00:00.000+0000",
+                    "timeSpentSeconds": 10 * 3600,
+                },
+                {
+                    "author": {
+                        "accountId": "user-b",
+                        "displayName": "User B",
+                        "emailAddress": "b@example.com",
+                    },
+                    "started": "2026-03-02T11:00:00.000+0000",
+                    "timeSpentSeconds": 6 * 3600,
+                },
+            ]
+        }
+
+    async def fake_get_all_worklogs_for_project(project, date_from, date_to):
+        return {
+            "user-a": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 10 * 3600,
+                    "project": "MAIN",
+                    "display_name": "User A",
+                    "email": "a@example.com",
+                    "author_key": "user-a",
+                }
+            ],
+            "user-b": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 6 * 3600,
+                    "project": "MAIN",
+                    "display_name": "User B",
+                    "email": "b@example.com",
+                    "author_key": "user-b",
+                }
+            ],
+        }
+
+    async def fake_get_worklogs_for_users_all_projects(user_ids, date_from, date_to):
+        return {
+            "user-a": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 10 * 3600,
+                    "project": "MAIN",
+                    "display_name": "User A",
+                    "email": "a@example.com",
+                    "author_key": "user-a",
+                }
+            ],
+            "user-b": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 6 * 3600,
+                    "project": "MAIN",
+                    "display_name": "User B",
+                    "email": "b@example.com",
+                    "author_key": "user-b",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_issue_worklogs",
+        fake_get_issue_worklogs,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_all_worklogs_for_project",
+        fake_get_all_worklogs_for_project,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_worklogs_for_users_all_projects",
+        fake_get_worklogs_for_users_all_projects,
+    )
+
+    result = asyncio.run(
+        reports.overtime_debug_issue(
+            OvertimeDebugRequest(year=2026, month=3, issue_key="main-1")
+        )
+    )
+
+    assert result["issue_key"] == "MAIN-1"
+    assert len(result["issue_worklogs"]) == 2
+
+    users = {user["account_id"]: user for user in result["users"]}
+    assert users["user-a"]["included_in_monthly_report"] is True
+    assert users["user-a"]["included_due_to_issue"] is True
+    assert users["user-a"]["exclusion_reason"] == "included_via_issue"
+
+    assert users["user-b"]["included_in_monthly_report"] is False
+    assert users["user-b"]["included_due_to_issue"] is False
+    assert users["user-b"]["exclusion_reason"] == "workday_not_over_8h"
+    assert users["user-b"]["issue_day_checks"][0]["qualifies_overtime"] is False

@@ -118,6 +118,42 @@
     </div>
   </div>
 
+  <div class="bg-slate-800/60 border border-slate-700 rounded-lg p-4 mb-6">
+    <div class="flex items-end gap-4 flex-wrap">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Issue key</label>
+        <input type="text" id="otDebugIssueKey" placeholder="MAIN-123"
+          class="w-56 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <button onclick="debugOvertimeIssue()" id="btnOTDebug"
+        class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg font-medium">
+        Debug issue
+      </button>
+    </div>
+    <div id="otDebugError" class="hidden mt-4 bg-red-900/30 border border-red-700 rounded-lg p-4 text-red-300"></div>
+    <div id="otDebugResults" class="hidden mt-4">
+      <div id="otDebugSummary" class="text-sm text-slate-300 mb-3"></div>
+      <div class="overflow-x-auto mb-4">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-slate-400 border-b border-slate-700">
+              <th class="px-3 py-2">User</th>
+              <th class="px-3 py-2">Issue hrs</th>
+              <th class="px-3 py-2">Project scope</th>
+              <th class="px-3 py-2">DB scope</th>
+              <th class="px-3 py-2">Period hrs</th>
+              <th class="px-3 py-2">Monthly report</th>
+              <th class="px-3 py-2">Via issue</th>
+              <th class="px-3 py-2">Reason</th>
+            </tr>
+          </thead>
+          <tbody id="otDebugBody"></tbody>
+        </table>
+      </div>
+      <pre id="otDebugJson" class="bg-slate-950/70 border border-slate-800 rounded-lg p-4 text-xs text-slate-300 overflow-x-auto whitespace-pre-wrap"></pre>
+    </div>
+  </div>
+
   <div id="otLoading" class="hidden text-center py-8">
     <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
     <p class="text-slate-400 mt-2">Загрузка данных из Jira...</p>
@@ -671,6 +707,74 @@ async function sendOvertimeReport() {
   } finally {
     btn.disabled = false; btn.textContent = 'Отправить отчёт';
   }
+}
+
+async function debugOvertimeIssue() {
+  const issueKey = document.getElementById('otDebugIssueKey').value.trim().toUpperCase();
+  if (!issueKey) return alert('Enter issue key');
+
+  const year = parseInt(document.getElementById('otYear').value);
+  const month = parseInt(document.getElementById('otMonth').value);
+  const btn = document.getElementById('btnOTDebug');
+  const errorEl = document.getElementById('otDebugError');
+  const resultsEl = document.getElementById('otDebugResults');
+
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  errorEl.classList.add('hidden');
+  resultsEl.classList.add('hidden');
+
+  try {
+    const resp = await fetch('/api/reports/overtime/debug-issue', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({year, month, issue_key: issueKey}),
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+    renderOvertimeDebug(data);
+  } catch (e) {
+    errorEl.textContent = e.message;
+    errorEl.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Debug issue';
+  }
+}
+
+function renderOvertimeDebug(data) {
+  const users = data.users || [];
+  document.getElementById('otDebugSummary').textContent =
+    `Issue ${data.issue_key} | period ${data.year}-${String(data.month).padStart(2, '0')} | issue worklogs: ${(data.issue_worklogs || []).length} | users: ${users.length}`;
+
+  const tbody = document.getElementById('otDebugBody');
+  tbody.innerHTML = '';
+
+  for (const user of users) {
+    const reportMark = user.included_in_monthly_report ? 'yes' : 'no';
+    const issueMark = user.included_due_to_issue ? 'yes' : 'no';
+    const scopeMark = user.in_project_scope ? 'yes' : 'no';
+    const dbMark = user.in_db_scope ? 'yes' : 'no';
+
+    tbody.innerHTML += `
+      <tr class="border-b border-slate-700/50 align-top">
+        <td class="px-3 py-2 font-medium">${user.display_name}<div class="text-xs text-slate-500">${user.account_id}</div></td>
+        <td class="px-3 py-2">${user.issue_hours}h<div class="text-xs text-slate-500">${user.issue_entry_count} logs</div></td>
+        <td class="px-3 py-2">${scopeMark}</td>
+        <td class="px-3 py-2">${dbMark}</td>
+        <td class="px-3 py-2">${user.period_hours}h<div class="text-xs text-slate-500">${user.period_entry_count} logs</div></td>
+        <td class="px-3 py-2">${reportMark}</td>
+        <td class="px-3 py-2">${issueMark}</td>
+        <td class="px-3 py-2 text-xs text-slate-300">${user.exclusion_reason}</td>
+      </tr>`;
+  }
+
+  if (!users.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-6 text-center text-slate-500">No users found for this issue in the selected period</td></tr>';
+  }
+
+  document.getElementById('otDebugJson').textContent = JSON.stringify(data, null, 2);
+  document.getElementById('otDebugResults').classList.remove('hidden');
 }
 
 // ========== Users ==========
