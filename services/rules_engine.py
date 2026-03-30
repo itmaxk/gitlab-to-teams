@@ -29,7 +29,8 @@ async def evaluate_rules_for_mr(
     results = []
     content_cache: dict[str, str] = {}
 
-    for rule in rules:
+    for rule_row in rules:
+        rule = dict(rule_row)
         pattern = rule["file_pattern"]
         for file_path in changed_files:
             if not fnmatch.fnmatch(file_path, pattern):
@@ -57,8 +58,16 @@ async def evaluate_rules_for_mr(
             # Проверка наличия файла из changelog в MR
             file_check_mode = rule.get("file_check_mode") or "present"
             if rule["file_check_enabled"] and rule["file_check_path_prefix"]:
-                referenced_files = _extract_file_references(content)
                 prefix = rule["file_check_path_prefix"].rstrip("/")
+                if file_check_mode in {"present_any", "absent_any"}:
+                    has_file_under_prefix = _has_file_under_prefix(changed_files, prefix)
+                    if file_check_mode == "present_any" and not has_file_under_prefix:
+                        continue
+                    if file_check_mode == "absent_any" and has_file_under_prefix:
+                        continue
+                    referenced_files = []
+                else:
+                    referenced_files = _extract_file_references(content)
                 file_found = False
                 for ref_file in referenced_files:
                     full_path = f"{prefix}/{ref_file}"
@@ -77,7 +86,7 @@ async def evaluate_rules_for_mr(
 
             emails = rule["emails"].split(",") if rule["emails"] else []
             results.append({
-                "rule": dict(rule),
+                "rule": rule,
                 "file_path": file_path,
                 "file_content": content,
                 "emails": emails,
@@ -96,6 +105,15 @@ def _match_content(content: str, match_value: str, match_type: str) -> bool:
     return False
 
 
+def _has_file_under_prefix(changed_files: list[str], prefix: str) -> bool:
+    normalized_prefix = prefix.rstrip("/")
+    prefix_with_slash = f"{normalized_prefix}/"
+    return any(
+        file_path == normalized_prefix or file_path.startswith(prefix_with_slash)
+        for file_path in changed_files
+    )
+
+
 def _extract_file_references(content: str) -> list[str]:
     """
     Извлекает ссылки на файлы из содержимого changelog.
@@ -108,6 +126,6 @@ def _extract_file_references(content: str) -> list[str]:
     # Фильтруем только файлы с типичными расширениями (не type: breaking и т.п.)
     extensions = {
         "sql", "py", "js", "ts", "sh", "yml", "yaml", "json", "xml",
-        "csv", "txt", "md", "html", "css", "java", "go", "rs", "rb",
+        "csv", "txt", "md", "html", "handlebars", "css", "java", "go", "rs", "rb",
     }
     return [m for m in matches if m.rsplit(".", 1)[-1].lower() in extensions]

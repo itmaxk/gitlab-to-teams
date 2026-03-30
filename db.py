@@ -151,6 +151,22 @@ def init_db():
     """)
 
     _migrate(conn)
+    _seed_rule_if_missing(conn, {
+        "name": "MR changed model without postgres script",
+        "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
+        "file_pattern": "model/*/*",
+        "content_match": "",
+        "match_type": "contains",
+        "target_branch": "master",
+        "mr_state": "opened",
+        "file_check_enabled": 1,
+        "file_check_path_prefix": "database/postgres",
+        "file_check_mode": "absent_any",
+        "send_teams": 1,
+        "send_email": 1,
+        "enabled": 1,
+    })
+
     conn.close()
 
 
