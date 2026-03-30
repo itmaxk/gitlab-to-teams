@@ -593,32 +593,19 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
     report_scope_user_ids = sorted(project_user_ids | db_user_ids)
     diagnostic_user_ids = sorted(project_user_ids | db_user_ids | issue_user_ids)
 
-    all_worklogs = {}
-    if diagnostic_user_ids:
-        all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-            diagnostic_user_ids,
-            date_from,
-            date_to,
-        )
-
     year_cal = _get_year_calendar(body.year)
     users = []
 
     for uid in diagnostic_user_ids:
-        entries = all_worklogs.get(uid, [])
-        display_name = _resolve_display_name(uid, entries, db_users, issue_user_map)
-        user_rows, day_checks = _build_overtime_rows_and_checks(
-            uid, display_name, entries, project, year_cal
-        )
-        issue_specific_checks = [
-            check for check in day_checks if issue_key in check.get("issues", [])
-        ]
-        issue_specific_rows = [
-            row for row in user_rows if issue_key in row.get("issues", [])
-        ]
         issue_specific_entries = [
             entry for entry in issue_entries if entry["author_key"] == uid
         ]
+        display_name = _resolve_display_name(
+            uid, issue_specific_entries, db_users, issue_user_map
+        )
+        issue_specific_rows, issue_specific_checks = _build_overtime_rows_and_checks(
+            uid, display_name, issue_specific_entries, project, year_cal
+        )
         raw_author = issue_specific_entries[0] if issue_specific_entries else {}
         lookup_candidates = list(
             dict.fromkeys(
@@ -646,7 +633,11 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
             exclusion_reason = "no_issue_worklogs_in_period"
         elif uid not in report_scope_user_ids:
             exclusion_reason = "user_not_in_report_scope"
-        elif not entries:
+        elif not any(
+            candidate_info.get("strict_entry_count", 0)
+            or candidate_info.get("candidate_match_entry_count", 0)
+            for candidate_info in lookup_diagnostics.values()
+        ):
             exclusion_reason = "user_lookup_returned_no_entries"
         elif issue_specific_checks:
             exclusion_reason = ",".join(
@@ -667,14 +658,16 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
                 "issue_hours": _format_hours(
                     sum(entry["seconds"] for entry in issue_specific_entries)
                 ),
-                "period_entry_count": len(entries),
-                "period_hours": _format_hours(sum(entry["seconds"] for entry in entries)),
-                "included_in_monthly_report": bool(user_rows),
+                "period_entry_count": len(issue_specific_entries),
+                "period_hours": _format_hours(
+                    sum(entry["seconds"] for entry in issue_specific_entries)
+                ),
+                "included_in_monthly_report": bool(issue_specific_rows),
                 "included_due_to_issue": bool(issue_specific_rows),
                 "exclusion_reason": exclusion_reason,
                 "issue_worklogs": issue_specific_entries,
                 "issue_day_checks": issue_specific_checks,
-                "report_rows": user_rows,
+                "report_rows": issue_specific_rows,
                 "author_identifiers": {
                     "account_id": raw_author.get("author_account_id", ""),
                     "key": raw_author.get("author_key_field", ""),
