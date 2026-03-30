@@ -131,6 +131,24 @@ def init_db():
             day_type INTEGER NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS review_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            system_prompt TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS code_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mr_iid INTEGER NOT NULL,
+            mr_title TEXT DEFAULT '',
+            mr_url TEXT DEFAULT '',
+            model_used TEXT DEFAULT '',
+            custom_prompt TEXT DEFAULT '',
+            findings_json TEXT DEFAULT '[]',
+            summary_json TEXT DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
@@ -277,6 +295,46 @@ def seed_report_settings():
                 "INSERT INTO report_settings (report_type) VALUES (?)", (rt,)
             )
     conn.commit()
+    conn.close()
+
+
+DEFAULT_REVIEW_PROMPT = """You are an expert code reviewer. Analyze the provided merge request diff and identify potential issues.
+
+Focus on:
+- Bugs and logical errors
+- Security vulnerabilities (SQL injection, XSS, hardcoded secrets, etc.)
+- Performance issues
+- Error handling problems
+- Race conditions and concurrency issues
+
+Do NOT focus on:
+- Code style or formatting
+- Minor naming suggestions
+- Adding comments or documentation
+
+Respond ONLY with a valid JSON array of findings. Each finding must have this structure:
+{
+  "severity": "error" | "warning" | "info",
+  "category": "bug" | "security" | "performance" | "style" | "logic",
+  "file_path": "path/to/file",
+  "line": null or line_number,
+  "message": "Description of the issue",
+  "suggestion": "How to fix it" or null
+}
+
+If there are no issues, return an empty array: []
+"""
+
+
+def seed_review_settings():
+    conn = get_db()
+    exists = conn.execute("SELECT 1 FROM review_settings WHERE id = 1").fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO review_settings (id, system_prompt) VALUES (1, ?)",
+            (DEFAULT_REVIEW_PROMPT,),
+        )
+        conn.commit()
     conn.close()
 
 

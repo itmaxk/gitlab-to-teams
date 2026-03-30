@@ -129,6 +129,14 @@ def compare_page(request: Request):
     })
 
 
+@router.get("/review", response_class=HTMLResponse)
+def review_page(request: Request):
+    llm_configured = bool(os.getenv("REVIEW_API_URL")) and bool(os.getenv("REVIEW_API_KEY"))
+    return templates.TemplateResponse(request, "review.html", {
+        "llm_configured": llm_configured,
+    })
+
+
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))

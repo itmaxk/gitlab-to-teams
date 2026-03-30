@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% block title %}Review — GitLab Manager{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-4">Code Review</h1>
+
+{% if not llm_configured %}
+<div class="bg-amber-900/30 border border-amber-700 rounded-lg p-4 mb-6 text-amber-300">
+  <p class="font-medium mb-1">LLM не настроен</p>
+  <p class="text-sm">Добавьте в <code>.env</code> переменные <code>REVIEW_API_URL</code> и <code>REVIEW_API_KEY</code> для подключения модели (OpenAI, Ollama, и др.).</p>
+</div>
+{% endif %}
+
+<!-- Form -->
+<div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-6">
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">MR IID или URL</label>
+      <input type="text" id="mrInput" placeholder="123 или https://gitlab.../merge_requests/123"
+             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+    </div>
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Доп. инструкции <span class="text-slate-500">(опционально)</span></label>
+      <input type="text" id="customPrompt" placeholder="Проверь обработку ошибок, найди SQL-инъекции..."
+             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+    </div>
+  </div>
+  <button onclick="runReview()" id="btnReview" {% if not llm_configured %}disabled{% endif %}
+          class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm px-6 py-2 rounded-lg font-medium">
+    Запустить ревью
+  </button>
+</div>
+
+<!-- Loading -->
+<div id="loading" class="hidden text-center py-8">
+  <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+  <p class="text-slate-400 mt-2">Анализ MR... Это может занять до минуты.</p>
+</div>
+
+<!-- Error -->
+<div id="errorBox" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-4 text-red-300"></div>
+
+<!-- Results -->
+<div id="results" class="hidden mb-8">
+  <!-- MR Info -->
+  <div id="mrInfo" class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-4"></div>
+
+  <!-- Summary -->
+  <div id="summaryBar" class="flex gap-3 mb-4"></div>
+
+  <!-- Filters -->
+  <div id="filters" class="flex gap-2 mb-4"></div>
+
+  <!-- Findings -->
+  <div id="findingsList" class="space-y-3"></div>
+</div>
+
+<!-- Settings (collapsible) -->
+<details class="mb-6">
+  <summary class="text-slate-400 hover:text-white cursor-pointer text-sm font-medium">
+    Настройки системного промпта
+  </summary>
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-2">
+    <textarea id="systemPrompt" rows="12"
+      class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm font-mono focus:border-blue-500 focus:outline-none"></textarea>
+    <div class="flex gap-2 mt-2">
+      <button onclick="savePrompt()" id="btnSavePrompt"
+              class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
+        Сохранить
+      </button>
+      <span id="promptStatus" class="text-sm text-slate-400 self-center"></span>
+    </div>
+  </div>
+</details>
+
+<!-- History -->
+<div id="historySection">
+  <h2 class="text-lg font-semibold text-slate-300 mb-3">История ревью</h2>
+  <div id="historyTable"></div>
+</div>
+
+<script>
+function escHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// ─── Review ───
+async function runReview() {
+  const mrInput = document.getElementById("mrInput").value.trim();
+  if (!mrInput) { alert("Введите MR IID или URL"); return; }
+
+  const customPrompt = document.getElementById("customPrompt").value.trim();
+  const btn = document.getElementById("btnReview");
+  const loading = document.getElementById("loading");
+  const errorBox = document.getElementById("errorBox");
+  const results = document.getElementById("results");
+
+  btn.disabled = true;
+  btn.textContent = "Анализ...";
+  loading.classList.remove("hidden");
+  errorBox.classList.add("hidden");
+  results.classList.add("hidden");
+
+  try {
+    const resp = await fetch("/api/review/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mr_input: mrInput, custom_prompt: customPrompt }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    const data = await resp.json();
+    renderResults(data);
+    loadHistory();
+  } catch (e) {
+    errorBox.textContent = "Ошибка: " + e.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    btn.disabled = {{ 'true' if not llm_configured else 'false' }};
+    btn.textContent = "Запустить ревью";
+    loading.classList.add("hidden");
+  }
+}
+
+let currentFindings = [];
+let activeFilter = "all";
+
+function renderResults(data) {
+  currentFindings = data.findings || [];
+  activeFilter = "all";
+  const mr = data.mr || {};
+  const summary = data.summary || {};
+
+  // MR Info
+  document.getElementById("mrInfo").innerHTML = `
+    <div class="flex items-center gap-3 mb-2">
+      <a href="${mr.web_url}" target="_blank" class="text-blue-400 hover:underline font-semibold text-lg">!${mr.iid}</a>
+      <span class="text-white">${escHtml(mr.title)}</span>
+    </div>
+    <div class="text-sm text-slate-400">
+      <span>Автор: ${escHtml(mr.author)}</span>
+      <span class="mx-2">|</span>
+      <span>${escHtml(mr.source_branch)} → ${escHtml(mr.target_branch)}</span>
+      <span class="mx-2">|</span>
+      <span>Файлов: ${mr.files_changed}</span>
+      <span class="mx-2">|</span>
+      <span>Модель: ${escHtml(data.model_used || '')}</span>
+    </div>
+    ${summary.truncated ? '<div class="text-xs text-amber-400 mt-1">Diff был обрезан из-за размера. Проанализировано ' + summary.files_analyzed + ' из ' + summary.files_total + ' файлов.</div>' : ''}
+  `;
+
+  // Summary bar
+  const summaryBar = document.getElementById("summaryBar");
+  summaryBar.innerHTML = `
+    <span class="px-3 py-1 rounded text-sm bg-red-900/30 text-red-400 border border-red-700">Errors: ${summary.errors || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-400 border border-amber-700">Warnings: ${summary.warnings || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-blue-900/30 text-blue-400 border border-blue-700">Info: ${summary.info || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-slate-700 text-slate-300">Total: ${summary.total || 0}</span>
+  `;
+
+  // Filters
+  const filters = document.getElementById("filters");
+  filters.innerHTML = ["all", "error", "warning", "info"].map(f => {
+    const label = f === "all" ? "Все" : f.charAt(0).toUpperCase() + f.slice(1);
+    return `<button onclick="setFilter('${f}')" data-filter="${f}"
+              class="px-3 py-1 rounded text-xs border ${f === 'all' ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}">
+              ${label}</button>`;
+  }).join("");
+
+  renderFindings();
+  document.getElementById("results").classList.remove("hidden");
+}
+
+function setFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll("#filters button").forEach(btn => {
+    const isActive = btn.dataset.filter === f;
+    btn.className = `px-3 py-1 rounded text-xs border ${isActive ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}`;
+  });
+  renderFindings();
+}
+
+function renderFindings() {
+  const list = document.getElementById("findingsList");
+  const filtered = activeFilter === "all" ? currentFindings : currentFindings.filter(f => f.severity === activeFilter);
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="text-center text-slate-500 py-6">Нет замечаний' + (activeFilter !== 'all' ? ' с таким уровнем' : '') + '</div>';
+    return;
+  }
+
+  const severityCfg = {
+    error:   { bg: "bg-red-900/20", border: "border-red-800", badge: "bg-red-600", label: "Error" },
+    warning: { bg: "bg-amber-900/20", border: "border-amber-800", badge: "bg-amber-600", label: "Warning" },
+    info:    { bg: "bg-blue-900/20", border: "border-blue-800", badge: "bg-blue-600", label: "Info" },
+  };
+
+  list.innerHTML = filtered.map(f => {
+    const cfg = severityCfg[f.severity] || severityCfg.info;
+    const lineStr = f.line ? `:${f.line}` : '';
+    return `<div class="${cfg.bg} border ${cfg.border} rounded-lg p-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="${cfg.badge} text-white text-xs px-2 py-0.5 rounded">${cfg.label}</span>
+        <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.category)}</span>
+        <span class="text-slate-400 text-xs font-mono">${escHtml(f.file_path)}${lineStr}</span>
+      </div>
+      <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
+      ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Suggestion:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
+    </div>`;
+  }).join("");
+}
+
+// ─── Settings ───
+async function loadPrompt() {
+  try {
+    const resp = await fetch("/api/review/settings");
+    const data = await resp.json();
+    document.getElementById("systemPrompt").value = data.system_prompt || "";
+  } catch(e) {}
+}
+
+async function savePrompt() {
+  const prompt = document.getElementById("systemPrompt").value;
+  const status = document.getElementById("promptStatus");
+  try {
+    const resp = await fetch("/api/review/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system_prompt: prompt }),
+    });
+    if (!resp.ok) throw new Error("Failed");
+    status.textContent = "Сохранено";
+    status.className = "text-sm text-green-400 self-center";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  } catch(e) {
+    status.textContent = "Ошибка сохранения";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+// ─── History ───
+async function loadHistory() {
+  try {
+    const resp = await fetch("/api/review/history");
+    const rows = await resp.json();
+    renderHistory(rows);
+  } catch(e) {}
+}
+
+function renderHistory(rows) {
+  const container = document.getElementById("historyTable");
+  if (!rows.length) {
+    container.innerHTML = '<p class="text-slate-500 text-sm">Нет сохранённых ревью</p>';
+    return;
+  }
+  container.innerHTML = `<div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-700 text-left text-slate-400">
+          <th class="py-2 px-3">MR</th>
+          <th class="py-2 px-3">Заголовок</th>
+          <th class="py-2 px-3">Модель</th>
+          <th class="py-2 px-3">Результат</th>
+          <th class="py-2 px-3">Дата</th>
+          <th class="py-2 px-3"></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map(r => {
+          const s = r.summary || {};
+          return `<tr class="border-b border-slate-700/50 hover:bg-slate-800/50 cursor-pointer" onclick="loadReview(${r.id})">
+            <td class="py-2 px-3"><a href="${r.mr_url}" target="_blank" class="text-blue-400 hover:underline" onclick="event.stopPropagation()">!${r.mr_iid}</a></td>
+            <td class="py-2 px-3 text-slate-300 max-w-xs truncate">${escHtml(r.mr_title)}</td>
+            <td class="py-2 px-3 text-slate-400 text-xs">${escHtml(r.model_used || '')}</td>
+            <td class="py-2 px-3">
+              ${s.errors ? '<span class="text-red-400 text-xs mr-1">' + s.errors + 'E</span>' : ''}
+              ${s.warnings ? '<span class="text-amber-400 text-xs mr-1">' + s.warnings + 'W</span>' : ''}
+              ${s.info ? '<span class="text-blue-400 text-xs">' + s.info + 'I</span>' : ''}
+              ${!s.errors && !s.warnings && !s.info ? '<span class="text-green-400 text-xs">Clean</span>' : ''}
+            </td>
+            <td class="py-2 px-3 text-slate-500 text-xs">${r.created_at || ''}</td>
+            <td class="py-2 px-3">
+              <button onclick="event.stopPropagation(); deleteReview(${r.id})" class="text-red-400 hover:text-red-300 text-xs">Удалить</button>
+            </td>
+          </tr>`;
+        }).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function loadReview(id) {
+  try {
+    const resp = await fetch(`/api/review/${id}`);
+    if (!resp.ok) throw new Error("Not found");
+    const data = await resp.json();
+    // Reconstruct for renderResults format
+    const reviewData = {
+      mr: {
+        iid: data.mr_iid,
+        title: data.mr_title,
+        author: "",
+        source_branch: "",
+        target_branch: "",
+        web_url: data.mr_url,
+        files_changed: (data.summary || {}).files_total || 0,
+      },
+      findings: data.findings || [],
+      summary: data.summary || {},
+      model_used: data.model_used || "",
+    };
+    renderResults(reviewData);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch(e) {
+    alert("Ошибка загрузки ревью");
+  }
+}
+
+async function deleteReview(id) {
+  if (!confirm("Удалить это ревью?")) return;
+  try {
+    await fetch(`/api/review/${id}`, { method: "DELETE" });
+    loadHistory();
+  } catch(e) {}
+}
+
+// Init
+loadPrompt();
+loadHistory();
+</script>
+{% endblock %}

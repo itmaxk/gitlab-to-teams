@@ -291,6 +291,34 @@ async def get_branches(
     return resp.json()
 
 
+async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
+    """Возвращает метаданные MR и полные диффы по каждому файлу."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes"
+    async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+        data = resp.json()
+    return {
+        "title": data.get("title", ""),
+        "description": data.get("description", ""),
+        "author": data.get("author", {}).get("name", ""),
+        "source_branch": data.get("source_branch", ""),
+        "target_branch": data.get("target_branch", ""),
+        "web_url": data.get("web_url", ""),
+        "changes": [
+            {
+                "old_path": c.get("old_path", ""),
+                "new_path": c.get("new_path", ""),
+                "diff": c.get("diff", ""),
+                "new_file": c.get("new_file", False),
+                "deleted_file": c.get("deleted_file", False),
+                "renamed_file": c.get("renamed_file", False),
+            }
+            for c in data.get("changes", [])
+        ],
+    }
+
+
 async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Получает содержимое файла из репозитория GitLab."""
     encoded_path = quote(file_path, safe="")

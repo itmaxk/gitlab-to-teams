@@ -83,6 +83,24 @@ class ReportSettingsUpdate(BaseModel):
     missing_time_interval_days: int = 0
 
 
+class ReviewRequest(BaseModel):
+    mr_input: str
+    custom_prompt: str = ""
+
+
+class ReviewFinding(BaseModel):
+    severity: str
+    category: str
+    file_path: str
+    line: int | None = None
+    message: str
+    suggestion: str | None = None
+
+
+class ReviewSettingsUpdate(BaseModel):
+    system_prompt: str
+
+
 class LogOut(BaseModel):
     id: int
     rule_id: int
