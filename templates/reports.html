@@ -126,6 +126,7 @@
 
   <div id="otResults" class="hidden">
     <div id="otStats" class="text-sm text-slate-400 mb-3"></div>
+    <div id="otSummary" class="hidden mb-4"></div>
     <div class="overflow-x-auto">
       <table class="w-full text-sm">
         <thead>
@@ -436,7 +437,7 @@ async function sendTimeLoggingReport() {
     const resp = await fetch('/api/reports/send-time-logging', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({year, month, emails}),
+      body: JSON.stringify({year, month, emails, rows: tlData.rows, project: tlData.project}),
     });
     const data = await resp.json();
     alert(data.sent ? 'Отчёт отправлен' : 'Не отправлено: ' + (data.reason || ''));
@@ -510,6 +511,37 @@ function renderOvertime(data) {
     tbody.innerHTML = '<tr><td colspan="9" class="px-3 py-8 text-center text-slate-500">Переработок не найдено</td></tr>';
   }
 
+  // Summary per user
+  const summaryDiv = document.getElementById('otSummary');
+  if (rows.length) {
+    const byUser = {};
+    for (const r of rows) {
+      if (!byUser[r.display_name]) byUser[r.display_name] = {total: 0, project: 0, other: 0, days: 0};
+      byUser[r.display_name].total += parseFloat(r.over_norm);
+      byUser[r.display_name].project += parseFloat(r.project_hours);
+      byUser[r.display_name].other += parseFloat(r.other_hours);
+      byUser[r.display_name].days += 1;
+    }
+    let shtml = `<h3 class="text-sm font-semibold text-slate-300 mb-2">Сводка по пользователям</h3>
+      <table class="w-full text-sm mb-4"><thead><tr class="text-left text-slate-400 border-b border-slate-700">
+      <th class="px-3 py-2">Пользователь</th><th class="px-3 py-2">Дней</th>
+      <th class="px-3 py-2">${JIRA_PROJECT}</th><th class="px-3 py-2">Другие</th>
+      <th class="px-3 py-2">Итого сверх нормы</th></tr></thead><tbody>`;
+    for (const [name, s] of Object.entries(byUser).sort((a,b) => a[0].localeCompare(b[0]))) {
+      shtml += `<tr class="border-b border-slate-700/50">
+        <td class="px-3 py-2 font-medium">${name}</td>
+        <td class="px-3 py-2">${s.days}</td>
+        <td class="px-3 py-2 text-cyan-400">${s.project.toFixed(1)}h</td>
+        <td class="px-3 py-2 text-slate-400">${s.other.toFixed(1)}h</td>
+        <td class="px-3 py-2 text-red-400 font-bold">+${s.total.toFixed(1)}h</td></tr>`;
+    }
+    shtml += '</tbody></table>';
+    summaryDiv.innerHTML = shtml;
+    summaryDiv.classList.remove('hidden');
+  } else {
+    summaryDiv.classList.add('hidden');
+  }
+
   document.getElementById('otResults').classList.remove('hidden');
 }
 
@@ -528,7 +560,7 @@ async function sendOvertimeReport() {
     const resp = await fetch('/api/reports/send-overtime', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({year, month, emails}),
+      body: JSON.stringify({year, month, emails, rows: otData.rows, project: otData.project}),
     });
     const data = await resp.json();
     alert(data.sent ? 'Отчёт отправлен' : 'Не отправлено: ' + (data.reason || ''));

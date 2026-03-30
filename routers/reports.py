@@ -16,7 +16,7 @@ from models import (
     NotifyMissingRequest,
     ReportRequest,
     ReportSettingsUpdate,
-    SendOvertimeRequest,
+    SendReportRequest,
 )
 from services import jira_client
 
@@ -453,30 +453,63 @@ async def notify_missing(body: NotifyMissingRequest):
 # API: Send overtime report
 # ---------------------------------------------------------------------------
 
+def _build_overtime_summary(rows: list[dict]) -> dict[str, dict]:
+    """Сводка по пользователям: сумма переработок за месяц."""
+    summary: dict[str, dict] = {}
+    for r in rows:
+        name = r.get("display_name", "")
+        if name not in summary:
+            summary[name] = {"total": 0.0, "project": 0.0, "other": 0.0, "days": 0}
+        summary[name]["total"] += float(r.get("over_norm", 0))
+        summary[name]["project"] += float(r.get("project_hours", 0))
+        summary[name]["other"] += float(r.get("other_hours", 0))
+        summary[name]["days"] += 1
+    return summary
+
+
 @router.post("/api/reports/send-overtime")
-async def send_overtime_email(body: SendOvertimeRequest):
-    report = await overtime_report(ReportRequest(year=body.year, month=body.month))
-    rows = report["rows"]
+async def send_overtime_email(body: SendReportRequest):
+    rows = body.rows
+    project = body.project or os.getenv("JIRA_PROJECT", "")
+
+    if not rows:
+        report = await overtime_report(ReportRequest(year=body.year, month=body.month))
+        rows = report["rows"]
+        project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no overtime data"}
 
     jira_url = os.getenv("JIRA_URL", "").rstrip("/")
+
+    summary = _build_overtime_summary(rows)
+    summary_html = ""
+    for name, s in sorted(summary.items()):
+        summary_html += (
+            f'<tr>'
+            f'<td style="padding:4px 8px;font-weight:bold">{name}</td>'
+            f'<td style="padding:4px 8px">{s["days"]}</td>'
+            f'<td style="padding:4px 8px;color:#06b6d4">{s["project"]:.1f}h</td>'
+            f'<td style="padding:4px 8px;color:gray">{s["other"]:.1f}h</td>'
+            f'<td style="padding:4px 8px;color:red;font-weight:bold">+{s["total"]:.1f}h</td>'
+            f'</tr>'
+        )
+
     html_rows = ""
     for r in rows:
-        day_class = "color:red" if r["day_type"] != "workday" else "color:orange"
+        day_class = "color:red" if r.get("day_type") != "workday" else "color:orange"
         issues_links = ", ".join(
             f'<a href="{jira_url}/browse/{ik}">{ik}</a>' for ik in r.get("issues", [])
         )
         html_rows += (
             f'<tr style="{day_class}">'
-            f'<td style="padding:4px 8px">{r["display_name"]}</td>'
-            f'<td style="padding:4px 8px">{r["date"]}</td>'
-            f'<td style="padding:4px 8px">{r["day_type"]}</td>'
-            f'<td style="padding:4px 8px">{r["total_hours"]}h</td>'
-            f'<td style="padding:4px 8px">{r["project_hours"]}h</td>'
-            f'<td style="padding:4px 8px">{r["other_hours"]}h</td>'
-            f'<td style="padding:4px 8px">+{r["over_norm"]}h</td>'
+            f'<td style="padding:4px 8px">{r.get("display_name","")}</td>'
+            f'<td style="padding:4px 8px">{r.get("date","")}</td>'
+            f'<td style="padding:4px 8px">{r.get("day_type","")}</td>'
+            f'<td style="padding:4px 8px">{r.get("total_hours","")}h</td>'
+            f'<td style="padding:4px 8px">{r.get("project_hours","")}h</td>'
+            f'<td style="padding:4px 8px">{r.get("other_hours","")}h</td>'
+            f'<td style="padding:4px 8px">+{r.get("over_norm","")}h</td>'
             f'<td style="padding:4px 8px">{issues_links}</td>'
             f"</tr>"
         )
@@ -485,13 +518,27 @@ async def send_overtime_email(body: SendOvertimeRequest):
     html = f"""\
 <html><body style="font-family:Arial,sans-serif;color:#333">
 <h2>Отчёт по переработкам — {month_name}</h2>
+
+<h3>Сводка по пользователям</h3>
+<table style="border-collapse:collapse;border:1px solid #ccc;margin-bottom:20px">
+<tr style="background:#f0f0f0;font-weight:bold">
+<td style="padding:4px 8px">Пользователь</td>
+<td style="padding:4px 8px">Дней</td>
+<td style="padding:4px 8px">{project}</td>
+<td style="padding:4px 8px">Другие</td>
+<td style="padding:4px 8px">Итого сверх нормы</td>
+</tr>
+{summary_html}
+</table>
+
+<h3>Детализация</h3>
 <table style="border-collapse:collapse;border:1px solid #ccc">
 <tr style="background:#f0f0f0;font-weight:bold">
 <td style="padding:4px 8px">Пользователь</td>
 <td style="padding:4px 8px">Дата</td>
 <td style="padding:4px 8px">Тип дня</td>
 <td style="padding:4px 8px">Всего</td>
-<td style="padding:4px 8px">{report['project']}</td>
+<td style="padding:4px 8px">{project}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Сверх нормы</td>
 <td style="padding:4px 8px">Задачи</td>
@@ -509,23 +556,28 @@ async def send_overtime_email(body: SendOvertimeRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/reports/send-time-logging")
-async def send_time_logging_email(body: SendOvertimeRequest):
-    report = await time_logging_report(ReportRequest(year=body.year, month=body.month))
-    rows = report["rows"]
+async def send_time_logging_email(body: SendReportRequest):
+    rows = body.rows
+    project = body.project or os.getenv("JIRA_PROJECT", "")
+
+    if not rows:
+        report = await time_logging_report(ReportRequest(year=body.year, month=body.month))
+        rows = report["rows"]
+        project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no time logging data"}
 
     html_rows = ""
     for r in rows:
-        missing_style = "color:red" if r["missing_count"] > 0 else ""
+        missing_style = "color:red" if r.get("missing_count", 0) > 0 else ""
         html_rows += (
             f'<tr>'
-            f'<td style="padding:4px 8px">{r["display_name"]}</td>'
-            f'<td style="padding:4px 8px">{r["days_logged"]}/{r["total_workdays"]}</td>'
-            f'<td style="padding:4px 8px;color:#06b6d4">{r["project_hours"]}h</td>'
-            f'<td style="padding:4px 8px;color:gray">{r["other_hours"]}h</td>'
-            f'<td style="padding:4px 8px;{missing_style}">{r["missing_count"]} дн.</td>'
+            f'<td style="padding:4px 8px">{r.get("display_name","")}</td>'
+            f'<td style="padding:4px 8px">{r.get("days_logged","")}/{r.get("total_workdays","")}</td>'
+            f'<td style="padding:4px 8px;color:#06b6d4">{r.get("project_hours","")}h</td>'
+            f'<td style="padding:4px 8px;color:gray">{r.get("other_hours","")}h</td>'
+            f'<td style="padding:4px 8px;{missing_style}">{r.get("missing_count",0)} дн.</td>'
             f'</tr>'
         )
 
@@ -533,12 +585,12 @@ async def send_time_logging_email(body: SendOvertimeRequest):
     html = f"""\
 <html><body style="font-family:Arial,sans-serif;color:#333">
 <h2>Отчёт учёта времени — {month_name}</h2>
-<p>Проект: {report['project']}</p>
+<p>Проект: {project}</p>
 <table style="border-collapse:collapse;border:1px solid #ccc">
 <tr style="background:#f0f0f0;font-weight:bold">
 <td style="padding:4px 8px">Пользователь</td>
 <td style="padding:4px 8px">Дни</td>
-<td style="padding:4px 8px">{report['project']}</td>
+<td style="padding:4px 8px">{project}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Пропущено</td>
 </tr>

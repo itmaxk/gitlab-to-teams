@@ -58,10 +58,12 @@ class NotifyMissingRequest(BaseModel):
     month: int
 
 
-class SendOvertimeRequest(BaseModel):
+class SendReportRequest(BaseModel):
     year: int
     month: int
     emails: list[str]
+    rows: list[dict] = []
+    project: str = ""
 
 
 class ReportSettingsUpdate(BaseModel):

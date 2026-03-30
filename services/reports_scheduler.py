@@ -57,7 +57,7 @@ async def _tick():
 
 
 async def _auto_generate_and_send(report_type: str, year: int, month: int, settings: dict):
-    from models import ReportRequest, SendOvertimeRequest
+    from models import ReportRequest, SendReportRequest
     from routers.reports import time_logging_report, overtime_report, _send_email
 
     recipients_str = settings["email_recipients"] or ""
@@ -103,7 +103,7 @@ async def _auto_generate_and_send(report_type: str, year: int, month: int, setti
         if not recipients or not settings["send_email"]:
             return
         from routers.reports import send_overtime_email
-        await send_overtime_email(SendOvertimeRequest(year=year, month=month, emails=recipients))
+        await send_overtime_email(SendReportRequest(year=year, month=month, emails=recipients))
 
 
 async def _check_missing_time_notify():
