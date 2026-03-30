@@ -300,22 +300,31 @@ async def overtime_report(body: ReportRequest):
     project = os.getenv("JIRA_PROJECT", "")
     date_from, date_to = _month_range(body.year, body.month)
 
+    # 1. Собираем пользователей из проекта за период
+    project_worklogs = await jira_client.get_all_worklogs_for_project(
+        project, date_from, date_to,
+    )
+    project_user_ids = set(project_worklogs.keys())
+
+    # 2. Добавляем сохранённых в БД пользователей
     conn = get_db()
     db_users = conn.execute("SELECT * FROM jira_users WHERE active = 1").fetchall()
     conn.close()
-    user_ids = [r["account_id"] for r in db_users]
+    db_user_ids = {r["account_id"] for r in db_users}
 
-    if not user_ids:
+    all_user_ids = list(project_user_ids | db_user_ids)
+    if not all_user_ids:
         return {"rows": [], "year": body.year, "month": body.month}
 
+    # 3. Для всех пользователей ищем ворклоги во всех проектах
     all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-        user_ids, date_from, date_to,
+        all_user_ids, date_from, date_to,
     )
 
     year_cal = _get_year_calendar(body.year)
     rows = []
 
-    for uid in user_ids:
+    for uid in all_user_ids:
         entries = all_worklogs.get(uid, [])
         if not entries:
             continue
