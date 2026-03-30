@@ -226,3 +226,54 @@ def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path
     assert users["user-b"]["included_due_to_issue"] is False
     assert users["user-b"]["exclusion_reason"] == "workday_not_over_8h"
     assert users["user-b"]["issue_day_checks"][0]["qualifies_overtime"] is False
+
+
+def test_overtime_debug_issue_survives_lookup_diagnostics_failure(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "debug-failure-data.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_issue_worklogs(issue_key, start_at=0, max_results=1000):
+        return {
+            "worklogs": [
+                {
+                    "author": {
+                        "accountId": "user-a",
+                        "displayName": "User A",
+                        "emailAddress": "a@example.com",
+                    },
+                    "started": "2026-03-02T09:00:00.000+0000",
+                    "timeSpentSeconds": 10 * 3600,
+                }
+            ]
+        }
+
+    async def fake_diagnose_worklog_author_candidates(
+        candidate_ids, date_from, date_to, issue_key=""
+    ):
+        raise RuntimeError("connect failed")
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_issue_worklogs",
+        fake_get_issue_worklogs,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "diagnose_worklog_author_candidates",
+        fake_diagnose_worklog_author_candidates,
+    )
+
+    result = asyncio.run(
+        reports.overtime_debug_issue(
+            OvertimeDebugRequest(year=2026, month=3, issue_key="main-1")
+        )
+    )
+
+    users = {user["account_id"]: user for user in result["users"]}
+    assert users["user-a"]["included_due_to_issue"] is True
+    assert users["user-a"]["lookup_diagnostics"] == {}
+    assert users["user-a"]["lookup_diagnostics_error"] == "connect failed"

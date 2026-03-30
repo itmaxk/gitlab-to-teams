@@ -617,13 +617,19 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         )
         lookup_candidates = [candidate for candidate in lookup_candidates if candidate]
         lookup_diagnostics = {}
+        lookup_diagnostics_error = ""
         if lookup_candidates:
-            lookup_diagnostics = await jira_client.diagnose_worklog_author_candidates(
-                lookup_candidates,
-                date_from,
-                date_to,
-                issue_key=issue_key,
-            )
+            try:
+                lookup_diagnostics = (
+                    await jira_client.diagnose_worklog_author_candidates(
+                        lookup_candidates,
+                        date_from,
+                        date_to,
+                        issue_key=issue_key,
+                    )
+                )
+            except Exception as exc:
+                lookup_diagnostics_error = str(exc)
 
         if issue_specific_rows:
             exclusion_reason = "included_via_issue"
@@ -674,6 +680,7 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
                 },
                 "lookup_candidates": lookup_candidates,
                 "lookup_diagnostics": lookup_diagnostics,
+                "lookup_diagnostics_error": lookup_diagnostics_error,
             }
         )
 
