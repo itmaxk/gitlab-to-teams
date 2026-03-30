@@ -32,7 +32,14 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 
 # Официальные праздничные дни РФ (фиксированные даты, ст. 112 ТК РФ).
 _RU_HOLIDAY_DATES = [
-    (1, 1), (1, 2), (1, 3), (1, 4), (1, 5), (1, 6), (1, 7), (1, 8),
+    (1, 1),
+    (1, 2),
+    (1, 3),
+    (1, 4),
+    (1, 5),
+    (1, 6),
+    (1, 7),
+    (1, 8),
     (2, 23),
     (3, 8),
     (5, 1),
@@ -176,28 +183,39 @@ def _send_email(recipients: list[str], subject: str, html_body: str):
 # Page
 # ---------------------------------------------------------------------------
 
+
 @router.get("/reports", response_class=HTMLResponse)
 def reports_page(request: Request):
     conn = get_db()
-    users = [dict(r) for r in conn.execute("SELECT * FROM jira_users ORDER BY display_name").fetchall()]
+    users = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM jira_users ORDER BY display_name"
+        ).fetchall()
+    ]
     vacations = {}
     for v in conn.execute("SELECT * FROM user_vacations ORDER BY date_from").fetchall():
         vacations.setdefault(v["account_id"], []).append(dict(v))
     settings_rows = conn.execute("SELECT * FROM report_settings").fetchall()
     conn.close()
     settings = {row["report_type"]: dict(row) for row in settings_rows}
-    return templates.TemplateResponse(request, "reports.html", {
-        "jira_url": os.getenv("JIRA_URL", ""),
-        "jira_project": os.getenv("JIRA_PROJECT", ""),
-        "users": users,
-        "vacations": vacations,
-        "settings": settings,
-    })
+    return templates.TemplateResponse(
+        request,
+        "reports.html",
+        {
+            "jira_url": os.getenv("JIRA_URL", ""),
+            "jira_project": os.getenv("JIRA_PROJECT", ""),
+            "users": users,
+            "vacations": vacations,
+            "settings": settings,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # API: Time Logging report
 # ---------------------------------------------------------------------------
+
 
 @router.post("/api/reports/time-logging")
 async def time_logging_report(body: ReportRequest):
@@ -205,7 +223,9 @@ async def time_logging_report(body: ReportRequest):
     date_from, date_to = _month_range(body.year, body.month)
 
     project_worklogs = await jira_client.get_all_worklogs_for_project(
-        project, date_from, date_to,
+        project,
+        date_from,
+        date_to,
     )
 
     user_info: dict[str, dict] = {}
@@ -222,7 +242,9 @@ async def time_logging_report(body: ReportRequest):
     other_worklogs: dict[str, list[dict]] = {}
     if user_ids:
         other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-            user_ids, date_from, date_to,
+            user_ids,
+            date_from,
+            date_to,
         )
 
     workdays = get_workdays_in_month(body.year, body.month)
@@ -234,10 +256,19 @@ async def time_logging_report(body: ReportRequest):
     past_workdays = {d for d in workday_strs if d < today_str}
 
     # Загрузить отпуска пользователей
-    vacation_dates = _get_vacation_dates(user_ids, date_from, date_to) if user_ids else {}
+    vacation_dates = (
+        _get_vacation_dates(user_ids, date_from, date_to) if user_ids else {}
+    )
 
     rows = []
-    for uid in sorted(user_ids, key=lambda u: (project_worklogs.get(u, [{}])[0].get("display_name", "") if project_worklogs.get(u) else "")):
+    for uid in sorted(
+        user_ids,
+        key=lambda u: (
+            project_worklogs.get(u, [{}])[0].get("display_name", "")
+            if project_worklogs.get(u)
+            else ""
+        ),
+    ):
         proj_entries = project_worklogs.get(uid, [])
         all_entries = other_worklogs.get(uid, [])
 
@@ -255,38 +286,56 @@ async def time_logging_report(body: ReportRequest):
         display_name = proj_entries[0]["display_name"] if proj_entries else uid
         email = proj_entries[0]["email"] if proj_entries else ""
 
-        status = "new" if uid in new_users else ("removed" if uid in removed_users else "active")
+        status = (
+            "new"
+            if uid in new_users
+            else ("removed" if uid in removed_users else "active")
+        )
 
         # Список задач пользователя с часами
         issues_map: dict[str, dict] = {}
         for e in proj_entries:
             ik = e["issue_key"]
             if ik not in issues_map:
-                issues_map[ik] = {"issue_key": ik, "project": e["project"], "seconds": 0}
+                issues_map[ik] = {
+                    "issue_key": ik,
+                    "project": e["project"],
+                    "seconds": 0,
+                }
             issues_map[ik]["seconds"] += e["seconds"]
         for e in all_entries:
             ik = e["issue_key"]
             if ik not in issues_map:
-                issues_map[ik] = {"issue_key": ik, "project": e["project"], "seconds": 0}
+                issues_map[ik] = {
+                    "issue_key": ik,
+                    "project": e["project"],
+                    "seconds": 0,
+                }
             issues_map[ik]["seconds"] += e["seconds"]
         user_issues = sorted(issues_map.values(), key=lambda x: x["issue_key"])
 
-        rows.append({
-            "account_id": uid,
-            "display_name": display_name,
-            "email": email,
-            "status": status,
-            "project_hours": _format_hours(proj_seconds),
-            "other_hours": _format_hours(other_seconds),
-            "days_logged": len(proj_dates),
-            "total_workdays": len(past_workdays),
-            "missing_days": missing_days,
-            "missing_count": len(missing_days),
-            "issues": [
-                {"issue_key": i["issue_key"], "project": i["project"], "hours": _format_hours(i["seconds"])}
-                for i in user_issues
-            ],
-        })
+        rows.append(
+            {
+                "account_id": uid,
+                "display_name": display_name,
+                "email": email,
+                "status": status,
+                "project_hours": _format_hours(proj_seconds),
+                "other_hours": _format_hours(other_seconds),
+                "days_logged": len(proj_dates),
+                "total_workdays": len(past_workdays),
+                "missing_days": missing_days,
+                "missing_count": len(missing_days),
+                "issues": [
+                    {
+                        "issue_key": i["issue_key"],
+                        "project": i["project"],
+                        "hours": _format_hours(i["seconds"]),
+                    }
+                    for i in user_issues
+                ],
+            }
+        )
 
     return {"rows": rows, "year": body.year, "month": body.month, "project": project}
 
@@ -295,6 +344,7 @@ async def time_logging_report(body: ReportRequest):
 # API: Overtime report
 # ---------------------------------------------------------------------------
 
+
 @router.post("/api/reports/overtime")
 async def overtime_report(body: ReportRequest):
     project = os.getenv("JIRA_PROJECT", "")
@@ -302,23 +352,27 @@ async def overtime_report(body: ReportRequest):
 
     # 1. Собираем пользователей из проекта за период
     project_worklogs = await jira_client.get_all_worklogs_for_project(
-        project, date_from, date_to,
+        project,
+        date_from,
+        date_to,
     )
     project_user_ids = set(project_worklogs.keys())
 
     # 2. Добавляем сохранённых в БД пользователей
     conn = get_db()
-    db_users = conn.execute("SELECT * FROM jira_users WHERE active = 1").fetchall()
+    db_users = conn.execute("SELECT * FROM jira_users").fetchall()
     conn.close()
     db_user_ids = {r["account_id"] for r in db_users}
 
-    all_user_ids = list(project_user_ids | db_user_ids)
+    all_user_ids = sorted(project_user_ids | db_user_ids)
     if not all_user_ids:
         return {"rows": [], "year": body.year, "month": body.month}
 
     # 3. Для всех пользователей ищем ворклоги во всех проектах
     all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-        all_user_ids, date_from, date_to,
+        all_user_ids,
+        date_from,
+        date_to,
     )
 
     year_cal = _get_year_calendar(body.year)
@@ -354,26 +408,34 @@ async def overtime_report(body: ReportRequest):
             if not overtime:
                 continue
 
-            proj_seconds = sum(e["seconds"] for e in day_entries if e["project"] == project)
+            proj_seconds = sum(
+                e["seconds"] for e in day_entries if e["project"] == project
+            )
             other_seconds = total_seconds - proj_seconds
 
-            day_type = "holiday" if is_holiday else ("weekend" if is_weekend else "workday")
+            day_type = (
+                "holiday" if is_holiday else ("weekend" if is_weekend else "workday")
+            )
 
             projects_list = sorted({e["project"] for e in day_entries})
             issues_list = sorted({e["issue_key"] for e in day_entries})
 
-            rows.append({
-                "account_id": uid,
-                "display_name": display_name,
-                "date": day_str,
-                "day_type": day_type,
-                "total_hours": f"{total_hours:.1f}",
-                "project_hours": _format_hours(proj_seconds),
-                "other_hours": _format_hours(other_seconds),
-                "over_norm": f"{(total_hours - 8):.1f}" if is_wd else f"{total_hours:.1f}",
-                "projects": projects_list,
-                "issues": issues_list,
-            })
+            rows.append(
+                {
+                    "account_id": uid,
+                    "display_name": display_name,
+                    "date": day_str,
+                    "day_type": day_type,
+                    "total_hours": f"{total_hours:.1f}",
+                    "project_hours": _format_hours(proj_seconds),
+                    "other_hours": _format_hours(other_seconds),
+                    "over_norm": f"{(total_hours - 8):.1f}"
+                    if is_wd
+                    else f"{total_hours:.1f}",
+                    "projects": projects_list,
+                    "issues": issues_list,
+                }
+            )
 
     return {"rows": rows, "year": body.year, "month": body.month, "project": project}
 
@@ -382,10 +444,16 @@ async def overtime_report(body: ReportRequest):
 # API: Users
 # ---------------------------------------------------------------------------
 
+
 @router.get("/api/reports/users")
 def list_users():
     conn = get_db()
-    users = [dict(r) for r in conn.execute("SELECT * FROM jira_users ORDER BY display_name").fetchall()]
+    users = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT * FROM jira_users ORDER BY display_name"
+        ).fetchall()
+    ]
     conn.close()
     return users
 
@@ -393,12 +461,17 @@ def list_users():
 @router.patch("/api/reports/users/{account_id}")
 def toggle_user(account_id: str):
     conn = get_db()
-    row = conn.execute("SELECT active FROM jira_users WHERE account_id = ?", (account_id,)).fetchone()
+    row = conn.execute(
+        "SELECT active FROM jira_users WHERE account_id = ?", (account_id,)
+    ).fetchone()
     if not row:
         conn.close()
         return {"error": "not found"}
     new_active = 0 if row["active"] else 1
-    conn.execute("UPDATE jira_users SET active = ? WHERE account_id = ?", (new_active, account_id))
+    conn.execute(
+        "UPDATE jira_users SET active = ? WHERE account_id = ?",
+        (new_active, account_id),
+    )
     conn.commit()
     conn.close()
     return {"ok": True, "active": new_active}
@@ -407,6 +480,7 @@ def toggle_user(account_id: str):
 # ---------------------------------------------------------------------------
 # API: Vacations
 # ---------------------------------------------------------------------------
+
 
 @router.get("/api/reports/users/{account_id}/vacations")
 def get_vacations(account_id: str):
@@ -445,7 +519,9 @@ def delete_vacation(vacation_id: int):
     return {"ok": True}
 
 
-def _get_vacation_dates(user_ids: list[str], date_from: str, date_to: str) -> dict[str, set[str]]:
+def _get_vacation_dates(
+    user_ids: list[str], date_from: str, date_to: str
+) -> dict[str, set[str]]:
     """Возвращает {account_id: set of vacation date strings} для периода."""
     conn = get_db()
     placeholders = ",".join("?" for _ in user_ids)
@@ -475,6 +551,7 @@ def _get_vacation_dates(user_ids: list[str], date_from: str, date_to: str) -> di
 # API: Notify missing time
 # ---------------------------------------------------------------------------
 
+
 @router.post("/api/reports/notify-missing")
 async def notify_missing(body: NotifyMissingRequest):
     project = os.getenv("JIRA_PROJECT", "")
@@ -484,7 +561,9 @@ async def notify_missing(body: NotifyMissingRequest):
     relevant_workdays = {d.isoformat() for d in workdays if d <= today}
 
     all_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-        body.user_ids, date_from, date_to,
+        body.user_ids,
+        date_from,
+        date_to,
     )
 
     conn = get_db()
@@ -492,7 +571,9 @@ async def notify_missing(body: NotifyMissingRequest):
         "SELECT * FROM report_settings WHERE report_type = 'time_logging'"
     ).fetchone()
     conn.close()
-    webhook_url = (settings_row["teams_webhook_url"] if settings_row else "") or os.getenv("TEAMS_WEBHOOK_URL", "")
+    webhook_url = (
+        settings_row["teams_webhook_url"] if settings_row else ""
+    ) or os.getenv("TEAMS_WEBHOOK_URL", "")
 
     results = []
     for uid in body.user_ids:
@@ -501,11 +582,15 @@ async def notify_missing(body: NotifyMissingRequest):
         missing = sorted(relevant_workdays - logged_dates)
 
         if not missing:
-            results.append({"account_id": uid, "sent": False, "reason": "no missing days"})
+            results.append(
+                {"account_id": uid, "sent": False, "reason": "no missing days"}
+            )
             continue
 
         conn2 = get_db()
-        user_row = conn2.execute("SELECT * FROM jira_users WHERE account_id = ?", (uid,)).fetchone()
+        user_row = conn2.execute(
+            "SELECT * FROM jira_users WHERE account_id = ?", (uid,)
+        ).fetchone()
         conn2.close()
         display_name = user_row["display_name"] if user_row else uid
 
@@ -524,6 +609,7 @@ async def notify_missing(body: NotifyMissingRequest):
         if webhook_url:
             try:
                 from services.teams_client import send_teams_notification
+
                 await send_teams_notification(
                     webhook_url=webhook_url,
                     mr_title=f"Незалогированное время — {display_name}",
@@ -550,7 +636,9 @@ async def notify_missing(body: NotifyMissingRequest):
                 error += f" email: {e}"
                 logger.error("notify_missing email %s: %s", uid, e)
 
-        results.append({"account_id": uid, "sent": sent_teams or sent_email, "error": error})
+        results.append(
+            {"account_id": uid, "sent": sent_teams or sent_email, "error": error}
+        )
 
     return {"results": results}
 
@@ -558,6 +646,7 @@ async def notify_missing(body: NotifyMissingRequest):
 # ---------------------------------------------------------------------------
 # API: Send overtime report
 # ---------------------------------------------------------------------------
+
 
 def _build_overtime_summary(rows: list[dict]) -> dict[str, dict]:
     """Сводка по пользователям: сумма переработок за месяц."""
@@ -592,13 +681,13 @@ async def send_overtime_email(body: SendReportRequest):
     summary_html = ""
     for name, s in sorted(summary.items()):
         summary_html += (
-            f'<tr>'
+            f"<tr>"
             f'<td style="padding:4px 8px;font-weight:bold">{name}</td>'
             f'<td style="padding:4px 8px">{s["days"]}</td>'
             f'<td style="padding:4px 8px;color:#06b6d4">{s["project"]:.1f}h</td>'
             f'<td style="padding:4px 8px;color:gray">{s["other"]:.1f}h</td>'
             f'<td style="padding:4px 8px;color:red;font-weight:bold">+{s["total"]:.1f}h</td>'
-            f'</tr>'
+            f"</tr>"
         )
 
     html_rows = ""
@@ -609,13 +698,13 @@ async def send_overtime_email(body: SendReportRequest):
         )
         html_rows += (
             f'<tr style="{day_class}">'
-            f'<td style="padding:4px 8px">{r.get("display_name","")}</td>'
-            f'<td style="padding:4px 8px">{r.get("date","")}</td>'
-            f'<td style="padding:4px 8px">{r.get("day_type","")}</td>'
-            f'<td style="padding:4px 8px">{r.get("total_hours","")}h</td>'
-            f'<td style="padding:4px 8px">{r.get("project_hours","")}h</td>'
-            f'<td style="padding:4px 8px">{r.get("other_hours","")}h</td>'
-            f'<td style="padding:4px 8px">+{r.get("over_norm","")}h</td>'
+            f'<td style="padding:4px 8px">{r.get("display_name", "")}</td>'
+            f'<td style="padding:4px 8px">{r.get("date", "")}</td>'
+            f'<td style="padding:4px 8px">{r.get("day_type", "")}</td>'
+            f'<td style="padding:4px 8px">{r.get("total_hours", "")}h</td>'
+            f'<td style="padding:4px 8px">{r.get("project_hours", "")}h</td>'
+            f'<td style="padding:4px 8px">{r.get("other_hours", "")}h</td>'
+            f'<td style="padding:4px 8px">+{r.get("over_norm", "")}h</td>'
             f'<td style="padding:4px 8px">{issues_links}</td>'
             f"</tr>"
         )
@@ -661,13 +750,16 @@ async def send_overtime_email(body: SendReportRequest):
 # API: Send time logging report
 # ---------------------------------------------------------------------------
 
+
 @router.post("/api/reports/send-time-logging")
 async def send_time_logging_email(body: SendReportRequest):
     rows = body.rows
     project = body.project or os.getenv("JIRA_PROJECT", "")
 
     if not rows:
-        report = await time_logging_report(ReportRequest(year=body.year, month=body.month))
+        report = await time_logging_report(
+            ReportRequest(year=body.year, month=body.month)
+        )
         rows = report["rows"]
         project = report["project"]
 
@@ -678,13 +770,13 @@ async def send_time_logging_email(body: SendReportRequest):
     for r in rows:
         missing_style = "color:red" if r.get("missing_count", 0) > 0 else ""
         html_rows += (
-            f'<tr>'
-            f'<td style="padding:4px 8px">{r.get("display_name","")}</td>'
-            f'<td style="padding:4px 8px">{r.get("days_logged","")}/{r.get("total_workdays","")}</td>'
-            f'<td style="padding:4px 8px;color:#06b6d4">{r.get("project_hours","")}h</td>'
-            f'<td style="padding:4px 8px;color:gray">{r.get("other_hours","")}h</td>'
-            f'<td style="padding:4px 8px;{missing_style}">{r.get("missing_count",0)} дн.</td>'
-            f'</tr>'
+            f"<tr>"
+            f'<td style="padding:4px 8px">{r.get("display_name", "")}</td>'
+            f'<td style="padding:4px 8px">{r.get("days_logged", "")}/{r.get("total_workdays", "")}</td>'
+            f'<td style="padding:4px 8px;color:#06b6d4">{r.get("project_hours", "")}h</td>'
+            f'<td style="padding:4px 8px;color:gray">{r.get("other_hours", "")}h</td>'
+            f'<td style="padding:4px 8px;{missing_style}">{r.get("missing_count", 0)} дн.</td>'
+            f"</tr>"
         )
 
     month_name = f"{body.year}-{body.month:02d}"
@@ -712,6 +804,7 @@ async def send_time_logging_email(body: SendReportRequest):
 # API: Settings
 # ---------------------------------------------------------------------------
 
+
 @router.get("/api/reports/settings")
 def get_settings():
     conn = get_db()
@@ -732,10 +825,16 @@ def update_settings(report_type: str, body: ReportSettingsUpdate):
             updated_at=?
            WHERE report_type=?""",
         (
-            int(body.auto_send_enabled), body.auto_send_day, body.auto_send_time,
-            int(body.send_email), body.email_recipients, body.teams_webhook_url,
-            int(body.missing_time_auto_notify), body.missing_time_interval_days,
-            now, report_type,
+            int(body.auto_send_enabled),
+            body.auto_send_day,
+            body.auto_send_time,
+            int(body.send_email),
+            body.email_recipients,
+            body.teams_webhook_url,
+            int(body.missing_time_auto_notify),
+            body.missing_time_interval_days,
+            now,
+            report_type,
         ),
     )
     conn.commit()
@@ -746,6 +845,7 @@ def update_settings(report_type: str, body: ReportSettingsUpdate):
 # ---------------------------------------------------------------------------
 # API: Holiday Calendar
 # ---------------------------------------------------------------------------
+
 
 @router.get("/api/reports/calendar/{year}")
 def get_calendar(year: int):
