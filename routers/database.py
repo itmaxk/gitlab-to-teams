@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from models import DatabaseRequest
 from services.gitlab_client import get_mr_diff, get_project_id
+from services.json_diff_parser import parse_json_field_changes
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,22 @@ def _parse_mr_iid(raw: str) -> int:
     raise ValueError(f"Cannot parse MR IID from: {raw}")
 
 
+def _extract_table_info(file_path: str):
+    """Extract schema and table name from model file path.
+
+    E.g. .../model/PAS_IMPL/POLICY_COMMISSION_SAT.json -> PAS_IMPL.POLICY_COMMISSION_SAT
+    """
+    normalized = file_path.replace("\\", "/")
+    m = re.search(r'/model/([^/]+)/([^/]+)\.json$', normalized, re.IGNORECASE)
+    if m:
+        return {
+            "schema": m.group(1),
+            "table": m.group(2),
+            "full_name": f"{m.group(1)}.{m.group(2)}",
+        }
+    return None
+
+
 def _is_db_file(path: str) -> bool:
     normalized = path.replace("\\", "/")
     for pattern in _DB_PATH_PATTERNS:
@@ -39,9 +56,15 @@ def _is_db_file(path: str) -> bool:
 def _analyze_sql_diff(diff_text: str, file_path: str, new_file: bool, deleted_file: bool) -> dict:
     """Analyze SQL/migration diff for column and table operations."""
     if new_file:
-        return _analyze_sql_content(diff_text, is_new=True)
+        result = _analyze_sql_content(diff_text, is_new=True)
+        if file_path.lower().endswith(".json"):
+            result["report_columns"] = parse_json_field_changes(diff_text, True, False)
+        return result
     if deleted_file:
-        return {"action": "deleted", "description": "Файл удалён", "operations": []}
+        report_columns = []
+        if file_path.lower().endswith(".json"):
+            report_columns = parse_json_field_changes(diff_text, False, True)
+        return {"action": "deleted", "description": "Файл удалён", "operations": [], "report_columns": report_columns}
 
     added_lines = []
     removed_lines = []
@@ -173,11 +196,17 @@ def _analyze_sql_diff(diff_text: str, file_path: str, new_file: bool, deleted_fi
         model_ops = _analyze_model_diff(added_lines, removed_lines, file_path)
         operations.extend(model_ops)
 
+    # For JSON files — extract structured field info for reports
+    report_columns = []
+    if lower_path.endswith(".json"):
+        report_columns = parse_json_field_changes(diff_text, new_file, deleted_file)
+
     if not operations:
         return {
             "action": "modified",
             "description": "Файл изменён (без распознанных операций с колонками/таблицами)",
             "operations": [],
+            "report_columns": report_columns,
             "diff_stats": {
                 "added_lines": len(added_lines),
                 "removed_lines": len(removed_lines),
@@ -187,6 +216,7 @@ def _analyze_sql_diff(diff_text: str, file_path: str, new_file: bool, deleted_fi
     return {
         "action": "modified",
         "operations": operations,
+        "report_columns": report_columns,
     }
 
 
@@ -343,9 +373,11 @@ async def analyze_database(req: DatabaseRequest):
                 change["new_file"],
                 change["deleted_file"],
             )
+            table_info = _extract_table_info(path)
             db_files.append({
                 "file_path": path,
                 **analysis,
+                "table_info": table_info,
             })
 
         results.append({

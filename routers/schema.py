@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from models import SchemaRequest
 from services.gitlab_client import get_mr_by_iid, get_mr_diff, get_project_id
+from services.json_diff_parser import parse_json_field_changes
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,30 @@ def _parse_mr_iid(raw: str) -> int:
     if digits:
         return int(digits)
     raise ValueError(f"Cannot parse MR IID from: {raw}")
+
+
+def _classify_schema_file(file_path: str):
+    """Classify a schema file by category and entity name.
+
+    E.g. .../dataSource/GetPolicyAaCommissionDataSource/resultSchema.json
+      -> {"category": "dataSource", "entity_name": "GetPolicyAaCommissionDataSource",
+          "schema_file": "resultSchema.json"}
+    """
+    normalized = file_path.replace("\\", "/")
+    categories = [
+        ("dataSource", re.compile(r'/dataSource/([^/]+)/([^/]+\.json)$', re.IGNORECASE)),
+        ("dataExport", re.compile(r'/dataExport/([^/]+)/([^/]+\.json)$', re.IGNORECASE)),
+        ("component", re.compile(r'/component/([^/]+)/([^/]+\.json)$', re.IGNORECASE)),
+    ]
+    for category, pattern in categories:
+        m = pattern.search(normalized)
+        if m:
+            return {
+                "category": category,
+                "entity_name": m.group(1),
+                "schema_file": m.group(2),
+            }
+    return None
 
 
 def _is_json_schema_file(path: str) -> bool:
@@ -143,9 +168,17 @@ async def analyze_schemas(req: SchemaRequest):
                 change["new_file"],
                 change["deleted_file"],
             )
+            classification = _classify_schema_file(path)
+            report_attributes = parse_json_field_changes(
+                change["diff"],
+                change["new_file"],
+                change["deleted_file"],
+            )
             schema_files.append({
                 "file_path": path,
                 **analysis,
+                "classification": classification,
+                "report_attributes": report_attributes,
             })
 
         results.append({

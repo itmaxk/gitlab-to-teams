@@ -66,6 +66,8 @@
       class="text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white">По файлам</button>
     <button onclick="setView('byMr')" id="viewByMr"
       class="text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300">По MR</button>
+    <button onclick="setView('report')" id="viewReport"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300">Отчёт</button>
   </div>
 
   <div id="content"></div>
@@ -102,6 +104,7 @@ function setView(v) {
   const inactive = "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
   document.getElementById("viewByFile").className = v === "byFile" ? active : inactive;
   document.getElementById("viewByMr").className = v === "byMr" ? active : inactive;
+  document.getElementById("viewReport").className = v === "report" ? active : inactive;
   renderContent();
   if (data) sessionStorage.setItem("schema_view", v);
 }
@@ -208,9 +211,170 @@ function renderByMr() {
       </div>` : "");
 }
 
+function getSchemaActionWord(attrs) {
+  const actions = new Set(attrs.map(a => a.action));
+  if (actions.size === 1) {
+    if (actions.has("added")) return "Добавлены";
+    if (actions.has("removed")) return "Удалены";
+    if (actions.has("modified")) return "Изменены";
+  }
+  return "Добавлены/изменены/удалены (на основании diff)";
+}
+
+function getSchemaActionNoun(schemaFile) {
+  return "новые атрибуты";
+}
+
+function renderReport() {
+  // Collect all files with classification across all MRs
+  const allFiles = [];
+  for (const mr of data.mrs) {
+    if (mr.error) continue;
+    for (const f of (mr.schema_files || [])) {
+      allFiles.push(f);
+    }
+  }
+
+  // Group by (schema_file, category) -> section
+  // Within each section, group by entity_name
+  const sections = {};
+  const uncategorized = [];
+
+  for (const f of allFiles) {
+    const cls = f.classification;
+    const attrs = f.report_attributes || [];
+    if (!cls || attrs.length === 0) {
+      if (attrs.length > 0) uncategorized.push(f);
+      continue;
+    }
+    const sectionKey = `${cls.schema_file}|${cls.category}`;
+    if (!sections[sectionKey]) {
+      sections[sectionKey] = {
+        schema_file: cls.schema_file,
+        category: cls.category,
+        entities: {},
+      };
+    }
+    const entName = cls.entity_name;
+    if (!sections[sectionKey].entities[entName]) {
+      sections[sectionKey].entities[entName] = { files: new Set(), attrs: [] };
+    }
+    sections[sectionKey].entities[entName].files.add(f.file_path);
+    for (const a of attrs) {
+      // Deduplicate by field name
+      if (!sections[sectionKey].entities[entName].attrs.find(x => x.field === a.field)) {
+        sections[sectionKey].entities[entName].attrs.push(a);
+      }
+    }
+  }
+
+  // Desired section order
+  const sectionOrder = [
+    "resultSchema.json|dataSource",
+    "dataSchema.json|dataExport",
+    "dataSchema.json|component",
+  ];
+
+  const lines = [];
+
+  // Render ordered sections first, then any remaining
+  const allKeys = new Set(Object.keys(sections));
+  const orderedKeys = sectionOrder.filter(k => allKeys.has(k));
+  for (const k of allKeys) {
+    if (!orderedKeys.includes(k)) orderedKeys.push(k);
+  }
+
+  for (const sectionKey of orderedKeys) {
+    const section = sections[sectionKey];
+    if (!section) continue;
+    const entities = section.entities;
+    const entityNames = Object.keys(entities).sort();
+    if (entityNames.length === 0) continue;
+
+    // Collect all attrs across entities for action word
+    const allAttrs = [];
+    for (const name of entityNames) {
+      allAttrs.push(...entities[name].attrs);
+    }
+    const actionWord = getSchemaActionWord(allAttrs);
+
+    lines.push(`*${actionWord} ${getSchemaActionNoun(section.schema_file)} в ${section.schema_file} для следующих ${section.category}*`);
+
+    // Collect all file paths for {code} block
+    const allFilePaths = new Set();
+
+    for (const entName of entityNames) {
+      const ent = entities[entName];
+      lines.push(`${entName}:`);
+      for (const a of ent.attrs) {
+        const typeStr = a.type ? ` (${a.type})` : "";
+        const desc = a.description ? ` - ${a.description}` : "";
+        lines.push(`${a.field}${desc}${typeStr}`);
+      }
+      for (const fp of ent.files) {
+        allFilePaths.add(fp);
+      }
+    }
+
+    lines.push("{code:java}");
+    for (const fp of [...allFilePaths].sort()) {
+      lines.push(fp);
+    }
+    lines.push("{code}");
+    lines.push("");
+  }
+
+  // Uncategorized files
+  for (const f of uncategorized) {
+    const attrs = f.report_attributes || [];
+    const actionWord = getSchemaActionWord(attrs);
+    lines.push(`*${f.file_path}*`);
+    lines.push(`${actionWord}:`);
+    for (const a of attrs) {
+      const typeStr = a.type ? ` (${a.type})` : "";
+      const desc = a.description ? ` - ${a.description}` : "";
+      lines.push(`${a.field}${desc}${typeStr}`);
+    }
+    lines.push("{code:java}");
+    lines.push(f.file_path);
+    lines.push("{code}");
+    lines.push("");
+  }
+
+  if (lines.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">Нет данных для отчёта.</p>';
+  }
+
+  const text = lines.join("\n").trim();
+  return `<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-3">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="text-sm font-semibold text-slate-300">Отчёт для Jira</h3>
+      <button onclick="copyReport()" id="btnCopyReport"
+        class="bg-green-600 hover:bg-green-500 text-white text-xs px-3 py-1.5 rounded cursor-pointer transition-colors">
+        Копировать
+      </button>
+    </div>
+    <pre id="reportText" class="bg-slate-900 rounded p-4 text-sm text-slate-300 whitespace-pre-wrap overflow-auto max-h-[600px]">${escHtml(text)}</pre>
+  </div>`;
+}
+
+function copyReport() {
+  const el = document.getElementById("reportText");
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    const btn = document.getElementById("btnCopyReport");
+    if (btn) {
+      btn.textContent = "Скопировано!";
+      setTimeout(() => { btn.textContent = "Копировать"; }, 1500);
+    }
+  });
+}
+
 function renderContent() {
   const el = document.getElementById("content");
-  el.innerHTML = currentView === "byFile" ? renderByFile() : renderByMr();
+  if (currentView === "byFile") el.innerHTML = renderByFile();
+  else if (currentView === "report") el.innerHTML = renderReport();
+  else el.innerHTML = renderByMr();
 }
 
 async function runAnalysis() {
