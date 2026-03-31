@@ -291,24 +291,38 @@ function renderSummary() {
   </div>`;
 }
 
-function getActionWord(columns) {
-  const actions = new Set(columns.map(c => c.action));
-  if (actions.size === 1) {
-    if (actions.has("added")) return "Добавлены";
-    if (actions.has("removed")) return "Удалены";
-    if (actions.has("modified")) return "Изменены";
-  }
-  return "Добавлены/изменены/удалены (на основании diff)";
+function formatColLine(col) {
+  let typeParts = [];
+  if (col.type) typeParts.push(col.type);
+  if (col.format) typeParts.push(col.format);
+  const typeStr = typeParts.length > 0 ? ` (${typeParts.join(", ")})` : "";
+  const desc = col.description ? ` - ${col.description}` : "";
+  return `${col.field}${desc}${typeStr}`;
 }
 
-function getActionNoun(columns) {
-  const actions = new Set(columns.map(c => c.action));
-  if (actions.size === 1) {
-    if (actions.has("added")) return "новые колонки";
-    if (actions.has("removed")) return "колонки";
-    if (actions.has("modified")) return "колонки";
+// Group columns by action and render each group with its own header
+function renderActionGroups(columns) {
+  const groups = { added: [], modified: [], removed: [] };
+  for (const c of columns) {
+    const key = c.action || "added";
+    if (groups[key]) groups[key].push(c);
+    else groups.added.push(c);
   }
-  return "новые колонки";
+
+  const lines = [];
+  if (groups.added.length > 0) {
+    lines.push("Добавлены новые колонки:");
+    for (const c of groups.added) lines.push(formatColLine(c));
+  }
+  if (groups.modified.length > 0) {
+    lines.push("Изменены колонки:");
+    for (const c of groups.modified) lines.push(formatColLine(c));
+  }
+  if (groups.removed.length > 0) {
+    lines.push("Удалены колонки:");
+    for (const c of groups.removed) lines.push(formatColLine(c));
+  }
+  return lines;
 }
 
 function renderReport() {
@@ -322,16 +336,22 @@ function renderReport() {
       const cols = f.report_columns || [];
       if (f.table_info && f.table_info.full_name) {
         const key = f.table_info.full_name;
-        if (!tables[key]) tables[key] = { files: new Set(), columns: [] };
+        if (!tables[key]) tables[key] = { files: new Set(), columns: [], fileAction: f.action };
         tables[key].files.add(f.file_path);
+        // Track worst-case file action (deleted > modified > created)
+        if (f.action === "deleted") tables[key].fileAction = "deleted";
+        else if (f.action === "modified" && tables[key].fileAction !== "deleted") tables[key].fileAction = "modified";
         for (const c of cols) {
-          // Deduplicate by field name
-          if (!tables[key].columns.find(x => x.field === c.field)) {
+          // Deduplicate by field name, prefer later entry (may have better action)
+          const existing = tables[key].columns.findIndex(x => x.field === c.field);
+          if (existing >= 0) {
+            tables[key].columns[existing] = c;
+          } else {
             tables[key].columns.push(c);
           }
         }
       } else if (cols.length > 0) {
-        noTable.push({ file_path: f.file_path, columns: cols });
+        noTable.push({ file_path: f.file_path, columns: cols, fileAction: f.action });
       }
     }
   }
@@ -339,19 +359,17 @@ function renderReport() {
   const lines = [];
 
   for (const [tableName, info] of Object.entries(tables).sort((a, b) => a[0].localeCompare(b[0]))) {
-    if (info.columns.length === 0) continue;
-    const actionWord = getActionWord(info.columns);
-    const actionNoun = getActionNoun(info.columns);
     lines.push(`*Таблица ${tableName}*`);
-    lines.push(`${actionWord} ${actionNoun}:`);
-    for (const col of info.columns) {
-      let typeParts = [];
-      if (col.type) typeParts.push(col.type);
-      if (col.format) typeParts.push(col.format);
-      const typeStr = typeParts.length > 0 ? ` (${typeParts.join(", ")})` : "";
-      const desc = col.description ? ` - ${col.description}` : "";
-      lines.push(`${col.field}${desc}${typeStr}`);
+
+    if (info.columns.length === 0) {
+      // No column-level detail — use file action
+      if (info.fileAction === "deleted") lines.push("Таблица удалена");
+      else if (info.fileAction === "created") lines.push("Новая таблица");
+      else lines.push("Файл изменён");
+    } else {
+      lines.push(...renderActionGroups(info.columns));
     }
+
     lines.push("{code:java}");
     for (const fp of [...info.files].sort()) {
       lines.push(fp);
@@ -362,16 +380,13 @@ function renderReport() {
 
   // Files without table info
   for (const entry of noTable) {
-    const actionWord = getActionWord(entry.columns);
     lines.push(`*${entry.file_path}*`);
-    lines.push(`${actionWord}:`);
-    for (const col of entry.columns) {
-      let typeParts = [];
-      if (col.type) typeParts.push(col.type);
-      if (col.format) typeParts.push(col.format);
-      const typeStr = typeParts.length > 0 ? ` (${typeParts.join(", ")})` : "";
-      const desc = col.description ? ` - ${col.description}` : "";
-      lines.push(`${col.field}${desc}${typeStr}`);
+    if (entry.columns.length === 0) {
+      if (entry.fileAction === "deleted") lines.push("Файл удалён");
+      else if (entry.fileAction === "created") lines.push("Новый файл");
+      else lines.push("Файл изменён");
+    } else {
+      lines.push(...renderActionGroups(entry.columns));
     }
     lines.push("{code:java}");
     lines.push(entry.file_path);
