@@ -79,13 +79,12 @@ function stopTimer() {
 
 function setView(v) {
   currentView = v;
-  document.getElementById("viewByFile").className = v === "byFile"
-    ? "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white"
-    : "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
-  document.getElementById("viewByMr").className = v === "byMr"
-    ? "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white"
-    : "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
+  const active = "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white";
+  const inactive = "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
+  document.getElementById("viewByFile").className = v === "byFile" ? active : inactive;
+  document.getElementById("viewByMr").className = v === "byMr" ? active : inactive;
   renderContent();
+  if (data) sessionStorage.setItem("schema_view", v);
 }
 
 function actionBadge(action) {
@@ -223,11 +222,8 @@ async function runAnalysis() {
       throw new Error(err.detail || `HTTP ${resp.status}`);
     }
     data = await resp.json();
-
-    document.getElementById("statMrs").textContent = data.total_mrs;
-    document.getElementById("statFiles").textContent = data.total_files;
-    renderContent();
-    results.classList.remove("hidden");
+    showData();
+    saveSession();
   } catch (e) {
     errorBox.textContent = "Ошибка: " + e.message;
     errorBox.classList.remove("hidden");
@@ -238,5 +234,34 @@ async function runAnalysis() {
     loading.classList.add("hidden");
   }
 }
+
+function showData() {
+  document.getElementById("statMrs").textContent = data.total_mrs;
+  document.getElementById("statFiles").textContent = data.total_files;
+  renderContent();
+  document.getElementById("results").classList.remove("hidden");
+}
+
+function saveSession() {
+  const input = document.getElementById("mrInput").value;
+  sessionStorage.setItem("schema_data", JSON.stringify(data));
+  sessionStorage.setItem("schema_input", input);
+  sessionStorage.setItem("schema_view", currentView);
+}
+
+function restoreSession() {
+  const saved = sessionStorage.getItem("schema_data");
+  if (!saved) return;
+  try {
+    data = JSON.parse(saved);
+    const input = sessionStorage.getItem("schema_input") || "";
+    const view = sessionStorage.getItem("schema_view") || "byFile";
+    document.getElementById("mrInput").value = input;
+    setView(view);
+    showData();
+  } catch (e) { /* ignore */ }
+}
+
+restoreSession();
 </script>
 {% endblock %}

@@ -94,6 +94,7 @@ function setView(v) {
   document.getElementById("viewByMr").className = v === "byMr" ? active : inactive;
   document.getElementById("viewSummary").className = v === "summary" ? active : inactive;
   renderContent();
+  if (data) sessionStorage.setItem("database_view", v);
 }
 
 function opBadge(type) {
@@ -303,21 +304,8 @@ async function runAnalysis() {
       throw new Error(err.detail || `HTTP ${resp.status}`);
     }
     data = await resp.json();
-
-    document.getElementById("statMrs").textContent = data.total_mrs;
-    document.getElementById("statFiles").textContent = data.total_files;
-
-    // Count total operations
-    let totalOps = 0;
-    for (const mr of data.mrs) {
-      for (const f of (mr.db_files || [])) {
-        totalOps += (f.operations || []).length;
-      }
-    }
-    document.getElementById("statOps").textContent = totalOps;
-
-    renderContent();
-    results.classList.remove("hidden");
+    showData();
+    saveSession();
   } catch (e) {
     errorBox.textContent = "Ошибка: " + e.message;
     errorBox.classList.remove("hidden");
@@ -328,5 +316,43 @@ async function runAnalysis() {
     loading.classList.add("hidden");
   }
 }
+
+function showData() {
+  document.getElementById("statMrs").textContent = data.total_mrs;
+  document.getElementById("statFiles").textContent = data.total_files;
+
+  let totalOps = 0;
+  for (const mr of data.mrs) {
+    for (const f of (mr.db_files || [])) {
+      totalOps += (f.operations || []).length;
+    }
+  }
+  document.getElementById("statOps").textContent = totalOps;
+
+  renderContent();
+  document.getElementById("results").classList.remove("hidden");
+}
+
+function saveSession() {
+  const input = document.getElementById("mrInput").value;
+  sessionStorage.setItem("database_data", JSON.stringify(data));
+  sessionStorage.setItem("database_input", input);
+  sessionStorage.setItem("database_view", currentView);
+}
+
+function restoreSession() {
+  const saved = sessionStorage.getItem("database_data");
+  if (!saved) return;
+  try {
+    data = JSON.parse(saved);
+    const input = sessionStorage.getItem("database_input") || "";
+    const view = sessionStorage.getItem("database_view") || "byFile";
+    document.getElementById("mrInput").value = input;
+    setView(view);
+    showData();
+  } catch (e) { /* ignore */ }
+}
+
+restoreSession();
 </script>
 {% endblock %}
