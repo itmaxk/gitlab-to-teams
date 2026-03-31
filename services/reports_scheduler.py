@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import os
 from datetime import date, datetime
@@ -28,14 +29,31 @@ async def _tick():
     conn.close()
 
     for s in settings:
-        if now.day != s["auto_send_day"]:
-            continue
-        if now.strftime("%H:%M") != s["auto_send_time"]:
+        # Build list of schedules: new multi-schedule or legacy single day/time
+        schedules = []
+        raw_schedules = s["auto_send_schedules"] if "auto_send_schedules" in s.keys() else ""
+        if raw_schedules:
+            try:
+                schedules = json.loads(raw_schedules)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not schedules:
+            schedules = [{"day": s["auto_send_day"], "time": s["auto_send_time"]}]
+
+        # Check if any schedule matches now
+        matched = False
+        for sched in schedules:
+            if now.day == sched.get("day") and now.strftime("%H:%M") == sched.get("time"):
+                matched = True
+                break
+        if not matched:
             continue
 
         today_str = now.date().isoformat()
+        current_time = now.strftime("%H:%M")
         last_sent = s["last_auto_sent_at"] or ""
-        if last_sent.startswith(today_str):
+        # Prevent duplicate: check if already sent today at this exact time
+        if last_sent.startswith(today_str + "T" + current_time):
             continue
 
         report_type = s["report_type"]

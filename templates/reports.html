@@ -82,6 +82,7 @@
       <div>
         <label class="block text-sm text-slate-400 mb-1">Email получатели (через запятую)</label>
         <input type="text" id="tlEmails" placeholder="user@example.com, manager@example.com"
+          value="{{ settings.get('time_logging', {}).get('email_recipients', '') }}"
           class="w-96 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
       </div>
       <button onclick="sendTimeLoggingReport()" id="btnSendTL"
@@ -185,6 +186,7 @@
       <div>
         <label class="block text-sm text-slate-400 mb-1">Email получатели (через запятую)</label>
         <input type="text" id="otEmails" placeholder="user@example.com, manager@example.com"
+          value="{{ settings.get('overtime', {}).get('email_recipients', '') }}"
           class="w-96 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
       </div>
       <button onclick="sendOvertimeReport()" id="btnSendOT"
@@ -289,20 +291,16 @@
   {% set s = settings.get(rt, {}) %}
   <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mb-6">
     <h3 class="text-lg font-semibold mb-4">{{ label }}</h3>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-      <div class="flex items-center gap-2">
+    <div class="mb-4">
+      <div class="flex items-center gap-2 mb-3">
         <input type="checkbox" id="s_{{ rt }}_auto" {% if s.get('auto_send_enabled') %}checked{% endif %}>
         <label class="text-sm text-slate-300">Авто-отправка</label>
       </div>
-      <div>
-        <label class="block text-sm text-slate-400 mb-1">День месяца</label>
-        <input type="number" id="s_{{ rt }}_day" min="1" max="28" value="{{ s.get('auto_send_day', 1) }}"
-          class="w-20 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-      </div>
-      <div>
-        <label class="block text-sm text-slate-400 mb-1">Время</label>
-        <input type="time" id="s_{{ rt }}_time" value="{{ s.get('auto_send_time', '09:00') }}"
-          class="bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      <div class="mb-2">
+        <label class="block text-sm text-slate-400 mb-1">Расписание отправки</label>
+        <div id="s_{{ rt }}_schedules" class="space-y-2"></div>
+        <button onclick="addScheduleRow('{{ rt }}')" type="button"
+          class="mt-2 text-xs text-blue-400 hover:text-blue-300 cursor-pointer">+ Добавить расписание</button>
       </div>
     </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -376,6 +374,61 @@
 <script>
 const JIRA_PROJECT = "{{ jira_project }}";
 const JIRA_URL = "{{ jira_url }}";
+
+// ========== Schedules ==========
+const SCHEDULES_DATA = {};
+
+function initSchedules(rt, rawJson, legacyDay, legacyTime) {
+  let schedules = [];
+  if (rawJson) {
+    try { schedules = JSON.parse(rawJson); } catch(e) {}
+  }
+  if (schedules.length === 0) {
+    schedules = [{day: legacyDay || 1, time: legacyTime || '09:00'}];
+  }
+  SCHEDULES_DATA[rt] = schedules;
+  renderSchedules(rt);
+}
+
+function renderSchedules(rt) {
+  const container = document.getElementById(`s_${rt}_schedules`);
+  const schedules = SCHEDULES_DATA[rt] || [];
+  container.innerHTML = schedules.map((s, i) => `
+    <div class="flex items-center gap-2">
+      <label class="text-xs text-slate-500 w-20">День месяца</label>
+      <input type="number" min="1" max="28" value="${s.day}"
+        onchange="updateScheduleField('${rt}', ${i}, 'day', parseInt(this.value))"
+        class="w-20 bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-white text-sm">
+      <label class="text-xs text-slate-500 ml-2">Время</label>
+      <input type="time" value="${s.time}"
+        onchange="updateScheduleField('${rt}', ${i}, 'time', this.value)"
+        class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-white text-sm">
+      ${schedules.length > 1 ? `<button onclick="removeScheduleRow('${rt}', ${i})" type="button"
+        class="text-red-400 hover:text-red-300 text-sm px-2 cursor-pointer" title="Удалить">&times;</button>` : ''}
+    </div>
+  `).join('');
+}
+
+function addScheduleRow(rt) {
+  SCHEDULES_DATA[rt] = SCHEDULES_DATA[rt] || [];
+  SCHEDULES_DATA[rt].push({day: 1, time: '09:00'});
+  renderSchedules(rt);
+}
+
+function removeScheduleRow(rt, index) {
+  SCHEDULES_DATA[rt].splice(index, 1);
+  renderSchedules(rt);
+}
+
+function updateScheduleField(rt, index, field, value) {
+  SCHEDULES_DATA[rt][index][field] = value;
+}
+
+// Init schedules for both report types
+{% for rt in ['time_logging', 'overtime'] %}
+{% set s = settings.get(rt, {}) %}
+initSchedules('{{ rt }}', {{ s.get('auto_send_schedules', '')|tojson }}, {{ s.get('auto_send_day', 1) }}, {{ s.get('auto_send_time', '09:00')|tojson }});
+{% endfor %}
 
 // Tab switching
 function switchTab(name) {
@@ -856,10 +909,12 @@ async function deleteVacation(id) {
 
 // ========== Settings ==========
 async function saveSettings(rt) {
+  const schedules = SCHEDULES_DATA[rt] || [{day: 1, time: '09:00'}];
   const body = {
     auto_send_enabled: document.getElementById(`s_${rt}_auto`).checked,
-    auto_send_day: parseInt(document.getElementById(`s_${rt}_day`).value) || 1,
-    auto_send_time: document.getElementById(`s_${rt}_time`).value || '09:00',
+    auto_send_day: schedules[0]?.day || 1,
+    auto_send_time: schedules[0]?.time || '09:00',
+    auto_send_schedules: JSON.stringify(schedules),
     send_email: document.getElementById(`s_${rt}_email`).checked,
     email_recipients: document.getElementById(`s_${rt}_recipients`).value,
     teams_webhook_url: document.getElementById(`s_${rt}_webhook`).value,

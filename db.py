@@ -108,6 +108,7 @@ def init_db():
             auto_send_enabled INTEGER DEFAULT 0,
             auto_send_day INTEGER DEFAULT 1,
             auto_send_time TEXT DEFAULT '09:00',
+            auto_send_schedules TEXT DEFAULT '',
             send_email INTEGER DEFAULT 0,
             email_recipients TEXT DEFAULT '',
             teams_webhook_url TEXT DEFAULT '',
@@ -233,6 +234,15 @@ def _migrate(conn: sqlite3.Connection):
         cs_columns = {row[1] for row in cursor3.fetchall()}
         if cs_columns and "name" not in cs_columns:
             conn.execute("ALTER TABLE cherry_pick_sessions ADD COLUMN name TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    # Миграция report_settings — добавить auto_send_schedules
+    try:
+        cursor_rs = conn.execute("PRAGMA table_info(report_settings)")
+        rs_columns = {row[1] for row in cursor_rs.fetchall()}
+        if rs_columns and "auto_send_schedules" not in rs_columns:
+            conn.execute("ALTER TABLE report_settings ADD COLUMN auto_send_schedules TEXT DEFAULT ''")
     except Exception:
         pass
 

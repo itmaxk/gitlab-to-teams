@@ -1137,6 +1137,7 @@ def update_settings(report_type: str, body: ReportSettingsUpdate):
     conn.execute(
         """UPDATE report_settings SET
             auto_send_enabled=?, auto_send_day=?, auto_send_time=?,
+            auto_send_schedules=?,
             send_email=?, email_recipients=?, teams_webhook_url=?,
             missing_time_auto_notify=?, missing_time_interval_days=?,
             updated_at=?
@@ -1145,6 +1146,7 @@ def update_settings(report_type: str, body: ReportSettingsUpdate):
             int(body.auto_send_enabled),
             body.auto_send_day,
             body.auto_send_time,
+            body.auto_send_schedules,
             int(body.send_email),
             body.email_recipients,
             body.teams_webhook_url,

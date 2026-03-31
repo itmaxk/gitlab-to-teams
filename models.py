@@ -76,6 +76,7 @@ class ReportSettingsUpdate(BaseModel):
     auto_send_enabled: bool = False
     auto_send_day: int = 1
     auto_send_time: str = "09:00"
+    auto_send_schedules: str = ""  # JSON array: [{"day":1,"time":"09:00"}, ...]
     send_email: bool = False
     email_recipients: str = ""
     teams_webhook_url: str = ""
