@@ -148,6 +148,16 @@ ENV_KEYS = [
 ]
 
 
+@router.get("/schema", response_class=HTMLResponse)
+def schema_page(request: Request):
+    return templates.TemplateResponse(request, "schema.html", {})
+
+
+@router.get("/database", response_class=HTMLResponse)
+def database_page(request: Request):
+    return templates.TemplateResponse(request, "database.html", {})
+
+
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
     env = {key: os.getenv(key, "") for key in ENV_KEYS}

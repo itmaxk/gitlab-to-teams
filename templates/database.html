@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Database — GitLab Manager{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Database: изменения таблиц и колонок</h1>
+
+<div class="bg-slate-800 rounded-lg border border-slate-700 p-5 mb-6">
+  <div class="grid gap-4">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Номера MR (через запятую, URL или номер)</label>
+      <textarea id="mrInput" rows="3" placeholder="123, 456 или https://gitlab.../merge_requests/123"
+        class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm text-white placeholder-slate-500"></textarea>
+    </div>
+    <div class="flex items-end gap-3">
+      <button onclick="runAnalysis()" id="btnAnalyze"
+        class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded cursor-pointer transition-colors">
+        Анализировать
+      </button>
+      <span id="status" class="text-xs text-slate-500"></span>
+    </div>
+  </div>
+</div>
+
+<p class="text-xs text-slate-500 mb-4">
+  Сканируются файлы в папках <code class="text-slate-400">model/</code> и <code class="text-slate-400">database/postgres/</code> и их подпапках.
+</p>
+
+<!-- Loading -->
+<div id="loading" class="hidden text-center py-8">
+  <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+  <p class="text-slate-400 mt-2">Анализ MR... <span id="loadingTimer"></span></p>
+</div>
+
+<!-- Error -->
+<div id="errorBox" class="hidden mb-4 px-4 py-3 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm"></div>
+
+<!-- Results -->
+<div id="results" class="hidden">
+  <!-- Stats -->
+  <div class="flex gap-4 mb-4 text-sm">
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      MR: <span id="statMrs" class="font-bold text-blue-400"></span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Файлов: <span id="statFiles" class="font-bold text-green-400"></span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Операций: <span id="statOps" class="font-bold text-amber-400"></span>
+    </div>
+  </div>
+
+  <!-- View toggle -->
+  <div class="flex gap-2 mb-4">
+    <button onclick="setView('byFile')" id="viewByFile"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white">По файлам</button>
+    <button onclick="setView('byMr')" id="viewByMr"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300">По MR</button>
+    <button onclick="setView('summary')" id="viewSummary"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300">Сводка операций</button>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<script>
+let data = null;
+let currentView = "byFile";
+
+function escHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+let timerInterval = null;
+function startTimer() {
+  const el = document.getElementById("loadingTimer");
+  const start = Date.now();
+  el.textContent = "0s";
+  timerInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - start) / 1000);
+    el.textContent = sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+const viewButtons = ["viewByFile", "viewByMr", "viewSummary"];
+function setView(v) {
+  currentView = v;
+  const active = "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white";
+  const inactive = "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
+  document.getElementById("viewByFile").className = v === "byFile" ? active : inactive;
+  document.getElementById("viewByMr").className = v === "byMr" ? active : inactive;
+  document.getElementById("viewSummary").className = v === "summary" ? active : inactive;
+  renderContent();
+}
+
+function opBadge(type) {
+  const map = {
+    create_table:  { cls: "bg-green-900/40 text-green-400 border-green-700",  label: "CREATE TABLE" },
+    drop_table:    { cls: "bg-red-900/40 text-red-400 border-red-700",        label: "DROP TABLE" },
+    rename_table:  { cls: "bg-purple-900/40 text-purple-400 border-purple-700", label: "RENAME TABLE" },
+    add_column:    { cls: "bg-green-900/40 text-green-400 border-green-700",  label: "ADD COLUMN" },
+    drop_column:   { cls: "bg-red-900/40 text-red-400 border-red-700",        label: "DROP COLUMN" },
+    alter_column:  { cls: "bg-amber-900/40 text-amber-400 border-amber-700",  label: "ALTER COLUMN" },
+    rename_column: { cls: "bg-purple-900/40 text-purple-400 border-purple-700", label: "RENAME COLUMN" },
+    create_index:  { cls: "bg-cyan-900/40 text-cyan-400 border-cyan-700",     label: "CREATE INDEX" },
+    drop_index:    { cls: "bg-red-900/40 text-red-400 border-red-700",        label: "DROP INDEX" },
+    new_file:      { cls: "bg-green-900/40 text-green-400 border-green-700",  label: "NEW FILE" },
+  };
+  const cfg = map[type] || { cls: "bg-slate-700 text-slate-300 border-slate-600", label: type };
+  return `<span class="text-xs px-2 py-0.5 rounded border ${cfg.cls}">${cfg.label}</span>`;
+}
+
+function actionBadge(action) {
+  const map = {
+    created: "bg-green-900/40 text-green-400 border-green-700",
+    deleted: "bg-red-900/40 text-red-400 border-red-700",
+    modified: "bg-amber-900/40 text-amber-400 border-amber-700",
+  };
+  const cls = map[action] || "bg-slate-700 text-slate-300 border-slate-600";
+  const labels = { created: "Создан", deleted: "Удалён", modified: "Изменён" };
+  return `<span class="text-xs px-2 py-0.5 rounded border ${cls}">${labels[action] || action}</span>`;
+}
+
+function renderOps(ops) {
+  if (!ops || ops.length === 0) return "";
+  return `<div class="mt-2 space-y-1">${ops.map(op => `
+    <div class="flex items-start gap-2 text-xs">
+      ${opBadge(op.type)}
+      <span class="text-slate-300">${escHtml(op.description || "")}</span>
+      ${op.columns ? `<span class="text-slate-500">(${op.columns.map(c => c.name + " " + c.type).join(", ")})</span>` : ""}
+    </div>
+  `).join("")}</div>`;
+}
+
+function renderFileEntry(f) {
+  const ops = f.operations || [];
+  let html = `<div class="flex items-center gap-2 text-sm">${actionBadge(f.action)}`;
+  if (f.description) html += `<span class="text-slate-400 text-xs">${escHtml(f.description)}</span>`;
+  html += "</div>";
+  html += renderOps(ops);
+  if (f.diff_stats) {
+    html += `<div class="text-xs text-slate-500 mt-1">+${f.diff_stats.added_lines} / -${f.diff_stats.removed_lines} строк</div>`;
+  }
+  return html;
+}
+
+function renderByFile() {
+  const summary = data.summary;
+  const paths = Object.keys(summary).sort();
+  if (paths.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">Файлов в model/ и database/postgres/ не найдено.</p>';
+  }
+  return paths.map(path => {
+    const entries = summary[path];
+    return `<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-3">
+      <div class="font-mono text-sm text-blue-400 mb-2">${escHtml(path)}</div>
+      ${entries.map(e => `
+        <div class="ml-4 mb-3 border-l-2 border-slate-700 pl-3">
+          <div class="text-xs text-slate-400 mb-1">
+            <a href="${escHtml(e.mr_url || '')}" target="_blank" class="text-slate-300 hover:text-white">
+              !${e.mr_iid} ${escHtml(e.mr_title || '')}
+            </a>
+          </div>
+          ${renderFileEntry(e)}
+        </div>
+      `).join("")}
+    </div>`;
+  }).join("");
+}
+
+function renderByMr() {
+  const mrs = data.mrs.filter(m => !m.error);
+  if (mrs.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">Нет данных.</p>';
+  }
+  return mrs.map(mr => {
+    const files = mr.db_files || [];
+    return `<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-3">
+      <div class="flex items-center gap-2 mb-2">
+        <a href="${escHtml(mr.mr_url || '')}" target="_blank" class="text-blue-400 hover:underline font-semibold">!${mr.mr_iid}</a>
+        <span class="text-slate-300 text-sm">${escHtml(mr.mr_title)}</span>
+        <span class="text-slate-500 text-xs ml-auto">${escHtml(mr.author)} · ${escHtml(mr.source_branch)}</span>
+      </div>
+      ${files.length === 0
+        ? '<p class="text-slate-500 text-xs ml-4">Файлов БД не найдено</p>'
+        : files.map(f => `
+          <div class="ml-4 mb-3 border-l-2 border-slate-700 pl-3">
+            <div class="font-mono text-xs text-slate-300 mb-1">${escHtml(f.file_path)}</div>
+            ${renderFileEntry(f)}
+          </div>
+        `).join("")}
+    </div>`;
+  }).join("")
+  + (data.mrs.filter(m => m.error).length > 0
+    ? `<div class="bg-red-900/20 rounded-lg border border-red-800 p-4 mb-3">
+        <h3 class="text-red-400 text-sm font-semibold mb-2">Ошибки</h3>
+        ${data.mrs.filter(m => m.error).map(m =>
+          `<div class="text-xs text-red-300">${escHtml(m.mr_input || '!' + m.mr_iid)}: ${escHtml(m.error)}</div>`
+        ).join("")}
+      </div>` : "");
+}
+
+function renderSummary() {
+  // Collect all operations across all MRs
+  const allOps = [];
+  for (const mr of data.mrs) {
+    if (mr.error) continue;
+    for (const f of (mr.db_files || [])) {
+      for (const op of (f.operations || [])) {
+        allOps.push({
+          ...op,
+          file_path: f.file_path,
+          mr_iid: mr.mr_iid,
+          mr_title: mr.mr_title,
+          mr_url: mr.mr_url,
+        });
+      }
+    }
+  }
+
+  if (allOps.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">Операций с таблицами/колонками не найдено.</p>';
+  }
+
+  // Group by type
+  const groups = {};
+  for (const op of allOps) {
+    const key = op.type;
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(op);
+  }
+
+  const order = ["create_table", "drop_table", "rename_table", "add_column", "drop_column", "alter_column", "rename_column", "create_index", "drop_index"];
+  const sortedKeys = Object.keys(groups).sort((a, b) => {
+    const ia = order.indexOf(a), ib = order.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
+
+  return `<div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-slate-700 text-slate-400">
+          <th class="text-left py-2 px-3">Операция</th>
+          <th class="text-left py-2 px-3">Описание</th>
+          <th class="text-left py-2 px-3">Файл</th>
+          <th class="text-left py-2 px-3">MR</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${allOps.sort((a, b) => {
+          const ia = order.indexOf(a.type), ib = order.indexOf(b.type);
+          return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+        }).map(op => `
+          <tr class="border-b border-slate-800 hover:bg-slate-800/50">
+            <td class="py-2 px-3">${opBadge(op.type)}</td>
+            <td class="py-2 px-3 text-slate-300 text-xs">${escHtml(op.description || "")}</td>
+            <td class="py-2 px-3 font-mono text-xs text-slate-400">${escHtml(op.file_path)}</td>
+            <td class="py-2 px-3 text-xs">
+              <a href="${escHtml(op.mr_url || '')}" target="_blank" class="text-blue-400 hover:underline">!${op.mr_iid}</a>
+            </td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderContent() {
+  const el = document.getElementById("content");
+  if (currentView === "byFile") el.innerHTML = renderByFile();
+  else if (currentView === "byMr") el.innerHTML = renderByMr();
+  else el.innerHTML = renderSummary();
+}
+
+async function runAnalysis() {
+  const raw = document.getElementById("mrInput").value.trim();
+  if (!raw) return;
+
+  const mrIds = raw.split(/[\s,]+/).filter(Boolean);
+  const btn = document.getElementById("btnAnalyze");
+  const loading = document.getElementById("loading");
+  const errorBox = document.getElementById("errorBox");
+  const results = document.getElementById("results");
+
+  btn.disabled = true;
+  btn.textContent = "Анализ...";
+  loading.classList.remove("hidden");
+  startTimer();
+  errorBox.classList.add("hidden");
+  results.classList.add("hidden");
+
+  try {
+    const resp = await fetch("/api/database/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mr_ids: mrIds }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    data = await resp.json();
+
+    document.getElementById("statMrs").textContent = data.total_mrs;
+    document.getElementById("statFiles").textContent = data.total_files;
+
+    // Count total operations
+    let totalOps = 0;
+    for (const mr of data.mrs) {
+      for (const f of (mr.db_files || [])) {
+        totalOps += (f.operations || []).length;
+      }
+    }
+    document.getElementById("statOps").textContent = totalOps;
+
+    renderContent();
+    results.classList.remove("hidden");
+  } catch (e) {
+    errorBox.textContent = "Ошибка: " + e.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    stopTimer();
+    btn.disabled = false;
+    btn.textContent = "Анализировать";
+    loading.classList.add("hidden");
+  }
+}
+</script>
+{% endblock %}

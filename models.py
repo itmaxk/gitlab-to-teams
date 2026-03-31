@@ -101,6 +101,16 @@ class ReviewSettingsUpdate(BaseModel):
     system_prompt: str
 
 
+class SchemaRequest(BaseModel):
+    mr_ids: list[str]
+    target_branch: str = "master"
+
+
+class DatabaseRequest(BaseModel):
+    mr_ids: list[str]
+    target_branch: str = "master"
+
+
 class LogOut(BaseModel):
     id: int
     rule_id: int

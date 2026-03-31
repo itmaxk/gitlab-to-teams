@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Schema — GitLab Manager{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-6">Schema: изменения JSON</h1>
+
+<div class="bg-slate-800 rounded-lg border border-slate-700 p-5 mb-6">
+  <div class="grid gap-4">
+    <div>
+      <label class="block text-xs text-slate-500 mb-1">Номера MR (через запятую, URL или номер)</label>
+      <textarea id="mrInput" rows="3" placeholder="123, 456 или https://gitlab.../merge_requests/123"
+        class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-sm text-white placeholder-slate-500"></textarea>
+    </div>
+    <div class="flex items-end gap-3">
+      <button onclick="runAnalysis()" id="btnAnalyze"
+        class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded cursor-pointer transition-colors">
+        Анализировать
+      </button>
+      <span id="status" class="text-xs text-slate-500"></span>
+    </div>
+  </div>
+</div>
+
+<!-- Loading -->
+<div id="loading" class="hidden text-center py-8">
+  <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
+  <p class="text-slate-400 mt-2">Анализ MR... <span id="loadingTimer"></span></p>
+</div>
+
+<!-- Error -->
+<div id="errorBox" class="hidden mb-4 px-4 py-3 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm"></div>
+
+<!-- Results -->
+<div id="results" class="hidden">
+  <!-- Stats -->
+  <div class="flex gap-4 mb-4 text-sm">
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      MR: <span id="statMrs" class="font-bold text-blue-400"></span>
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      JSON файлов: <span id="statFiles" class="font-bold text-green-400"></span>
+    </div>
+  </div>
+
+  <!-- View toggle -->
+  <div class="flex gap-2 mb-4">
+    <button onclick="setView('byFile')" id="viewByFile"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white">По файлам</button>
+    <button onclick="setView('byMr')" id="viewByMr"
+      class="text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300">По MR</button>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<script>
+let data = null;
+let currentView = "byFile";
+
+function escHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Timer
+let timerInterval = null;
+function startTimer() {
+  const el = document.getElementById("loadingTimer");
+  const start = Date.now();
+  el.textContent = "0s";
+  timerInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - start) / 1000);
+    el.textContent = sec < 60 ? sec + "s" : Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function setView(v) {
+  currentView = v;
+  document.getElementById("viewByFile").className = v === "byFile"
+    ? "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white"
+    : "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
+  document.getElementById("viewByMr").className = v === "byMr"
+    ? "text-xs px-3 py-1 rounded border cursor-pointer bg-blue-600 border-blue-500 text-white"
+    : "text-xs px-3 py-1 rounded border cursor-pointer bg-slate-700 border-slate-600 text-slate-300";
+  renderContent();
+}
+
+function actionBadge(action) {
+  const map = {
+    created: "bg-green-900/40 text-green-400 border-green-700",
+    deleted: "bg-red-900/40 text-red-400 border-red-700",
+    modified: "bg-amber-900/40 text-amber-400 border-amber-700",
+  };
+  const cls = map[action] || "bg-slate-700 text-slate-300 border-slate-600";
+  const labels = { created: "Создан", deleted: "Удалён", modified: "Изменён" };
+  return `<span class="text-xs px-2 py-0.5 rounded border ${cls}">${labels[action] || action}</span>`;
+}
+
+function renderChanges(item) {
+  if (item.changes && item.changes.length > 0) {
+    return `<div class="mt-2 space-y-1">${item.changes.map(c => {
+      const typeMap = { added: "text-green-400", removed: "text-red-400", modified: "text-amber-400" };
+      const labelMap = { added: "+", removed: "-", modified: "~" };
+      return `<div class="font-mono text-xs">
+        <span class="${typeMap[c.type] || "text-slate-400"}">${labelMap[c.type] || "?"}</span>
+        <span class="text-slate-300">${escHtml(c.field)}</span>
+        ${c.value ? `<span class="text-slate-500 ml-2">${escHtml(c.value)}</span>` : ""}
+      </div>`;
+    }).join("")}</div>`;
+  }
+  if (item.diff) {
+    let html = '<div class="mt-2 font-mono text-xs max-h-40 overflow-auto">';
+    for (const line of (item.diff.removed_lines || [])) {
+      html += `<div class="text-red-400">- ${escHtml(line)}</div>`;
+    }
+    for (const line of (item.diff.added_lines || [])) {
+      html += `<div class="text-green-400">+ ${escHtml(line)}</div>`;
+    }
+    html += "</div>";
+    return html;
+  }
+  if (item.description) {
+    return `<div class="text-xs text-slate-400 mt-1">${escHtml(item.description)}</div>`;
+  }
+  return "";
+}
+
+function renderByFile() {
+  const summary = data.summary;
+  const paths = Object.keys(summary).sort();
+  if (paths.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">JSON файлов не найдено в указанных MR.</p>';
+  }
+  return paths.map(path => {
+    const entries = summary[path];
+    return `<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-3">
+      <div class="font-mono text-sm text-blue-400 mb-2">${escHtml(path)}</div>
+      ${entries.map(e => `
+        <div class="ml-4 mb-2 border-l-2 border-slate-700 pl-3">
+          <div class="flex items-center gap-2 text-sm">
+            ${actionBadge(e.action)}
+            <a href="${escHtml(e.mr_url || '')}" target="_blank" class="text-slate-300 hover:text-white">
+              !${e.mr_iid} ${escHtml(e.mr_title || '')}
+            </a>
+          </div>
+          ${renderChanges(e)}
+        </div>
+      `).join("")}
+    </div>`;
+  }).join("");
+}
+
+function renderByMr() {
+  const mrs = data.mrs.filter(m => !m.error);
+  if (mrs.length === 0) {
+    return '<p class="text-slate-500 text-center py-8">Нет данных.</p>';
+  }
+  return mrs.map(mr => {
+    const files = mr.schema_files || [];
+    return `<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-3">
+      <div class="flex items-center gap-2 mb-2">
+        <a href="${escHtml(mr.mr_url || '')}" target="_blank" class="text-blue-400 hover:underline font-semibold">
+          !${mr.mr_iid}
+        </a>
+        <span class="text-slate-300 text-sm">${escHtml(mr.mr_title)}</span>
+        <span class="text-slate-500 text-xs ml-auto">${escHtml(mr.author)} · ${escHtml(mr.source_branch)}</span>
+      </div>
+      ${files.length === 0
+        ? '<p class="text-slate-500 text-xs ml-4">JSON файлов не найдено</p>'
+        : files.map(f => `
+          <div class="ml-4 mb-2 border-l-2 border-slate-700 pl-3">
+            <div class="flex items-center gap-2 text-sm">
+              ${actionBadge(f.action)}
+              <span class="font-mono text-xs text-slate-300">${escHtml(f.file_path)}</span>
+            </div>
+            ${renderChanges(f)}
+          </div>
+        `).join("")}
+    </div>`;
+  }).join("")
+  + (data.mrs.filter(m => m.error).length > 0
+    ? `<div class="bg-red-900/20 rounded-lg border border-red-800 p-4 mb-3">
+        <h3 class="text-red-400 text-sm font-semibold mb-2">Ошибки</h3>
+        ${data.mrs.filter(m => m.error).map(m =>
+          `<div class="text-xs text-red-300">${escHtml(m.mr_input || '!' + m.mr_iid)}: ${escHtml(m.error)}</div>`
+        ).join("")}
+      </div>` : "");
+}
+
+function renderContent() {
+  const el = document.getElementById("content");
+  el.innerHTML = currentView === "byFile" ? renderByFile() : renderByMr();
+}
+
+async function runAnalysis() {
+  const raw = document.getElementById("mrInput").value.trim();
+  if (!raw) return;
+
+  const mrIds = raw.split(/[\s,]+/).filter(Boolean);
+  const btn = document.getElementById("btnAnalyze");
+  const loading = document.getElementById("loading");
+  const errorBox = document.getElementById("errorBox");
+  const results = document.getElementById("results");
+
+  btn.disabled = true;
+  btn.textContent = "Анализ...";
+  loading.classList.remove("hidden");
+  startTimer();
+  errorBox.classList.add("hidden");
+  results.classList.add("hidden");
+
+  try {
+    const resp = await fetch("/api/schema/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mr_ids: mrIds }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.detail || `HTTP ${resp.status}`);
+    }
+    data = await resp.json();
+
+    document.getElementById("statMrs").textContent = data.total_mrs;
+    document.getElementById("statFiles").textContent = data.total_files;
+    renderContent();
+    results.classList.remove("hidden");
+  } catch (e) {
+    errorBox.textContent = "Ошибка: " + e.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    stopTimer();
+    btn.disabled = false;
+    btn.textContent = "Анализировать";
+    loading.classList.add("hidden");
+  }
+}
+</script>
+{% endblock %}
