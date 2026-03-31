@@ -15,10 +15,29 @@
         class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded cursor-pointer transition-colors">
         Анализировать
       </button>
+      <button onclick="showSaveDialog()" id="btnSave"
+        class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded cursor-pointer transition-colors">
+        Сохранить список
+      </button>
       <span id="status" class="text-xs text-slate-500"></span>
     </div>
   </div>
 </div>
+
+<!-- Save dialog -->
+<div id="saveDialog" class="hidden mb-4">
+  <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 flex items-center gap-3">
+    <input id="presetName" placeholder="Название (например: Release 98)"
+      class="flex-1 bg-slate-900 border border-slate-600 rounded px-3 py-1.5 text-sm text-white placeholder-slate-500">
+    <button onclick="savePreset()"
+      class="bg-green-600 hover:bg-green-500 text-white text-sm px-3 py-1.5 rounded cursor-pointer">Сохранить</button>
+    <button onclick="hideSaveDialog()"
+      class="text-slate-400 hover:text-white text-sm px-2 py-1.5 cursor-pointer">Отмена</button>
+  </div>
+</div>
+
+<!-- Saved presets -->
+<div id="presetsList" class="mb-4"></div>
 
 <p class="text-xs text-slate-500 mb-4">
   Сканируются файлы в папках <code class="text-slate-400">model/</code> и <code class="text-slate-400">database/postgres/</code> и их подпапках.
@@ -353,6 +372,65 @@ function restoreSession() {
   } catch (e) { /* ignore */ }
 }
 
+// ─── Presets ───
+const MODULE = "database";
+
+function showSaveDialog() {
+  const input = document.getElementById("mrInput").value.trim();
+  if (!input) return;
+  document.getElementById("saveDialog").classList.remove("hidden");
+  document.getElementById("presetName").focus();
+}
+
+function hideSaveDialog() {
+  document.getElementById("saveDialog").classList.add("hidden");
+  document.getElementById("presetName").value = "";
+}
+
+async function savePreset() {
+  const name = document.getElementById("presetName").value.trim();
+  const mrIds = document.getElementById("mrInput").value.trim();
+  if (!name || !mrIds) return;
+  await fetch("/api/presets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ module: MODULE, name, mr_ids: mrIds }),
+  });
+  hideSaveDialog();
+  loadPresets();
+}
+
+async function deletePreset(id) {
+  await fetch(`/api/presets/${id}`, { method: "DELETE" });
+  loadPresets();
+}
+
+function applyPreset(mrIds) {
+  document.getElementById("mrInput").value = mrIds;
+}
+
+async function loadPresets() {
+  const resp = await fetch(`/api/presets/${MODULE}`);
+  const presets = await resp.json();
+  const el = document.getElementById("presetsList");
+  if (presets.length === 0) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="flex flex-wrap gap-2">${presets.map(p => `
+    <div class="inline-flex items-center gap-1 bg-slate-800 border border-slate-700 rounded-lg text-sm">
+      <button onclick="applyPreset(${escAttr(p.mr_ids)})"
+        class="px-3 py-1.5 text-slate-300 hover:text-white cursor-pointer truncate max-w-xs"
+        title="${escHtml(p.mr_ids)}">${escHtml(p.name)}</button>
+      <button onclick="deletePreset(${p.id})"
+        class="px-2 py-1.5 text-slate-500 hover:text-red-400 cursor-pointer border-l border-slate-700"
+        title="Удалить">&times;</button>
+    </div>
+  `).join("")}</div>`;
+}
+
+function escAttr(s) {
+  return JSON.stringify(s);
+}
+
+loadPresets();
 restoreSession();
 </script>
 {% endblock %}

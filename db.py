@@ -149,6 +149,14 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS saved_presets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            module TEXT NOT NULL,
+            name TEXT NOT NULL,
+            mr_ids TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
