@@ -263,7 +263,7 @@ def seed_default_rule():
         "name": "Changelog должен быть breaking",
         "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
         "file_pattern": "changelogs/unreleased/*.md",
-        "content_match": r"(?i)(script|service|publish)",
+        "content_match": r"(?i)(script|service|publish|паблиш)",
         "content_exclude": r"type:\s*breaking",
         "match_type": "regex",
         "target_branch": "master",
