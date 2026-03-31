@@ -260,6 +260,20 @@ def seed_default_rule():
         conn.commit()
 
     _seed_rule_if_missing(conn, {
+        "name": "Changelog должен быть breaking",
+        "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
+        "file_pattern": "changelogs/unreleased/*.md",
+        "content_match": r"(?i)(script|service|publish)",
+        "content_exclude": r"type:\s*breaking",
+        "match_type": "regex",
+        "target_branch": "master",
+        "mr_state": "opened",
+        "send_teams": 1,
+        "send_email": 1,
+        "enabled": 0,
+    })
+
+    _seed_rule_if_missing(conn, {
         "name": "MR нет инструкции breaking",
         "description": "Breaking change без ссылки на .sql файл или без упоминания etlService",
         "file_pattern": "changelogs/unreleased/*.md",
