@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Настройки — GitLab Manager{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-2xl font-bold">Настройки</h1>
+  <button id="reloadEnvBtn" onclick="reloadEnv()"
+    class="bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 py-2 rounded cursor-pointer transition-colors">
+    Перечитать .env
+  </button>
+</div>
+
+<div id="reloadMsg" class="hidden mb-4 px-4 py-2 rounded text-sm"></div>
+
+<div class="grid gap-6">
+  <!-- GitLab -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">GitLab</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">GITLAB_URL</span>
+        <span class="font-mono text-slate-200 truncate">{{ env.GITLAB_URL or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">GITLAB_PROJECT</span>
+        <span class="font-mono text-slate-200 truncate">{{ env.GITLAB_PROJECT or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">GITLAB_TOKEN</span>
+        <span class="font-mono text-slate-200">{{ '***' + env.GITLAB_TOKEN[-4:] if env.GITLAB_TOKEN and env.GITLAB_TOKEN|length > 4 else ('*****' if env.GITLAB_TOKEN else '—') }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Teams -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">Microsoft Teams</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">TEAMS_WEBHOOK_URL</span>
+        <span class="font-mono text-slate-200 truncate">{{ env.TEAMS_WEBHOOK_URL[:60] + '...' if env.TEAMS_WEBHOOK_URL and env.TEAMS_WEBHOOK_URL|length > 60 else (env.TEAMS_WEBHOOK_URL or '—') }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Polling -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">Опрос</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">POLL_INTERVAL_SECONDS</span>
+        <span class="font-mono text-slate-200">{{ env.POLL_INTERVAL_SECONDS or '300' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">DEFAULT_EMAIL</span>
+        <span class="font-mono text-slate-200">{{ env.DEFAULT_EMAIL or '—' }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- SMTP -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">SMTP</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">SMTP_HOST</span>
+        <span class="font-mono text-slate-200">{{ env.SMTP_HOST or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">SMTP_PORT</span>
+        <span class="font-mono text-slate-200">{{ env.SMTP_PORT or '587' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">SMTP_USER</span>
+        <span class="font-mono text-slate-200">{{ env.SMTP_USER or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">SMTP_PASSWORD</span>
+        <span class="font-mono text-slate-200">{{ '*****' if env.SMTP_PASSWORD else '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">SMTP_FROM</span>
+        <span class="font-mono text-slate-200">{{ env.SMTP_FROM or '—' }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Jira -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">Jira</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">JIRA_URL</span>
+        <span class="font-mono text-slate-200 truncate">{{ env.JIRA_URL or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">JIRA_PROJECT</span>
+        <span class="font-mono text-slate-200">{{ env.JIRA_PROJECT or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">JIRA_TOKEN</span>
+        <span class="font-mono text-slate-200">{{ '***' + env.JIRA_TOKEN[-4:] if env.JIRA_TOKEN and env.JIRA_TOKEN|length > 4 else ('*****' if env.JIRA_TOKEN else '—') }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Review (LLM) -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">Code Review (LLM)</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">REVIEW_API_URL</span>
+        <span class="font-mono text-slate-200 truncate">{{ env.REVIEW_API_URL or '—' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">REVIEW_API_KEY</span>
+        <span class="font-mono text-slate-200">{{ '***' + env.REVIEW_API_KEY[-4:] if env.REVIEW_API_KEY and env.REVIEW_API_KEY|length > 4 else ('*****' if env.REVIEW_API_KEY else '—') }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">REVIEW_MODEL</span>
+        <span class="font-mono text-slate-200">{{ env.REVIEW_MODEL or 'gpt-4o' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">REVIEW_MAX_DIFF_CHARS</span>
+        <span class="font-mono text-slate-200">{{ env.REVIEW_MAX_DIFF_CHARS or '60000' }}</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- Server -->
+  <section class="bg-slate-800 rounded-lg border border-slate-700 p-5">
+    <h2 class="text-base font-semibold mb-3 text-slate-200">Сервер</h2>
+    <div class="grid gap-3 text-sm">
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">HOST</span>
+        <span class="font-mono text-slate-200">{{ env.HOST or '0.0.0.0' }}</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">PORT</span>
+        <span class="font-mono text-slate-200">{{ env.PORT or '8055' }}</span>
+      </div>
+      <p class="text-xs text-slate-500 mt-1">HOST и PORT применяются только при перезапуске сервера.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+async function reloadEnv() {
+  const btn = document.getElementById('reloadEnvBtn');
+  const msg = document.getElementById('reloadMsg');
+  btn.disabled = true;
+  btn.textContent = 'Загрузка...';
+  msg.className = 'hidden mb-4 px-4 py-2 rounded text-sm';
+  try {
+    const res = await fetch('/api/reload-env', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      msg.textContent = '.env успешно перечитан. Страница обновится...';
+      msg.className = 'mb-4 px-4 py-2 rounded text-sm bg-green-900/50 border border-green-700 text-green-300';
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      throw new Error(data.detail || 'Unknown error');
+    }
+  } catch (e) {
+    msg.textContent = 'Ошибка: ' + e.message;
+    msg.className = 'mb-4 px-4 py-2 rounded text-sm bg-red-900/50 border border-red-700 text-red-300';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Перечитать .env';
+  }
+}
+</script>
+{% endblock %}

@@ -156,6 +156,10 @@ async def poll_once(rules: list[dict]):
 async def _run_poll_loop(interval: int, rule_getter):
     """Цикл опроса с заданным интервалом."""
     while True:
+        # Перечитываем .env перед каждым циклом
+        from env_reload import reload_dotenv
+        reload_dotenv()
+
         rules = rule_getter(interval)
         if rules:
             logger.info(

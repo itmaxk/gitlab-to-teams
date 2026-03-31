@@ -20,23 +20,26 @@ python -m venv .venv
 python -c "import py_compile; py_compile.compile('main.py', doraise=True)"
 ```
 
-Server runs on port 8055 by default. UI at `/rules`, dashboard at `/`, cherry-pick queue at `/queue`, compare at `/compare`, API docs at `/docs`.
+Server runs on port 8055 by default. UI at `/rules`, dashboard at `/`, cherry-pick queue at `/queue`, compare at `/compare`, settings at `/settings`, API docs at `/docs`.
 
 ## Architecture
 
-**Entry point:** `main.py` — FastAPI app with lifespan that initializes DB and starts background polling.
+**Entry point:** `main.py` — FastAPI app with lifespan that initializes DB and starts background polling + reports scheduler.
 
 **Router layers:**
-- `routers/pages.py` — HTML pages (dashboard `/`, polled MRs `/polled`, rule CRUD `/rules/*`, queue `/queue`, compare `/compare`)
+- `routers/pages.py` — HTML pages (dashboard `/`, polled MRs `/polled`, rule CRUD `/rules/*`, queue `/queue`, compare `/compare`, settings `/settings`)
 - `routers/rules.py` — JSON API under `/api/rules` (CRUD, toggle, copy, test, resend)
 - `routers/queue.py` — Cherry-pick queue API under `/api/queue` (search by Jira ID, load/filter MRs, cherry-pick, session history)
 - `routers/compare.py` — Cross-branch comparison API under `/api/compare` (find MRs by date range, group by JIRA ID, compare across branches)
+- `routers/reports.py` — Jira reports: overtime/worklog reports, auto-send scheduling, email dispatch, missing-task notifications
+- `routers/review.py` — LLM-based MR code review API under `/api/review`
 
 **Polling flow** (`services/poller.py`):
 1. Rules grouped by `poll_interval_seconds` → each group gets its own `asyncio` loop
 2. Within a loop, rules further grouped by `(target_branch, mr_state)` to deduplicate API calls
 3. For each new MR: fetch changed files → evaluate rules → dispatch notifications → mark processed
 4. Every polled MR is logged to `polled_mrs` table
+5. `.env` is re-read before each poll cycle via `env_reload.reload_dotenv()`
 
 **Rule evaluation** (`services/rules_engine.py`):
 - Matches changed file paths against glob pattern (`file_pattern`)
@@ -60,19 +63,37 @@ Server runs on port 8055 by default. UI at `/rules`, dashboard at `/`, cherry-pi
 - Groups by JIRA ID extracted from MR title (regex `[A-Z][A-Z0-9]+-\d+`)
 - Classifies each branch entry: direct / cherry-pick (source starts with `cherry-pick-`) / manual / missing
 
+**Reports** (`routers/reports.py` + `services/reports_scheduler.py` + `services/jira_client.py`):
+- Jira overtime/worklog reports with configurable schedules
+- Auto-send via background scheduler (checks every 60s)
+- Sends reports to Teams webhook and/or email
+- Settings stored in `report_settings` table
+
+**Code Review** (`routers/review.py` + `services/review_service.py`):
+- LLM-based MR code review via OpenAI-compatible API
+- Fetches MR diff, sends to configured LLM endpoint, returns structured review
+- Settings (system prompt) stored in `review_settings` table
+
+**Env reload** (`env_reload.py`):
+- `reload_dotenv()` re-reads `.env` with `override=True` and updates module-level constants
+- Called automatically before each poll cycle and manually via `POST /api/reload-env`
+
 **Database** (`db.py`): SQLite `data.db`, auto-created with migrations. Key tables:
 - `notification_rules` + `email_recipients` — rule config
 - `notification_log` — sent notifications (also used for dedup)
 - `polled_mrs` — polling audit log
 - `processed_mrs` — prevents re-processing same MR per rule
 - `cherry_pick_sessions` + `cherry_pick_items` — cherry-pick session history
+- `report_settings` + `report_log` — Jira report configuration and send history
+- `review_settings` — LLM review configuration (system prompt)
 
-**External clients** (`services/`): `gitlab_client.py` (httpx, async), `teams_client.py` (Adaptive Card), `email_client.py` (SMTP).
+**External clients** (`services/`): `gitlab_client.py` (httpx, async), `teams_client.py` (Adaptive Card), `email_client.py` (SMTP), `jira_client.py` (httpx, async, Jira REST API).
 
 ## Key Patterns
 
-- All GitLab API calls use `httpx.AsyncClient(verify=False)` — internal GitLab with self-signed certs
+- All GitLab/Jira API calls use `httpx.AsyncClient(verify=False)` — internal services with self-signed certs
 - DB access is synchronous `sqlite3` (no async ORM) — `get_db()` returns a new connection each call
-- Templates use Jinja2 with Tailwind CSS (CDN). Rule/notification JS in `static/app.js`; queue and compare pages use inline `<script>` in their templates
-- Config from `.env` via `python-dotenv` (optional import). Rule-level settings override env defaults
+- Templates use Jinja2 with Tailwind CSS (CDN). Rule/notification JS in `static/app.js`; queue, compare, reports, and review pages use inline `<script>` in their templates
+- Config from `.env` via `python-dotenv` (optional import). Most env vars are read at call time via `os.getenv()` inside functions; module-level constants (e.g. `MAX_DIFF_CHARS`) are updated by `env_reload.reload_dotenv()`
+- Rule-level settings override env defaults
 - Pydantic models in `models.py` are for API validation only; pages use `Form()` parameters directly

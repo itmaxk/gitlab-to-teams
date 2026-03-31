@@ -137,6 +137,23 @@ def review_page(request: Request):
     })
 
 
+ENV_KEYS = [
+    "GITLAB_URL", "GITLAB_PROJECT", "GITLAB_TOKEN",
+    "TEAMS_WEBHOOK_URL",
+    "POLL_INTERVAL_SECONDS", "DEFAULT_EMAIL",
+    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
+    "JIRA_URL", "JIRA_PROJECT", "JIRA_TOKEN",
+    "REVIEW_API_URL", "REVIEW_API_KEY", "REVIEW_MODEL", "REVIEW_MAX_DIFF_CHARS",
+    "HOST", "PORT",
+]
+
+
+@router.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request):
+    env = {key: os.getenv(key, "") for key in ENV_KEYS}
+    return templates.TemplateResponse(request, "settings.html", {"env": env})
+
+
 @router.get("/rules", response_class=HTMLResponse)
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))

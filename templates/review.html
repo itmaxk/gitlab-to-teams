@@ -33,7 +33,7 @@
 <!-- Loading -->
 <div id="loading" class="hidden text-center py-8">
   <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
-  <p class="text-slate-400 mt-2">Анализ MR... Это может занять до минуты.</p>
+  <p class="text-slate-400 mt-2">Анализ MR... <span id="loadingTimer"></span></p>
 </div>
 
 <!-- Error -->
@@ -85,6 +85,22 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
+// ─── Timer ───
+let timerInterval = null;
+function startTimer() {
+  const el = document.getElementById("loadingTimer");
+  const start = Date.now();
+  el.textContent = "0s";
+  timerInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - start) / 1000);
+    if (sec < 60) el.textContent = sec + "s";
+    else el.textContent = Math.floor(sec / 60) + "m " + (sec % 60) + "s";
+  }, 1000);
+}
+function stopTimer() {
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
 // ─── Review ───
 async function runReview() {
   const mrInput = document.getElementById("mrInput").value.trim();
@@ -99,6 +115,7 @@ async function runReview() {
   btn.disabled = true;
   btn.textContent = "Анализ...";
   loading.classList.remove("hidden");
+  startTimer();
   errorBox.classList.add("hidden");
   results.classList.add("hidden");
 
@@ -119,6 +136,7 @@ async function runReview() {
     errorBox.textContent = "Ошибка: " + e.message;
     errorBox.classList.remove("hidden");
   } finally {
+    stopTimer();
     btn.disabled = {{ 'true' if not llm_configured else 'false' }};
     btn.textContent = "Запустить ревью";
     loading.classList.add("hidden");

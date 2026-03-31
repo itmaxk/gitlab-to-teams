@@ -10,6 +10,8 @@ try:
 except ImportError:
     pass
 
+from env_reload import reload_dotenv
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -47,6 +49,12 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 from routers import rules, pages, queue, compare, reports, review  # noqa: E402
+
+
+@app.post("/api/reload-env")
+async def api_reload_env():
+    reload_dotenv()
+    return {"status": "ok"}
 
 app.include_router(rules.router)
 app.include_router(pages.router)
