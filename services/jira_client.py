@@ -125,6 +125,15 @@ def _match_candidate_entries(entries: list[dict], candidate: str) -> list[dict]:
     ]
 
 
+def _match_any_candidate_entries(entries: list[dict], candidates: list[str]) -> list[dict]:
+    cset = {c for c in candidates if c}
+    return [
+        entry
+        for entry in entries
+        if cset & set(entry.get("author_candidates", []))
+    ]
+
+
 async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
     """Пагинированный поиск задач по JQL."""
     issues: list[dict] = []
@@ -222,7 +231,7 @@ async def get_worklogs_for_users_all_projects(
     return result
 
 
-def _dedupe_worklog_entries(entries: list[dict]) -> list[dict]:
+def dedupe_worklog_entries(entries: list[dict]) -> list[dict]:
     seen: set[tuple] = set()
     result: list[dict] = []
     for entry in entries:
@@ -269,9 +278,14 @@ async def get_worklogs_for_users_all_projects_by_candidates(
                     extracted_entries = _extract_worklogs(
                         worklogs, issue_key, issue_project, d_from, d_to
                     )
-                    entries.extend(_match_candidate_entries(extracted_entries, candidate))
+                    # Match against ALL user candidates, not just the one
+                    # used in the JQL — Jira may index by one identifier
+                    # but return a different one in the worklog author object.
+                    entries.extend(_match_any_candidate_entries(
+                        extracted_entries, unique_candidates,
+                    ))
 
-            result[user_id] = _dedupe_worklog_entries(entries)
+            result[user_id] = dedupe_worklog_entries(entries)
 
     return result
 

@@ -115,7 +115,8 @@ async def _auto_generate_and_send(report_type: str, year: int, month: int, setti
 {rows_html}
 </table>
 </body></html>"""
-        _send_email(recipients, f"Отчёт учёта времени — {month_name}", html)
+        now_str = datetime.now().strftime("%H:%M")
+        _send_email(recipients, f"\U0001f552 Отчёт учёта времени — {month_name} ({now_str})", html)
 
     elif report_type == "overtime":
         if not recipients or not settings["send_email"]:

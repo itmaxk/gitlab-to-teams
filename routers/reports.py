@@ -597,6 +597,11 @@ async def overtime_report(body: ReportRequest):
 
     for uid in all_user_ids:
         entries = all_worklogs.get(uid, [])
+        # Merge project worklogs from step 1: worklogAuthor JQL may miss
+        # issues that the project-scoped query found directly.
+        pw = project_worklogs.get(uid, [])
+        if pw:
+            entries = jira_client.dedupe_worklog_entries(entries + pw)
         if not entries:
             continue
 
@@ -943,9 +948,10 @@ async def notify_missing(body: NotifyMissingRequest):
         email = user_row["email_address"] if user_row else ""
         if email:
             try:
+                now_str = datetime.now().strftime("%H:%M")
                 _send_email(
                     [email],
-                    f"Незалогированное время — {month_name}",
+                    f"\u26a0\ufe0f Незалогированное время — {month_name} ({now_str})",
                     f"<h3>{message}</h3>",
                 )
                 sent_email = True
@@ -1059,7 +1065,8 @@ async def send_overtime_email(body: SendReportRequest):
 </table>
 </body></html>"""
 
-    _send_email(body.emails, f"Отчёт по переработкам — {month_name}", html)
+    now_str = datetime.now().strftime("%H:%M")
+    _send_email(body.emails, f"\U0001f525 Отчёт по переработкам — {month_name} ({now_str})", html)
     return {"sent": True}
 
 
@@ -1113,7 +1120,8 @@ async def send_time_logging_email(body: SendReportRequest):
 </table>
 </body></html>"""
 
-    _send_email(body.emails, f"Отчёт учёта времени — {month_name}", html)
+    now_str = datetime.now().strftime("%H:%M")
+    _send_email(body.emails, f"\U0001f552 Отчёт учёта времени — {month_name} ({now_str})", html)
     return {"sent": True}
 
 
