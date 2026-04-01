@@ -66,8 +66,15 @@ Server runs on port 8055 by default. UI at `/rules`, dashboard at `/`, cherry-pi
 **Reports** (`routers/reports.py` + `services/reports_scheduler.py` + `services/jira_client.py`):
 - Jira overtime/worklog reports with configurable schedules
 - Auto-send via background scheduler (checks every 60s)
-- Sends reports to Teams webhook and/or email
+- Sends reports to Teams webhook and/or email with distinct icons per report type (🔥 overtime, 🕒 time logging, ⚠️ missing time) and generation timestamp in subject
 - Settings stored in `report_settings` table
+
+**Report data flow** (`services/jira_client.py`):
+- `get_all_worklogs_for_project()` uses dual JQL strategy: `worklogDate` range (primary) + `updated` range (fallback for stale Jira index). Results merged and deduplicated by issue key
+- Both overtime and time logging reports use project worklogs as the primary data source (no reliance on `worklogAuthor` JQL which can fail for some user identifiers)
+- Overtime report: project worklogs + `get_worklogs_for_users_all_projects()` for other-project entries, combined with deduplication
+- Time logging report: same approach — project worklogs as base, other-project worklogs supplementary
+- Debug endpoint (`POST /api/reports/overtime/debug-issue`): reproduces actual overtime report flow, shows `issue_found_by_project_jql`, full period entries, and day checks with all user worklogs
 
 **Code Review** (`routers/review.py` + `services/review_service.py`):
 - LLM-based MR code review via OpenAI-compatible API
@@ -87,7 +94,7 @@ Server runs on port 8055 by default. UI at `/rules`, dashboard at `/`, cherry-pi
 - `report_settings` + `report_log` — Jira report configuration and send history
 - `review_settings` — LLM review configuration (system prompt)
 
-**External clients** (`services/`): `gitlab_client.py` (httpx, async), `teams_client.py` (Adaptive Card), `email_client.py` (SMTP), `jira_client.py` (httpx, async, Jira REST API).
+**External clients** (`services/`): `gitlab_client.py` (httpx, async), `teams_client.py` (Adaptive Card), `email_client.py` (SMTP), `jira_client.py` (httpx, async, Jira REST API, dual JQL for worklog discovery).
 
 ## Key Patterns
 
