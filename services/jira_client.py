@@ -177,20 +177,37 @@ async def get_all_worklogs_for_project(
 ) -> dict[str, list[dict]]:
     """Собирает все ворклоги по проекту за период, группирует по автору.
 
+    Использует два JQL-запроса: по worklogDate и по updated, чтобы поймать
+    задачи с stale worklogDate-индексом в Jira.
+
     Returns: {author_key: [{issue_key, date, seconds, project, display_name, email}]}
     """
-    jql = (
+    jql_worklog_date = (
         f'project = "{project}" '
         f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
+    )
+    jql_updated = (
+        f'project = "{project}" '
+        f'AND updated >= "{date_from}" AND timespent > 0'
     )
     d_from = date.fromisoformat(date_from)
     d_to = date.fromisoformat(date_to)
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        issues = await _fetch_all_issues(client, jql)
+        issues_by_wl = await _fetch_all_issues(client, jql_worklog_date)
+        issues_by_upd = await _fetch_all_issues(client, jql_updated)
+
+        # Merge and deduplicate by issue key
+        seen_keys: set[str] = set()
+        all_issues: list[dict] = []
+        for issue in issues_by_wl + issues_by_upd:
+            key = issue["key"]
+            if key not in seen_keys:
+                seen_keys.add(key)
+                all_issues.append(issue)
 
         result: dict[str, list[dict]] = {}
-        for issue in issues:
+        for issue in all_issues:
             issue_key = issue["key"]
             issue_project = issue["fields"]["project"]["key"]
             worklogs = await _fetch_issue_worklogs(client, issue_key)
