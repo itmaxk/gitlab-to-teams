@@ -569,39 +569,34 @@ async def overtime_report(body: ReportRequest):
     conn.close()
     db_user_ids = {r["account_id"] for r in db_users}
 
-    all_user_ids = sorted(project_user_ids | db_user_ids)
-    if not all_user_ids:
+    user_ids = list(project_user_ids | db_user_ids)
+    if not user_ids:
         return {"rows": [], "year": body.year, "month": body.month}
 
-    # 3. Для всех пользователей ищем ворклоги во всех проектах
-    user_lookup_candidates = {
-        uid: _collect_user_lookup_candidates(uid, project_worklogs, db_users)
-        for uid in all_user_ids
-    }
-
-    try:
-        all_worklogs = await jira_client.get_worklogs_for_users_all_projects_by_candidates(
-            user_lookup_candidates,
-            date_from,
-            date_to,
-        )
-    except Exception as exc:
-        logger.error("overtime_report user worklogs failed: %s", exc)
-        raise HTTPException(
-            status_code=502,
-            detail="Failed to load Jira user worklogs for overtime report",
-        ) from exc
+    # 3. Для всех пользователей ищем ворклоги в других проектах
+    #    (аналогично time_logging_report)
+    other_worklogs: dict[str, list[dict]] = {}
+    if user_ids:
+        try:
+            other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+                user_ids,
+                date_from,
+                date_to,
+            )
+        except Exception as exc:
+            logger.error("overtime_report other worklogs failed: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to load Jira user worklogs for overtime report",
+            ) from exc
 
     year_cal = _get_year_calendar(body.year)
     rows = []
 
-    for uid in all_user_ids:
-        entries = all_worklogs.get(uid, [])
-        # Merge project worklogs from step 1: worklogAuthor JQL may miss
-        # issues that the project-scoped query found directly.
-        pw = project_worklogs.get(uid, [])
-        if pw:
-            entries = jira_client.dedupe_worklog_entries(entries + pw)
+    for uid in sorted(user_ids):
+        proj_entries = project_worklogs.get(uid, [])
+        other_entries = other_worklogs.get(uid, [])
+        entries = jira_client.dedupe_worklog_entries(proj_entries + other_entries)
         if not entries:
             continue
 
