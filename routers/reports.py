@@ -611,10 +611,16 @@ async def overtime_report(body: ReportRequest):
 
 @router.post("/api/reports/overtime/debug-issue")
 async def overtime_debug_issue(body: OvertimeDebugRequest):
+    """Диагностика: почему ворклоги задачи попали / не попали в отчёт.
+
+    Воспроизводит логику overtime_report: project_worklogs (двойной JQL)
+    как основной источник, без worklogAuthor JQL.
+    """
     project = os.getenv("JIRA_PROJECT", "")
     issue_key = body.issue_key.strip().upper()
     date_from, date_to = _month_range(body.year, body.month)
 
+    # 1. Прямой запрос ворклогов задачи (эталон)
     raw_issue_worklogs = await jira_client.get_issue_worklogs(issue_key)
     issue_entries = _build_issue_debug_entries(
         issue_key,
@@ -631,17 +637,21 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         }
     issue_user_ids = set(issue_user_map.keys())
 
+    # 2. Те же project_worklogs, что использует overtime_report
+    try:
+        project_worklogs = await jira_client.get_all_worklogs_for_project(
+            project, date_from, date_to,
+        )
+    except Exception:
+        project_worklogs = {}
+
     conn = get_db()
     db_rows = conn.execute("SELECT * FROM jira_users").fetchall()
     conn.close()
     db_users = {row["account_id"]: dict(row) for row in db_rows}
     db_user_ids = set(db_users.keys())
 
-    project_user_ids = {
-        entry["author_key"]
-        for entry in issue_entries
-        if entry.get("project") == project
-    }
+    project_user_ids = set(project_worklogs.keys())
     report_scope_user_ids = sorted(project_user_ids | db_user_ids)
     diagnostic_user_ids = sorted(issue_user_ids | db_user_ids)
 
@@ -649,65 +659,63 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
     users = []
 
     for uid in diagnostic_user_ids:
+        # Ворклоги конкретной задачи для этого пользователя
         issue_specific_entries = [
             entry for entry in issue_entries if entry["author_key"] == uid
         ]
-        display_name = _resolve_display_name(
-            uid, issue_specific_entries, db_users, issue_user_map
-        )
-        issue_specific_rows, issue_specific_checks = _build_overtime_rows_and_checks(
-            uid, display_name, issue_specific_entries, project, year_cal
-        )
-        raw_author = issue_specific_entries[0] if issue_specific_entries else {}
-        lookup_candidates = list(
-            dict.fromkeys(
-                [
-                    raw_author.get("author_account_id", ""),
-                    raw_author.get("author_key_field", ""),
-                    raw_author.get("author_name", ""),
-                    uid,
-                ]
-            )
-        )
-        lookup_candidates = [candidate for candidate in lookup_candidates if candidate]
-        lookup_diagnostics = {}
-        lookup_diagnostics_error = ""
-        if lookup_candidates:
-            try:
-                lookup_diagnostics = await asyncio.wait_for(
-                    jira_client.diagnose_worklog_author_candidates(
-                        lookup_candidates,
-                        date_from,
-                        date_to,
-                        issue_key=issue_key,
-                    ),
-                    timeout=_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS,
-                )
-            except TimeoutError:
-                lookup_diagnostics_error = (
-                    f"lookup timeout after {_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS}s"
-                )
-            except Exception as exc:
-                lookup_diagnostics_error = str(exc)
 
-        if issue_specific_rows:
-            exclusion_reason = "included_via_issue"
+        # ВСЕ ворклоги пользователя за период (как в overtime_report)
+        proj_entries = project_worklogs.get(uid, [])
+        all_period_entries = jira_client.dedupe_worklog_entries(proj_entries)
+
+        # Есть ли задача в project_worklogs (найдена ли JQL-запросами)
+        issue_in_project_worklogs = any(
+            e["issue_key"] == issue_key for e in proj_entries
+        )
+
+        display_name = _resolve_display_name(
+            uid, all_period_entries or issue_specific_entries,
+            db_users, issue_user_map,
+        )
+
+        # Даты, когда есть ворклоги по этой задаче
+        issue_dates = {e["date"] for e in issue_specific_entries}
+
+        # Полные day-checks по ВСЕМ ворклогам пользователя (как в отчёте)
+        full_rows, full_checks = _build_overtime_rows_and_checks(
+            uid, display_name, all_period_entries, project, year_cal,
+        )
+        # Только дни, связанные с задачей
+        issue_day_checks = [c for c in full_checks if c["date"] in issue_dates]
+        issue_day_rows = [r for r in full_rows if r["date"] in issue_dates]
+
+        # Day-checks только по ворклогам задачи (для сравнения)
+        issue_only_rows, issue_only_checks = _build_overtime_rows_and_checks(
+            uid, display_name, issue_specific_entries, project, year_cal,
+        )
+
+        # Причина исключения
+        if issue_day_rows:
+            exclusion_reason = "included"
         elif not issue_specific_entries:
             exclusion_reason = "no_issue_worklogs_in_period"
         elif uid not in report_scope_user_ids:
             exclusion_reason = "user_not_in_report_scope"
-        elif not any(
-            candidate_info.get("strict_entry_count", 0)
-            or candidate_info.get("candidate_match_entry_count", 0)
-            for candidate_info in lookup_diagnostics.values()
-        ):
-            exclusion_reason = "user_lookup_returned_no_entries"
-        elif issue_specific_checks:
-            exclusion_reason = ",".join(
-                sorted({check["decision_reason"] for check in issue_specific_checks})
-            )
+        elif not all_period_entries:
+            exclusion_reason = "user_has_no_period_entries"
+        elif not issue_in_project_worklogs:
+            exclusion_reason = "issue_not_found_by_project_jql"
+        elif issue_day_checks:
+            reasons = {
+                c["decision_reason"]
+                for c in issue_day_checks
+                if not c["qualifies_overtime"]
+            }
+            exclusion_reason = ",".join(sorted(reasons)) if reasons else "included"
         else:
-            exclusion_reason = "issue_not_present_in_user_period_entries"
+            exclusion_reason = "unknown"
+
+        raw_author = issue_specific_entries[0] if issue_specific_entries else {}
 
         users.append(
             {
@@ -717,29 +725,27 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
                 "in_project_scope": uid in project_user_ids,
                 "in_db_scope": uid in db_user_ids,
                 "in_report_scope": uid in report_scope_user_ids,
+                "issue_in_project_worklogs": issue_in_project_worklogs,
                 "issue_entry_count": len(issue_specific_entries),
                 "issue_hours": _format_hours(
-                    sum(entry["seconds"] for entry in issue_specific_entries)
+                    sum(e["seconds"] for e in issue_specific_entries)
                 ),
-                "period_entry_count": len(issue_specific_entries),
+                "period_entry_count": len(all_period_entries),
                 "period_hours": _format_hours(
-                    sum(entry["seconds"] for entry in issue_specific_entries)
+                    sum(e["seconds"] for e in all_period_entries)
                 ),
-                "included_in_monthly_report": bool(issue_specific_rows),
-                "included_due_to_issue": bool(issue_specific_rows),
+                "included_in_monthly_report": bool(issue_day_rows),
                 "exclusion_reason": exclusion_reason,
                 "issue_worklogs": issue_specific_entries,
-                "issue_day_checks": issue_specific_checks,
-                "report_rows": issue_specific_rows,
+                "issue_day_checks_full": issue_day_checks,
+                "issue_day_checks_issue_only": issue_only_checks,
+                "report_rows": issue_day_rows,
                 "author_identifiers": {
                     "account_id": raw_author.get("author_account_id", ""),
                     "key": raw_author.get("author_key_field", ""),
                     "name": raw_author.get("author_name", ""),
                     "primary": raw_author.get("author_key", uid),
                 },
-                "lookup_candidates": lookup_candidates,
-                "lookup_diagnostics": lookup_diagnostics,
-                "lookup_diagnostics_error": lookup_diagnostics_error,
             }
         )
 
@@ -749,6 +755,15 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         "project": project,
         "issue_key": issue_key,
         "issue_worklogs": issue_entries,
+        "project_worklogs_user_count": len(project_worklogs),
+        "project_worklogs_issue_keys": sorted(
+            {e["issue_key"] for entries in project_worklogs.values() for e in entries}
+        ),
+        "issue_found_by_project_jql": any(
+            e["issue_key"] == issue_key
+            for entries in project_worklogs.values()
+            for e in entries
+        ),
         "project_user_ids": sorted(project_user_ids),
         "db_user_ids": sorted(db_user_ids),
         "report_scope_user_ids": report_scope_user_ids,

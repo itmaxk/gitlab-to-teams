@@ -188,7 +188,7 @@ async def get_all_worklogs_for_project(
     )
     jql_updated = (
         f'project = "{project}" '
-        f'AND updated >= "{date_from}" AND timespent > 0'
+        f'AND updated >= "{date_from}" AND updated <= "{date_to}"'
     )
     d_from = date.fromisoformat(date_from)
     d_to = date.fromisoformat(date_to)
