@@ -4,6 +4,11 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 
+MATCH_TYPE_ICONS = {
+    "json_additional_props": "❓",
+}
+
+
 def send_changelog_email(
     recipients: list[str],
     mr_title: str,
@@ -11,6 +16,7 @@ def send_changelog_email(
     file_path: str,
     file_content: str,
     rule_name: str,
+    match_type: str = "",
 ) -> None:
     host = os.getenv("SMTP_HOST", "")
     if not recipients:
@@ -24,7 +30,9 @@ def send_changelog_email(
     sender = os.getenv("SMTP_FROM", user)
 
     msg = MIMEMultipart("alternative")
-    msg["Subject"] = f"[{rule_name}] {mr_title}"
+    icon = MATCH_TYPE_ICONS.get(match_type, "")
+    prefix = f"{icon} " if icon else ""
+    msg["Subject"] = f"{prefix}[{rule_name}] {mr_title}"
     msg["From"] = sender
     msg["To"] = ", ".join(recipients)
 

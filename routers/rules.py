@@ -269,7 +269,7 @@ async def test_rule(rule_id: int):
                 emails = [e.strip() for e in default_email.split(",") if e.strip()]
         if not emails:
             raise HTTPException(status_code=400, detail="Email включён, но получатели не настроены")
-        send_email_fn(recipients=emails, **test_data)
+        send_email_fn(recipients=emails, match_type=row["match_type"], **test_data)
         results.append("email")
 
     return {"status": "sent", "channels": results}
@@ -279,7 +279,7 @@ async def test_rule(rule_id: int):
 async def resend_notification(log_id: int):
     conn = get_db()
     row = conn.execute(
-        """SELECT l.*, r.name as rule_name, r.send_teams, r.teams_webhook_url, r.send_email
+        """SELECT l.*, r.name as rule_name, r.send_teams, r.teams_webhook_url, r.send_email, r.match_type
            FROM notification_log l
            LEFT JOIN notification_rules r ON r.id = l.rule_id
            WHERE l.id = ?""",
@@ -308,6 +308,7 @@ async def resend_notification(log_id: int):
             "send_teams": log.get("send_teams", 1),
             "teams_webhook_url": log.get("teams_webhook_url", ""),
             "send_email": log.get("send_email", 0),
+            "match_type": log.get("match_type", ""),
         },
         "file_path": log["file_path"],
         "file_content": log["file_content"],

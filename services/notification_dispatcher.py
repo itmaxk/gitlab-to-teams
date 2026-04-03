@@ -67,6 +67,7 @@ async def dispatch_notifications(
                     file_path=file_path,
                     file_content=file_content,
                     rule_name=rule["name"],
+                    match_type=rule.get("match_type", ""),
                 )
                 email_sent = True
             except Exception as e:
