@@ -96,14 +96,68 @@ def build_sonar_url(mr_id: int | str) -> str:
     return f"{base}/project/issues?id={project}&pullRequest={mr_id}&issueStatuses=OPEN"
 
 
-def format_gitlab_comment(sonar_url: str, formatted_issues: str) -> str:
-    """Формирует markdown-комментарий для GitLab MR."""
+SEVERITY_COLORS = {
+    "BLOCKER": "#991b1b",
+    "CRITICAL": "#dc2626",
+    "MAJOR": "#ea580c",
+    "MINOR": "#eab308",
+    "INFO": "#facc15",
+}
+
+SEVERITY_EMOJI = {
+    "BLOCKER": "\U0001F534",   # red circle
+    "CRITICAL": "\U0001F525",  # fire
+    "MAJOR": "\U0001F7E0",     # orange circle
+    "MINOR": "\U0001F7E1",     # yellow circle
+    "INFO": "\u2B50",          # star
+}
+
+
+def format_gitlab_comment(sonar_url: str, formatted_issues: str, raw_issues: list[dict] | None = None) -> str:
+    """Формирует markdown-комментарий для GitLab MR с цветными значками."""
+    if raw_issues:
+        return _format_gitlab_comment_rich(sonar_url, raw_issues)
     return (
         "## SonarQube Analysis Results\n\n"
         f"[View Analysis on SonarQube]({sonar_url})\n\n"
         "### Issues Found\n\n"
         f"```\n{formatted_issues}\n```\n"
     )
+
+
+def _format_gitlab_comment_rich(sonar_url: str, issues: list[dict]) -> str:
+    """Формирует rich-markdown комментарий с emoji по severity."""
+    severity_order = ["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]
+    grouped: dict[str, list[dict]] = {}
+    for issue in issues:
+        sev = issue.get("severity", "INFO")
+        grouped.setdefault(sev, []).append(issue)
+
+    total = len(issues)
+    lines = [
+        "## SonarQube Analysis Results\n",
+        f"[View Analysis on SonarQube]({sonar_url})\n",
+        f"**Total Issues: {total}**\n",
+    ]
+
+    for sev in severity_order:
+        group = grouped.get(sev)
+        if not group:
+            continue
+        emoji = SEVERITY_EMOJI.get(sev, "\u2753")
+        lines.append(f"### {emoji} {sev} ({len(group)})\n")
+        lines.append("| | File | Message |")
+        lines.append("|---|---|---|")
+        for issue in group:
+            component = issue.get("component", "")
+            short = component.split(":")[-1] if ":" in component else component
+            line_num = issue.get("line")
+            loc = f"`{short}:{line_num}`" if line_num else f"`{short}`"
+            msg = issue.get("message", "").replace("|", "\\|")
+            lines.append(f"| {emoji} | {loc} | {msg} |")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def extract_sonar_link(description: str | None) -> str | None:

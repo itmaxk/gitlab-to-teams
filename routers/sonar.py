@@ -81,7 +81,7 @@ async def get_sonar_issues(mr_id: int, dry_run: bool = False):
 
     if not dry_run:
         try:
-            await _post_comment_to_mr(mr_id, sonar_url, result["formatted"])
+            await _post_comment_to_mr(mr_id, sonar_url, result["formatted"], raw_issues=result["issues"])
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Issues получены ({result['total']}), но ошибка отправки в GitLab: {e}")
 
@@ -113,7 +113,7 @@ async def post_sonar_issues(mr_id: int):
         raise HTTPException(status_code=502, detail=f"Ошибка SonarQube: {e}")
 
     try:
-        await _post_comment_to_mr(mr_id, sonar_url, result["formatted"])
+        await _post_comment_to_mr(mr_id, sonar_url, result["formatted"], raw_issues=result["issues"])
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Issues получены ({result['total']}), но ошибка отправки в GitLab: {e}")
 
@@ -158,10 +158,11 @@ async def post_comment(request: Request):
     mr_id = body.get("mr_id")
     sonar_url = body.get("sonar_url", "")
     issues_text = body.get("issues", "")
+    raw_issues = body.get("raw_issues")
     if not mr_id or not issues_text:
         raise HTTPException(status_code=400, detail="mr_id и issues обязательны")
     try:
-        await _post_comment_to_mr(int(mr_id), sonar_url, issues_text)
+        await _post_comment_to_mr(int(mr_id), sonar_url, issues_text, raw_issues=raw_issues)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Ошибка отправки в GitLab: {e}")
     return {"success": True, "message": "Комментарий отправлен в GitLab"}
@@ -184,11 +185,14 @@ async def _extract_sonar_url_from_mr(mr_id: int) -> str | None:
         return None
 
 
-async def _post_comment_to_mr(mr_id: int, sonar_url: str, formatted_issues: str) -> None:
+async def _post_comment_to_mr(
+    mr_id: int, sonar_url: str, formatted_issues: str,
+    raw_issues: list[dict] | None = None,
+) -> None:
     """Постит комментарий с issues в GitLab MR."""
     project_path = quote(_gitlab_project_path(), safe="")
     url = f"{_gitlab_base()}/api/v4/projects/{project_path}/merge_requests/{mr_id}/notes"
-    comment = format_gitlab_comment(sonar_url, formatted_issues)
+    comment = format_gitlab_comment(sonar_url, formatted_issues, raw_issues=raw_issues)
     async with httpx.AsyncClient(verify=False, timeout=30) as client:
         resp = await client.post(url, headers=_gitlab_headers(), json={"body": comment})
         resp.raise_for_status()

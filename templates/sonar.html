@@ -71,6 +71,7 @@ const sonarUrlInput = document.getElementById('sonarUrl');
 const sonarLink = document.getElementById('sonarLink');
 
 let currentIssues = '';
+let currentRawIssues = null;
 let config = {};
 
 const SEVERITY_CONFIG = {
@@ -217,8 +218,9 @@ async function handleFetchIssues() {
     if (!resp.ok) throw new Error(data.detail || 'Ошибка получения issues');
 
     currentIssues = data.data.issues;
+    currentRawIssues = data.data.raw_issues;
     document.getElementById('issueCount').textContent = `(${data.data.count})`;
-    renderIssues(data.data.raw_issues);
+    renderIssues(currentRawIssues);
     document.getElementById('results').classList.remove('hidden');
     document.getElementById('btnPost').classList.remove('hidden');
     document.getElementById('btnCopy').classList.remove('hidden');
@@ -242,7 +244,7 @@ async function handlePostToGitlab() {
     const resp = await fetch('/api/sonar/post-comment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mr_id: parseInt(mrId), sonar_url: sonarUrl, issues: currentIssues }),
+      body: JSON.stringify({ mr_id: parseInt(mrId), sonar_url: sonarUrl, issues: currentIssues, raw_issues: currentRawIssues }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || 'Ошибка отправки');
