@@ -1,4 +1,5 @@
 import fnmatch
+import json
 import re
 from typing import Any, Callable, Awaitable
 
@@ -102,7 +103,38 @@ def _match_content(content: str, match_value: str, match_type: str) -> bool:
         return bool(re.search(match_value, content))
     elif match_type == "exact":
         return content.strip() == match_value.strip()
+    elif match_type == "json_additional_props":
+        return _check_json_missing_additional_properties(content)
     return False
+
+
+def _check_json_missing_additional_properties(content: str) -> bool:
+    """
+    Проверяет JSON: если есть "type": "object", то на том же уровне
+    должен быть "additionalProperties": false.
+    Возвращает True (= нарушение найдено) если хотя бы один объект
+    с "type": "object" не имеет "additionalProperties": false.
+    """
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+    def _walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                if node.get("additionalProperties") is not False:
+                    return True
+            for value in node.values():
+                if _walk(value):
+                    return True
+        elif isinstance(node, list):
+            for item in node:
+                if _walk(item):
+                    return True
+        return False
+
+    return _walk(data)
 
 
 def _has_file_under_prefix(changed_files: list[str], prefix: str) -> bool:

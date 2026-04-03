@@ -62,6 +62,7 @@
           <option value="contains" {{ 'selected' if rule and rule.match_type == 'contains' }}>Содержит (contains)</option>
           <option value="regex" {{ 'selected' if rule and rule.match_type == 'regex' }}>Регулярное выражение (regex)</option>
           <option value="exact" {{ 'selected' if rule and rule.match_type == 'exact' }}>Точное совпадение (exact)</option>
+          <option value="json_additional_props" {{ 'selected' if rule and rule.match_type == 'json_additional_props' }}>JSON: additionalProperties (schema)</option>
         </select>
       </div>
     </div>
