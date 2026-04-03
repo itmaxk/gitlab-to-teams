@@ -146,15 +146,15 @@ def _format_gitlab_comment_rich(sonar_url: str, issues: list[dict]) -> str:
             continue
         emoji = SEVERITY_EMOJI.get(sev, "\u2753")
         lines.append(f"### {emoji} {sev} ({len(group)})\n")
-        lines.append('<table>')
-        lines.append('<tr><th width="20"></th><th>Message</th><th width="25%">File</th></tr>')
+        lines.append('<table style="table-layout:fixed;width:100%">')
+        lines.append('<tr><th style="width:20px"></th><th>Message</th><th style="width:180px">File</th></tr>')
         for issue in group:
             component = issue.get("component", "")
             short = component.split(":")[-1] if ":" in component else component
             line_num = issue.get("line")
             loc = f"<code>{short}:{line_num}</code>" if line_num else f"<code>{short}</code>"
             msg = issue.get("message", "")
-            lines.append(f"<tr><td>{emoji}</td><td>{msg}</td><td>{loc}</td></tr>")
+            lines.append(f'<tr><td>{emoji}</td><td>{msg}</td><td style="word-break:break-all">{loc}</td></tr>')
         lines.append("</table>\n")
 
     return "\n".join(lines)
