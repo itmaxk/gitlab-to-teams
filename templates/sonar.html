@@ -5,17 +5,16 @@
 <h1 class="text-2xl font-bold mb-6">SonarQube Issues</h1>
 
 <div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6 space-y-4">
-  <div class="grid grid-cols-3 gap-4">
-    <div>
-      <label class="block text-sm text-slate-400 mb-1">MR ID</label>
-      <input type="text" id="mrId" placeholder="12767"
-        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
-    </div>
-    <div class="col-span-2">
-      <label class="block text-sm text-slate-400 mb-1">GitLab MR URL</label>
-      <input type="text" id="gitlabUrl" readonly
-        class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-400 font-mono text-sm">
-    </div>
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">MR ID</label>
+    <input type="text" id="mrId" placeholder="12767"
+      class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+  </div>
+
+  <div>
+    <label class="block text-sm text-slate-400 mb-1">GitLab MR URL</label>
+    <input type="text" id="gitlabUrl" readonly
+      class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-slate-400 font-mono text-sm">
   </div>
 
   <div>
@@ -36,6 +35,10 @@
       class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-2 rounded-lg cursor-pointer hidden">
       Отправить в GitLab
     </button>
+    <button onclick="copyIssues()" id="btnCopy"
+      class="text-slate-400 hover:text-slate-300 border border-slate-600 text-sm px-4 py-2 rounded-lg cursor-pointer hidden">
+      Копировать
+    </button>
   </div>
 </div>
 
@@ -54,15 +57,10 @@
 <!-- Results -->
 <div id="results" class="hidden">
   <div class="bg-slate-800 rounded-lg border border-slate-700 p-4">
-    <div class="flex items-center justify-between mb-3">
-      <h2 class="text-lg font-semibold">
-        Issues <span id="issueCount" class="text-sm text-slate-400 font-normal"></span>
-      </h2>
-      <button onclick="copyIssues()" class="text-xs text-slate-400 hover:text-slate-300 border border-slate-600 px-2 py-1 rounded cursor-pointer">
-        Копировать
-      </button>
-    </div>
-    <pre id="issuesText" class="bg-slate-900 rounded-lg p-4 text-sm text-slate-300 overflow-x-auto whitespace-pre-wrap max-h-[600px] overflow-y-auto"></pre>
+    <h2 class="text-lg font-semibold mb-4">
+      Issues <span id="issueCount" class="text-sm text-slate-400 font-normal"></span>
+    </h2>
+    <div id="issuesList" class="space-y-2"></div>
   </div>
 </div>
 
@@ -75,7 +73,14 @@ const sonarLink = document.getElementById('sonarLink');
 let currentIssues = '';
 let config = {};
 
-// Загружаем конфигурацию
+const SEVERITY_CONFIG = {
+  BLOCKER:  { icon: '\u2B24', color: '#991b1b', label: 'Blocker' },
+  CRITICAL: { icon: '\u2B24', color: '#dc2626', label: 'Critical' },
+  MAJOR:    { icon: '\u2B24', color: '#ea580c', label: 'Major' },
+  MINOR:    { icon: '\u2B24', color: '#eab308', label: 'Minor' },
+  INFO:     { icon: '\u2B24', color: '#facc15', label: 'Info' },
+};
+
 fetch('/api/sonar/config').then(r => r.json()).then(c => {
   config = c;
   if (config.sonar_url && config.sonar_project) {
@@ -135,6 +140,65 @@ function hideMessages() {
   document.getElementById('successBox').classList.add('hidden');
 }
 
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderIssues(rawIssues) {
+  const container = document.getElementById('issuesList');
+  container.innerHTML = '';
+
+  if (!rawIssues || rawIssues.length === 0) {
+    container.innerHTML = '<p class="text-slate-400 py-4 text-center">No issues found.</p>';
+    return;
+  }
+
+  const order = ['BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO'];
+  const grouped = {};
+  for (const issue of rawIssues) {
+    const sev = issue.severity || 'INFO';
+    if (!grouped[sev]) grouped[sev] = [];
+    grouped[sev].push(issue);
+  }
+
+  for (const sev of order) {
+    const issues = grouped[sev];
+    if (!issues || issues.length === 0) continue;
+
+    const cfg = SEVERITY_CONFIG[sev] || SEVERITY_CONFIG.INFO;
+
+    const header = document.createElement('div');
+    header.className = 'flex items-center gap-2 mt-4 mb-2';
+    header.innerHTML = `
+      <span style="color:${cfg.color}; font-size:12px;">${cfg.icon}</span>
+      <span class="text-sm font-semibold text-slate-300">${cfg.label}</span>
+      <span class="text-xs text-slate-500">(${issues.length})</span>
+    `;
+    container.appendChild(header);
+
+    for (const issue of issues) {
+      const component = issue.component || '';
+      const shortComponent = component.includes(':') ? component.split(':').pop() : component;
+      const line = issue.line ? `:${issue.line}` : '';
+      const el = document.createElement('div');
+      el.className = 'bg-slate-900 rounded-lg px-4 py-3 border-l-4';
+      el.style.borderLeftColor = cfg.color;
+      el.innerHTML = `
+        <div class="flex items-start gap-2">
+          <span style="color:${cfg.color}; font-size:10px; margin-top:5px;">${cfg.icon}</span>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm text-white break-all">${escapeHtml(issue.message || '')}</p>
+            <p class="text-xs text-slate-500 mt-1 font-mono">${escapeHtml(shortComponent + line)}</p>
+          </div>
+        </div>
+      `;
+      container.appendChild(el);
+    }
+  }
+}
+
 async function handleFetchIssues() {
   const sonarUrl = sonarUrlInput.value.trim();
   if (!sonarUrl) { showError('Введите SonarQube URL или MR ID'); return; }
@@ -154,9 +218,10 @@ async function handleFetchIssues() {
 
     currentIssues = data.data.issues;
     document.getElementById('issueCount').textContent = `(${data.data.count})`;
-    document.getElementById('issuesText').textContent = currentIssues;
+    renderIssues(data.data.raw_issues);
     document.getElementById('results').classList.remove('hidden');
     document.getElementById('btnPost').classList.remove('hidden');
+    document.getElementById('btnCopy').classList.remove('hidden');
     showSuccess(`Получено issues: ${data.data.count}`);
   } catch (e) {
     showError(e.message);

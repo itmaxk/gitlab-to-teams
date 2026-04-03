@@ -145,6 +145,7 @@ async def fetch_issues_only(request: Request):
         "data": {
             "count": result["total"],
             "issues": result["formatted"],
+            "raw_issues": result["issues"],
             "sonar_url": sonar_url,
         },
     }
