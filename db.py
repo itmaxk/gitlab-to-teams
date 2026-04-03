@@ -211,11 +211,26 @@ def _migrate(conn: sqlite3.Connection):
         "content_exclude": "ALTER TABLE notification_rules ADD COLUMN content_exclude TEXT DEFAULT ''",
         "file_check_mode": "ALTER TABLE notification_rules ADD COLUMN file_check_mode TEXT DEFAULT 'present'",
         "send_teams": "ALTER TABLE notification_rules ADD COLUMN send_teams INTEGER DEFAULT 1",
+        "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT ''",
     }
 
+    need_seed_key_backfill = "seed_key" not in columns
     for col, sql in migrations.items():
         if col not in columns:
             conn.execute(sql)
+
+    if need_seed_key_backfill:
+        seed_key_map = {
+            "Breaking Changes": "breaking_changes",
+            "Changelog должен быть breaking": "changelog_should_be_breaking",
+            "MR нет инструкции breaking": "mr_no_breaking_instruction",
+            "MR не найден файл": "mr_file_not_found",
+        }
+        for name, key in seed_key_map.items():
+            conn.execute(
+                "UPDATE notification_rules SET seed_key = ? WHERE name = ? AND (seed_key = '' OR seed_key IS NULL)",
+                (key, name),
+            )
 
     # Миграция cherry_pick_items
     try:
@@ -255,8 +270,8 @@ def seed_default_rule():
     if count == 0:
         conn.execute(
             """INSERT INTO notification_rules
-               (name, description, file_pattern, content_match, match_type, target_branch, mr_state)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (name, description, file_pattern, content_match, match_type, target_branch, mr_state, seed_key)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 "Breaking Changes",
                 "Уведомление о breaking changes при merge MR",
@@ -265,11 +280,13 @@ def seed_default_rule():
                 "contains",
                 "master",
                 "merged",
+                "breaking_changes",
             ),
         )
         conn.commit()
 
     _seed_rule_if_missing(conn, {
+        "seed_key": "changelog_should_be_breaking",
         "name": "Changelog должен быть breaking",
         "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
         "file_pattern": "changelogs/unreleased/*.md",
@@ -284,6 +301,7 @@ def seed_default_rule():
     })
 
     _seed_rule_if_missing(conn, {
+        "seed_key": "mr_no_breaking_instruction",
         "name": "MR нет инструкции breaking",
         "description": "Breaking change без ссылки на .sql файл или без упоминания etlService",
         "file_pattern": "changelogs/unreleased/*.md",
@@ -298,6 +316,7 @@ def seed_default_rule():
     })
 
     _seed_rule_if_missing(conn, {
+        "seed_key": "mr_file_not_found",
         "name": "MR не найден файл",
         "description": "Breaking change со ссылкой на .sql файл, но файл отсутствует в MR",
         "file_pattern": "changelogs/unreleased/*.md",
@@ -371,11 +390,13 @@ def seed_review_settings():
 
 
 def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
+    seed_key = rule.pop("seed_key", None) or rule["name"]
     exists = conn.execute(
-        "SELECT 1 FROM notification_rules WHERE name = ?", (rule["name"],)
+        "SELECT 1 FROM notification_rules WHERE seed_key = ?", (seed_key,)
     ).fetchone()
     if exists:
         return
+    rule["seed_key"] = seed_key
     cols = ", ".join(rule.keys())
     placeholders = ", ".join("?" for _ in rule)
     conn.execute(
