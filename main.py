@@ -48,7 +48,7 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-from routers import rules, pages, queue, compare, reports, review, schema, database, presets  # noqa: E402
+from routers import rules, pages, queue, compare, reports, review, schema, database, presets, sonar  # noqa: E402
 
 
 @app.post("/api/reload-env")
@@ -65,6 +65,7 @@ app.include_router(review.router)
 app.include_router(schema.router)
 app.include_router(database.router)
 app.include_router(presets.router)
+app.include_router(sonar.router)
 
 if __name__ == "__main__":
     import uvicorn
