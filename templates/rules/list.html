@@ -39,7 +39,13 @@
           <span title="Статус MR">📋 <code class="text-slate-300">{{ rule.mr_state }}</code></span>
           <span title="Интервал опроса">⏱ {{ rule.effective_interval }}с</span>
           <span title="Паттерн файла">📁 <code class="text-slate-300">{{ rule.file_pattern }}</code></span>
-          <span title="Условие">🔍 <code class="text-slate-300">{{ rule.content_match }}</code> ({{ rule.match_type }})</span>
+          <span title="Условие">🔍
+            {% if rule.match_type == 'json_additional_props' %}
+              <code class="text-slate-300">type:object → additionalProperties:false</code> (json)
+            {% else %}
+              <code class="text-slate-300">{{ rule.content_match }}</code> ({{ rule.match_type }})
+            {% endif %}
+          </span>
           {% if rule.file_check_enabled %}
           <span title="Проверка файлов">📎 <code class="text-slate-300">{{ rule.file_check_path_prefix }}/...</code></span>
           {% endif %}
