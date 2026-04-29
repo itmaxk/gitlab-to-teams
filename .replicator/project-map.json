@@ -1,0 +1,160 @@
+{
+  "generatedAt": "2026-04-16T10:13:27.867Z",
+  "workspace": "gitlab-to-teams",
+  "summary": {
+    "totalFiles": 15,
+    "totalModules": 4,
+    "byExtension": {
+      "js": 2,
+      "html": 13
+    }
+  },
+  "modules": [
+    {
+      "name": "emscripten",
+      "files": [
+        ".venv/Lib/site-packages/urllib3/contrib/emscripten/emscripten_fetch_worker.js"
+      ],
+      "fileCount": 1
+    },
+    {
+      "name": "rules",
+      "files": [
+        "templates/rules/form.html",
+        "templates/rules/list.html"
+      ],
+      "fileCount": 2
+    },
+    {
+      "name": "static",
+      "files": [
+        "static/app.js"
+      ],
+      "fileCount": 1
+    },
+    {
+      "name": "templates",
+      "files": [
+        "templates/base.html",
+        "templates/compare.html",
+        "templates/dashboard.html",
+        "templates/database.html",
+        "templates/polled.html",
+        "templates/queue.html",
+        "templates/reports.html",
+        "templates/review.html",
+        "templates/schema.html",
+        "templates/settings.html",
+        "templates/sonar.html"
+      ],
+      "fileCount": 11
+    }
+  ],
+  "entries": [
+    {
+      "path": ".venv/Lib/site-packages/urllib3/contrib/emscripten/emscripten_fetch_worker.js",
+      "extension": "js",
+      "stem": "emscripten_fetch_worker",
+      "directory": ".venv/Lib/site-packages/urllib3/contrib/emscripten",
+      "module": "emscripten"
+    },
+    {
+      "path": "static/app.js",
+      "extension": "js",
+      "stem": "app",
+      "directory": "static",
+      "module": "static"
+    },
+    {
+      "path": "templates/base.html",
+      "extension": "html",
+      "stem": "base",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/compare.html",
+      "extension": "html",
+      "stem": "compare",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/dashboard.html",
+      "extension": "html",
+      "stem": "dashboard",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/database.html",
+      "extension": "html",
+      "stem": "database",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/polled.html",
+      "extension": "html",
+      "stem": "polled",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/queue.html",
+      "extension": "html",
+      "stem": "queue",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/reports.html",
+      "extension": "html",
+      "stem": "reports",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/review.html",
+      "extension": "html",
+      "stem": "review",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/rules/form.html",
+      "extension": "html",
+      "stem": "form",
+      "directory": "templates/rules",
+      "module": "rules"
+    },
+    {
+      "path": "templates/rules/list.html",
+      "extension": "html",
+      "stem": "list",
+      "directory": "templates/rules",
+      "module": "rules"
+    },
+    {
+      "path": "templates/schema.html",
+      "extension": "html",
+      "stem": "schema",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/settings.html",
+      "extension": "html",
+      "stem": "settings",
+      "directory": "templates",
+      "module": "templates"
+    },
+    {
+      "path": "templates/sonar.html",
+      "extension": "html",
+      "stem": "sonar",
+      "directory": "templates",
+      "module": "templates"
+    }
+  ]
+}

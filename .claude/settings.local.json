@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "WebFetch(domain:docs.z.ai)",
+      "Bash(grep -r \"SAT\\\\|resultSchema\\\\|dataSchema\\\\|PAS_IMPL\" /d/Projects/gitlab-to-teams --include=*.py --include=*.json)",
+      "Bash(find /d/Projects/gitlab-to-teams -type f -name \"*.py\" -not -path \"*/.venv/*\" -exec wc -l {} +)",
+      "Bash(python:*)",
+      "Read(//d/Projects/magic-tools/**)",
+      "Read(//d/Projects/**)",
+      "Bash(CLAUDE_PLUGIN_ROOT=\"C:/Users/Admin/.claude/plugins/marketplaces/omc\" bash:*)",
+      "Bash(node:*)",
+      "Bash(claude mcp:*)",
+      "Bash(gh auth:*)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash /d/Projects/gitlab-to-teams/.claude/statusline-command.sh"
+  }
+}

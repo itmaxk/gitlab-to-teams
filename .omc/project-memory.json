@@ -1,0 +1,174 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775222530677,
+  "projectRoot": "D:\\Projects\\gitlab-to-teams",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Python",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "requirements.txt"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "pip",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "static",
+      "tests"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 3,
+      "lastAccessed": 1775222530664,
+      "keyFiles": [
+        "plans.md",
+        "status.md",
+        "test-plan.md"
+      ]
+    },
+    "routers": {
+      "path": "routers",
+      "purpose": null,
+      "fileCount": 11,
+      "lastAccessed": 1775222530664,
+      "keyFiles": [
+        "compare.py",
+        "database.py",
+        "pages.py",
+        "presets.py",
+        "queue.py"
+      ]
+    },
+    "services": {
+      "path": "services",
+      "purpose": "Business logic services",
+      "fileCount": 12,
+      "lastAccessed": 1775222530664,
+      "keyFiles": [
+        "email_client.py",
+        "gitlab_client.py",
+        "jira_client.py",
+        "json_diff_parser.py",
+        "notification_dispatcher.py"
+      ]
+    },
+    "static": {
+      "path": "static",
+      "purpose": "Static files",
+      "fileCount": 2,
+      "lastAccessed": 1775222530665,
+      "keyFiles": [
+        "app.js",
+        "favicon.svg"
+      ]
+    },
+    "templates": {
+      "path": "templates",
+      "purpose": null,
+      "fileCount": 11,
+      "lastAccessed": 1775222530665,
+      "keyFiles": [
+        "base.html",
+        "compare.html",
+        "dashboard.html",
+        "database.html",
+        "polled.html"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 2,
+      "lastAccessed": 1775222530665,
+      "keyFiles": [
+        "test_overtime_report.py",
+        "test_rules_engine.py"
+      ]
+    },
+    "__pycache__": {
+      "path": "__pycache__",
+      "purpose": null,
+      "fileCount": 4,
+      "lastAccessed": 1775222530665,
+      "keyFiles": [
+        "db.cpython-314.pyc",
+        "env_reload.cpython-314.pyc",
+        "main.cpython-314.pyc",
+        "models.cpython-314.pyc"
+      ]
+    },
+    "templates\\components": {
+      "path": "templates\\components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1775222530666,
+      "keyFiles": []
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "C:\\Users\\Admin\\.claude\\settings.json",
+      "accessCount": 2,
+      "lastAccessed": 1775222626452,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\Admin\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\01-install-claude-md.md",
+      "accessCount": 1,
+      "lastAccessed": 1775222552858,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\Admin\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\02-configure.md",
+      "accessCount": 1,
+      "lastAccessed": 1775222578796,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\Admin\\.claude\\hud\\omc-hud.mjs",
+      "accessCount": 1,
+      "lastAccessed": 1775222620482,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\Admin\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\03-integrations.md",
+      "accessCount": 1,
+      "lastAccessed": 1775222750550,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\Admin\\.claude\\plugins\\marketplaces\\omc\\skills\\omc-setup\\phases\\04-welcome.md",
+      "accessCount": 1,
+      "lastAccessed": 1775223243000,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

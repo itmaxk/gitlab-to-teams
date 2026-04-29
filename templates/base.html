@@ -7,25 +7,75 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { background: #0f172a; color: #e2e8f0; }
+    :root {
+      --nav-ink: #eef6ff;
+      --nav-border: rgba(148, 163, 184, 0.22);
+      --nav-glass: rgba(15, 23, 42, 0.82);
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 15% -10%, rgba(56, 189, 248, 0.18), transparent 30rem),
+        radial-gradient(circle at 85% 0%, rgba(245, 158, 11, 0.12), transparent 26rem),
+        #0f172a;
+      color: #e2e8f0;
+    }
+
+    .premium-nav {
+      background:
+        linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(30, 41, 59, 0.82)),
+        var(--nav-glass);
+      box-shadow: 0 22px 70px rgba(2, 6, 23, 0.34);
+      backdrop-filter: blur(18px);
+    }
+
+    .nav-scroller {
+      border-color: var(--nav-border);
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.38) transparent;
+    }
+
+    .nav-scroller::-webkit-scrollbar { height: 4px; }
+    .nav-scroller::-webkit-scrollbar-track { background: transparent; }
+    .nav-scroller::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 999px;
+    }
   </style>
 </head>
 <body class="min-h-screen">
-  <nav class="bg-slate-800 border-b border-slate-700">
-    <div class="w-full px-4 py-3 flex items-center gap-x-6 gap-y-2 flex-wrap">
-      <a href="/" class="text-lg font-bold text-white shrink-0 whitespace-nowrap">GitLab Manager</a>
-      <a href="/" class="text-slate-300 hover:text-white text-sm">Дашборд</a>
-      <a href="/polled" class="text-slate-300 hover:text-white text-sm">Опрошенные MR</a>
-      <a href="/rules" class="text-slate-300 hover:text-white text-sm">Правила</a>
-      <a href="/queue" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Cherry-Pick</a>
-      <a href="/compare" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Compare</a>
-      <a href="/reports" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Jira Reports</a>
-      <a href="/review" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Review</a>
-      <a href="/schema" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Schema</a>
-      <a href="/database" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Database</a>
-      <a href="/sonar" class="text-slate-300 hover:text-white text-sm shrink-0 whitespace-nowrap">Sonar</a>
-      <a href="/settings" class="text-slate-300 hover:text-white text-sm">Настройки</a>
-      <a href="/docs" class="text-slate-400 hover:text-white text-sm ml-auto" target="_blank">API Docs ↗</a>
+  <nav class="premium-nav sticky top-0 z-40 border-b border-slate-700/70">
+    <div class="w-full px-4 py-3 sm:px-6">
+      <div class="flex items-center gap-4 rounded-3xl border border-white/10 bg-white/[0.035] px-3 py-3 shadow-2xl shadow-slate-950/20">
+        <a href="/" class="group flex min-w-0 shrink-0 items-center gap-3 pr-2">
+          <span class="grid h-12 w-12 place-items-center overflow-hidden rounded-2xl border border-white/15 bg-slate-950/55 shadow-lg shadow-cyan-950/30 transition duration-300 group-hover:border-cyan-300/45">
+            <img src="/static/ProjectManager.png" alt="Project Manager" class="h-full w-full object-cover">
+          </span>
+          <span class="hidden min-w-0 sm:block">
+            <span class="block truncate text-base font-semibold tracking-[0.18em] text-[var(--nav-ink)] uppercase">GitLab Manager</span>
+            <span class="block truncate text-[11px] font-medium tracking-[0.22em] text-cyan-200/70 uppercase">Project cockpit</span>
+          </span>
+        </a>
+
+        <div class="nav-scroller flex min-w-0 flex-1 items-center gap-1 overflow-x-auto rounded-2xl border bg-slate-950/35 p-1">
+          <a href="/" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Дашборд</a>
+          <a href="/polled" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Опрошенные MR</a>
+          <a href="/rules" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Правила</a>
+          <a href="/queue" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Cherry-Pick</a>
+          <a href="/compare" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Compare</a>
+          <a href="/reports" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Jira Reports</a>
+          <a href="/review" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Review</a>
+          <a href="/schema" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Schema</a>
+          <a href="/database" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Database</a>
+          <a href="/sonar" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Sonar</a>
+          <a href="/settings" class="shrink-0 rounded-xl px-3 py-2 text-sm font-medium text-slate-200 transition hover:bg-white/10 hover:text-white">Настройки</a>
+          <a href="/docs" target="_blank" class="shrink-0 rounded-xl px-3 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/15 hover:text-white md:hidden">API Docs</a>
+        </div>
+
+        <a href="/docs" target="_blank" class="hidden shrink-0 rounded-2xl border border-cyan-300/25 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-100 shadow-lg shadow-cyan-950/20 transition hover:border-cyan-200/60 hover:bg-cyan-300/20 md:inline-flex">
+          API Docs →
+        </a>
+      </div>
     </div>
   </nav>
   <main class="max-w-5xl mx-auto px-4 py-6">

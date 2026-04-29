@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"OMC_VERSION=$(grep -m1 'OMC:VERSION:' \\\"$HOME/.claude/CLAUDE.md\\\" 2>/dev/null | sed -E 's/.*OMC:VERSION:([^ ]+).*/\\\\1/' || true)\\n[ -z \\\"$OMC_VERSION\\\" ] && OMC_VERSION=$(omc --version 2>/...",
+  "error": "Exit code 127\nC:/Users/Admin/.claude/plugins/marketplaces/omc/scripts/setup-progress.sh: line 113: jq: command not found",
+  "timestamp": "2026-04-03T13:34:22.842Z",
+  "retry_count": 1
+}
