@@ -4,7 +4,8 @@ import logging
 import re
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from db import get_db
 from models import ReviewPublishRequest, ReviewRequest, ReviewSettingsUpdate
@@ -59,6 +60,21 @@ def _translate_review_error(exc: Exception) -> str:
     if message:
         return f"Ошибка LLM-ревью: {message}"
     return "Неизвестная ошибка LLM-ревью"
+
+
+def _serialize_job(job: dict) -> dict:
+    return {
+        "status": job.get("status"),
+        "message": job.get("message"),
+        "current_batch": job.get("current_batch", 0),
+        "total_batches": job.get("total_batches", 0),
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
+
+def _sse_event(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 async def _run_review_job(job_id: str, mr_iid: int, custom_prompt: str) -> None:
@@ -122,12 +138,52 @@ async def start_review(req: ReviewRequest):
     return {"job_id": job_id}
 
 
+@router.get("/stream/{job_id}")
+async def stream_review_status(job_id: str, request: Request):
+    job = REVIEW_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Задача ревью не найдена")
+
+    async def event_stream():
+        last_payload = None
+        while True:
+            if await request.is_disconnected():
+                break
+
+            current_job = REVIEW_JOBS.get(job_id)
+            if current_job is None:
+                yield _sse_event("error", {"detail": "Задача ревью не найдена"})
+                break
+
+            payload = _serialize_job(current_job)
+            serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            if serialized != last_payload:
+                yield _sse_event("progress", payload)
+                last_payload = serialized
+
+            if payload["status"] in {"completed", "failed"}:
+                yield _sse_event("done", payload)
+                break
+
+            await asyncio.sleep(0.75)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/status/{job_id}")
 def get_review_status(job_id: str):
     job = REVIEW_JOBS.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Задача ревью не найдена")
-    return job
+    return _serialize_job(job)
 
 
 @router.get("/history")

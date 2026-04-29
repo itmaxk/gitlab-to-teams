@@ -59,6 +59,7 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
         return "[]"
 
     monkeypatch.setattr(review_service, "MAX_DIFF_CHARS", 90)
+    monkeypatch.setattr(review_service, "REVIEW_BATCH_MAX_CHARS", 90)
     monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
     monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
     monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)

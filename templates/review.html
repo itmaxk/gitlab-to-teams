@@ -74,10 +74,6 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 let timerInterval = null;
 let currentFindings = [];
 let activeFilter = "all";
@@ -105,33 +101,60 @@ function setBatchProgress(message) {
   document.getElementById("batchProgress").textContent = message || "Подготовка...";
 }
 
-async function pollReviewJob(jobId) {
-  while (true) {
-    const resp = await fetch(`/api/review/status/${jobId}`);
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      throw new Error(data.detail || `HTTP ${resp.status}`);
-    }
-
-    if (data.total_batches > 0) {
-      if (data.current_batch > 0) {
-        setBatchProgress(`Анализ батча ${data.current_batch}/${data.total_batches}`);
-      } else {
-        setBatchProgress(`Подготовлено батчей: ${data.total_batches}`);
-      }
+function updateProgressFromJob(data) {
+  if (data.total_batches > 0) {
+    if (data.current_batch > 0) {
+      setBatchProgress(`Анализ батча ${data.current_batch}/${data.total_batches}`);
     } else {
-      setBatchProgress(data.message || "Подготовка...");
+      setBatchProgress(`Подготовлено батчей: ${data.total_batches}`);
     }
-
-    if (data.status === "completed") {
-      return data.result;
-    }
-    if (data.status === "failed") {
-      throw new Error(data.error || "Ревью завершилось с ошибкой");
-    }
-
-    await sleep(1000);
+  } else {
+    setBatchProgress(data.message || "Подготовка...");
   }
+}
+
+async function waitForReviewJob(jobId) {
+  return await new Promise((resolve, reject) => {
+    const stream = new EventSource(`/api/review/stream/${jobId}`);
+
+    stream.addEventListener("progress", (event) => {
+      const data = JSON.parse(event.data || "{}");
+      updateProgressFromJob(data);
+    });
+
+    stream.addEventListener("done", (event) => {
+      const data = JSON.parse(event.data || "{}");
+      stream.close();
+      if (data.status === "completed") {
+        resolve(data.result);
+        return;
+      }
+      reject(new Error(data.error || "Ревью завершилось с ошибкой"));
+    });
+
+    stream.onerror = async () => {
+      stream.close();
+      try {
+        const resp = await fetch(`/api/review/status/${jobId}`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          reject(new Error(data.detail || `HTTP ${resp.status}`));
+          return;
+        }
+        if (data.status === "completed") {
+          resolve(data.result);
+          return;
+        }
+        if (data.status === "failed") {
+          reject(new Error(data.error || "Ревью завершилось с ошибкой"));
+          return;
+        }
+        reject(new Error("Соединение со стримом прогресса прервалось"));
+      } catch (error) {
+        reject(error);
+      }
+    };
+  });
 }
 
 async function runReview() {
@@ -168,7 +191,7 @@ async function runReview() {
       throw new Error(startData.detail || `HTTP ${startResp.status}`);
     }
 
-    const data = await pollReviewJob(startData.job_id);
+    const data = await waitForReviewJob(startData.job_id);
     renderResults(data);
     loadHistory();
   } catch (e) {

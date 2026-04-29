@@ -14,6 +14,7 @@ from services.gitlab_client import get_mr_diff, get_project_id
 logger = logging.getLogger(__name__)
 
 MAX_DIFF_CHARS = int(os.getenv("REVIEW_MAX_DIFF_CHARS", "60000"))
+REVIEW_BATCH_MAX_CHARS = int(os.getenv("REVIEW_BATCH_MAX_CHARS", str(MAX_DIFF_CHARS)))
 
 
 def _get_system_prompt() -> str:
@@ -52,7 +53,7 @@ def _split_change_into_parts(change: dict, max_chars: int) -> list[str]:
 
 
 def _build_diff_batches(changes: list[dict], max_chars: int | None = None) -> list[str]:
-    max_chars = max_chars or MAX_DIFF_CHARS
+    max_chars = max_chars or REVIEW_BATCH_MAX_CHARS
     batches: list[str] = []
     current_parts: list[str] = []
     current_len = 0

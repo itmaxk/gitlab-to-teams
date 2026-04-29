@@ -20,3 +20,4 @@ def reload_dotenv():
     # Обновляем модульные константы, которые читаются при импорте
     import services.review_service as _review
     _review.MAX_DIFF_CHARS = int(os.getenv("REVIEW_MAX_DIFF_CHARS", "60000"))
+    _review.REVIEW_BATCH_MAX_CHARS = int(os.getenv("REVIEW_BATCH_MAX_CHARS", os.getenv("REVIEW_MAX_DIFF_CHARS", "60000")))

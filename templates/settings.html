@@ -123,6 +123,10 @@
         <span class="text-slate-400 w-48 shrink-0">REVIEW_MAX_DIFF_CHARS</span>
         <span class="font-mono text-slate-200">{{ env.REVIEW_MAX_DIFF_CHARS or '60000' }}</span>
       </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 w-48 shrink-0">REVIEW_BATCH_MAX_CHARS</span>
+        <span class="font-mono text-slate-200">{{ env.REVIEW_BATCH_MAX_CHARS or env.REVIEW_MAX_DIFF_CHARS or '60000' }}</span>
+      </div>
     </div>
   </section>
 
