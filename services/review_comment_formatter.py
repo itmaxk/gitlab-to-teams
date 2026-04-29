@@ -7,6 +7,15 @@ SEVERITY_META = {
     "info": {"emoji": "🔵", "label": "Info"},
 }
 
+CATEGORY_ICONS = {
+    "bug": "🐞",
+    "security": "🔐",
+    "performance": "⚡",
+    "style": "🎨",
+    "logic": "🧠",
+    "general": "📌",
+}
+
 SEVERITY_ORDER = ["error", "warning", "info"]
 
 
@@ -25,10 +34,7 @@ def format_gitlab_review_comment(
         grouped[severity].append(finding)
 
     lines = [
-        "## AI Code Review Summary",
-        "",
-        f"Merge Request: !{mr_iid} {mr_title}".strip(),
-        f"Model: `{model_used or 'unknown'}`",
+        "## AI Code Review Summary (for preview only)",
         "",
         f"- Errors: {summary.get('errors', 0)}",
         f"- Warnings: {summary.get('warnings', 0)}",
@@ -46,11 +52,7 @@ def format_gitlab_review_comment(
     lines.append("")
 
     if not findings:
-        lines.extend([
-            "No notable issues were found in the analyzed diff.",
-            "",
-            "_AI (for preview only)_",
-        ])
+        lines.append("No notable issues were found in the analyzed diff.")
         return "\n".join(lines)
 
     for severity in SEVERITY_ORDER:
@@ -66,13 +68,14 @@ def format_gitlab_review_comment(
             file_path = finding.get("file_path") or "unknown file"
             line = finding.get("line")
             location = f"`{file_path}:{line}`" if line else f"`{file_path}`"
-            category = finding.get("category", "general")
+            category = str(finding.get("category", "general")).lower()
+            category_icon = CATEGORY_ICONS.get(category, CATEGORY_ICONS["general"])
             message = finding.get("message", "").strip()
             suggestion = (finding.get("suggestion") or "").strip()
-            lines.append(f"{index}. {location} [{category}] {message}")
+            lines.append(f"{index}. {location} {category_icon} {message}")
             if suggestion:
-                lines.append(f"   Suggestion: {suggestion}")
+                lines.append(f"   💡 Suggestion:")
+                lines.append(f"      {suggestion}")
         lines.append("")
 
-    lines.append("_AI (for preview only)_")
     return "\n".join(lines)

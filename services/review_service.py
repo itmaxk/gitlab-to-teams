@@ -1,8 +1,10 @@
 import asyncio
+import inspect
 import json
 import logging
 import os
 import re
+from typing import Callable
 
 import httpx
 
@@ -23,21 +25,82 @@ def _get_system_prompt() -> str:
     return "You are a code reviewer. Return a JSON array of findings."
 
 
-def _build_diff_text(changes: list[dict]) -> str:
-    parts = []
-    for c in changes:
-        diff = c.get("diff", "")
-        if not diff:
+def _build_change_text(change: dict, *, part: int | None = None, total_parts: int | None = None) -> str:
+    suffix = ""
+    if part is not None and total_parts is not None and total_parts > 1:
+        suffix = f" (part {part}/{total_parts})"
+    header = f"--- {change['old_path']}\n+++ {change['new_path']}{suffix}"
+    return f"{header}\n{change.get('diff', '')}"
+
+
+def _split_change_into_parts(change: dict, max_chars: int) -> list[str]:
+    full_text = _build_change_text(change)
+    if len(full_text) <= max_chars:
+        return [full_text]
+
+    header = f"--- {change['old_path']}\n+++ {change['new_path']}"
+    header_overhead = len(header) + len("\n") + len(" (part 999/999)")
+    chunk_size = max(1, max_chars - header_overhead)
+    diff = change.get("diff", "")
+    diff_parts = [diff[i:i + chunk_size] for i in range(0, len(diff), chunk_size)] or [""]
+    total_parts = len(diff_parts)
+
+    return [
+        _build_change_text({**change, "diff": diff_part}, part=index, total_parts=total_parts)
+        for index, diff_part in enumerate(diff_parts, start=1)
+    ]
+
+
+def _build_diff_batches(changes: list[dict], max_chars: int | None = None) -> list[str]:
+    max_chars = max_chars or MAX_DIFF_CHARS
+    batches: list[str] = []
+    current_parts: list[str] = []
+    current_len = 0
+
+    for change in changes:
+        if not change.get("diff"):
             continue
-        header = f"--- {c['old_path']}\n+++ {c['new_path']}"
-        parts.append(f"{header}\n{diff}")
-    return "\n\n".join(parts)
+
+        for change_text in _split_change_into_parts(change, max_chars):
+            separator_len = 2 if current_parts else 0
+            next_len = current_len + separator_len + len(change_text)
+            if current_parts and next_len > max_chars:
+                batches.append("\n\n".join(current_parts))
+                current_parts = [change_text]
+                current_len = len(change_text)
+                continue
+
+            current_parts.append(change_text)
+            current_len = next_len
+
+    if current_parts:
+        batches.append("\n\n".join(current_parts))
+
+    return batches
 
 
-def _truncate_diff(diff_text: str, max_chars: int = MAX_DIFF_CHARS) -> tuple[str, bool]:
-    if len(diff_text) <= max_chars:
-        return diff_text, False
-    return diff_text[:max_chars] + "\n\n... (diff truncated due to size)", True
+def _build_batch_message(
+    mr_data: dict,
+    files_changed: int,
+    batch_index: int,
+    batch_total: int,
+    diff_text: str,
+    custom_prompt: str,
+) -> str:
+    user_message = f"""## Merge Request
+- Title: {mr_data['title']}
+- Author: {mr_data['author']}
+- Source: {mr_data['source_branch']} -> {mr_data['target_branch']}
+- Files changed: {files_changed}
+- Review batch: {batch_index}/{batch_total}
+
+## Diff
+{diff_text}"""
+
+    if custom_prompt.strip():
+        user_message += f"\n\n## Additional instructions from reviewer\n{custom_prompt.strip()}"
+
+    return user_message
 
 
 async def _call_llm(system_prompt: str, user_message: str) -> str:
@@ -87,13 +150,12 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
             resp.raise_for_status()
         data = resp.json()
 
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    return content
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
 def _parse_findings(raw: str) -> list[dict]:
     raw = raw.strip()
-    json_match = re.search(r'\[.*\]', raw, re.DOTALL)
+    json_match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not json_match:
         return []
     try:
@@ -103,24 +165,24 @@ def _parse_findings(raw: str) -> list[dict]:
         return []
 
     valid = []
-    for f in findings:
-        if not isinstance(f, dict):
+    for finding in findings:
+        if not isinstance(finding, dict):
             continue
         valid.append({
-            "severity": f.get("severity", "info"),
-            "category": f.get("category", "bug"),
-            "file_path": f.get("file_path", ""),
-            "line": f.get("line"),
-            "message": f.get("message", ""),
-            "suggestion": f.get("suggestion"),
+            "severity": finding.get("severity", "info"),
+            "category": finding.get("category", "bug"),
+            "file_path": finding.get("file_path", ""),
+            "line": finding.get("line"),
+            "message": finding.get("message", ""),
+            "suggestion": finding.get("suggestion"),
         })
     return valid
 
 
 def _compute_summary(findings: list[dict], files_total: int, files_analyzed: int, truncated: bool) -> dict:
-    errors = sum(1 for f in findings if f["severity"] == "error")
-    warnings = sum(1 for f in findings if f["severity"] == "warning")
-    info = sum(1 for f in findings if f["severity"] == "info")
+    errors = sum(1 for finding in findings if finding["severity"] == "error")
+    warnings = sum(1 for finding in findings if finding["severity"] == "warning")
+    info = sum(1 for finding in findings if finding["severity"] == "info")
     return {
         "errors": errors,
         "warnings": warnings,
@@ -132,36 +194,56 @@ def _compute_summary(findings: list[dict], files_total: int, files_analyzed: int
     }
 
 
-async def review_mr(mr_iid: int, custom_prompt: str = "") -> dict:
+async def _report_progress(
+    progress_callback: Callable[[int, int], object] | None,
+    current_batch: int,
+    total_batches: int,
+) -> None:
+    if progress_callback is None:
+        return
+    result = progress_callback(current_batch, total_batches)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def review_mr(
+    mr_iid: int,
+    custom_prompt: str = "",
+    progress_callback: Callable[[int, int], object] | None = None,
+) -> dict:
     project_id = await get_project_id()
     mr_data = await get_mr_diff(project_id, mr_iid)
 
     changes = mr_data["changes"]
-    non_empty = [c for c in changes if c.get("diff")]
-    diff_text = _build_diff_text(non_empty)
-    diff_text, truncated = _truncate_diff(diff_text)
+    non_empty = [change for change in changes if change.get("diff")]
+    diff_batches = _build_diff_batches(non_empty)
+    total_batches = max(1, len(diff_batches))
 
     system_prompt = _get_system_prompt()
+    findings: list[dict] = []
 
-    user_message = f"""## Merge Request
-- Title: {mr_data['title']}
-- Author: {mr_data['author']}
-- Source: {mr_data['source_branch']} → {mr_data['target_branch']}
-- Files changed: {len(changes)}
+    await _report_progress(progress_callback, 0, total_batches)
 
-## Diff
-{diff_text}"""
+    if not diff_batches:
+        summary = _compute_summary(findings, len(changes), 0, False)
+    else:
+        for batch_index, diff_text in enumerate(diff_batches, start=1):
+            user_message = _build_batch_message(
+                mr_data=mr_data,
+                files_changed=len(changes),
+                batch_index=batch_index,
+                batch_total=total_batches,
+                diff_text=diff_text,
+                custom_prompt=custom_prompt,
+            )
+            llm_response = await _call_llm(system_prompt, user_message)
+            findings.extend(_parse_findings(llm_response))
+            await _report_progress(progress_callback, batch_index, total_batches)
 
-    if custom_prompt.strip():
-        user_message += f"\n\n## Additional instructions from reviewer\n{custom_prompt.strip()}"
-
-    llm_response = await _call_llm(system_prompt, user_message)
-    findings = _parse_findings(llm_response)
-    summary = _compute_summary(findings, len(changes), len(non_empty), truncated)
+        summary = _compute_summary(findings, len(changes), len(non_empty), False)
 
     model_used = os.getenv("REVIEW_MODEL", "gpt-4o")
 
-    # Save to DB
     conn = get_db()
     cur = conn.execute(
         """INSERT INTO code_reviews (mr_iid, mr_title, mr_url, model_used, custom_prompt, findings_json, summary_json)

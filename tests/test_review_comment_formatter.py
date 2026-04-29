@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.review_comment_formatter import format_gitlab_review_comment
 
 
-def test_format_gitlab_review_comment_includes_signature_and_summary():
+def test_format_gitlab_review_comment_includes_icons_and_summary():
     comment = format_gitlab_review_comment(
         mr_iid=42,
         mr_title="Improve review publishing",
@@ -24,11 +24,15 @@ def test_format_gitlab_review_comment_includes_signature_and_summary():
         model_used="qwen2.5-coder:14b",
     )
 
-    assert "## AI Code Review Summary" in comment
-    assert "Merge Request: !42 Improve review publishing" in comment
+    assert "## AI Code Review Summary (for preview only)" in comment
     assert "### 🟠 Warnings (1)" in comment
-    assert "Suggestion: Guard empty value before access" in comment
-    assert "_AI (for preview only)_" in comment
+    assert "🐞 Potential null handling gap" in comment
+    assert "💡 Suggestion:" in comment
+    assert "Guard empty value before access" in comment
+    assert "Merge Request:" not in comment
+    assert "Model:" not in comment
+    assert "_AI (for preview only)_" not in comment
+    assert "[bug]" not in comment
 
 
 def test_format_gitlab_review_comment_handles_clean_review():
@@ -41,4 +45,4 @@ def test_format_gitlab_review_comment_handles_clean_review():
     )
 
     assert "No notable issues were found" in comment
-    assert "_AI (for preview only)_" in comment
+    assert "_AI (for preview only)_" not in comment
