@@ -21,6 +21,31 @@ async def _resolve_project_id() -> int:
     return _project_id
 
 
+async def _get_mr_file_content(
+    project_id: int,
+    mr_iid: int,
+    file_path: str,
+    source_branch: str,
+    target_branch: str,
+) -> str:
+    if source_branch:
+        try:
+            return await get_file_content(project_id, file_path, source_branch)
+        except Exception as e:
+            if source_branch == target_branch:
+                raise
+            logger.warning(
+                "Failed to get %s from source branch %s for MR !%s, "
+                "falling back to target branch %s: %s",
+                file_path,
+                source_branch,
+                mr_iid,
+                target_branch,
+                e,
+            )
+    return await get_file_content(project_id, file_path, target_branch)
+
+
 def _is_mr_processed(rule_id: int, mr_iid: int) -> bool:
     conn = get_db()
     row = conn.execute(
@@ -121,7 +146,8 @@ async def poll_once(rules: list[dict]):
             mr_iid = mr["iid"]
             mr_title = mr["title"]
             mr_url = mr["web_url"]
-            mr_branch = mr.get("target_branch", branch)
+            source_branch = mr.get("source_branch") or ""
+            target_branch = mr.get("target_branch") or branch
 
             # Определяем какие правила ещё не обработали этот MR
             pending_rule_ids = [
@@ -139,7 +165,13 @@ async def poll_once(rules: list[dict]):
                 continue
 
             async def fetch_content(file_path: str) -> str:
-                return await get_file_content(project_id, file_path, mr_branch)
+                return await _get_mr_file_content(
+                    project_id,
+                    mr_iid,
+                    file_path,
+                    source_branch,
+                    target_branch,
+                )
 
             matches = await evaluate_rules_for_mr(pending_rule_ids, changed_files, fetch_content)
 
