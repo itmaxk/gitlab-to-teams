@@ -4,9 +4,12 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+BASE_DIR = Path(__file__).parent
+DOTENV_PATH = BASE_DIR / ".env"
+
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(dotenv_path=DOTENV_PATH)
 except ImportError:
     pass
 
@@ -25,9 +28,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
-
-BASE_DIR = Path(__file__).parent
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

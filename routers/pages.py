@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from db import get_db
+from services.review_config import is_review_llm_configured
 
 router = APIRouter(tags=["pages"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -131,7 +132,7 @@ def compare_page(request: Request):
 
 @router.get("/review", response_class=HTMLResponse)
 def review_page(request: Request):
-    llm_configured = bool(os.getenv("REVIEW_API_URL")) and bool(os.getenv("REVIEW_API_KEY"))
+    llm_configured = is_review_llm_configured()
     return templates.TemplateResponse(request, "review.html", {
         "llm_configured": llm_configured,
     })
