@@ -178,11 +178,14 @@ async def poll_once(rules: list[dict]):
             if matches:
                 await dispatch_notifications(matches, mr_iid, mr_title, mr_url)
 
-            _log_polled_mr(mr, len(changed_files), len(pending_rule_ids), len(matches), True)
 
             # Помечаем MR как обработанный для всех правил в группе
             for rule_id in pending_rule_ids:
                 _mark_mr_processed(rule_id, mr_iid)
+            try:
+                _log_polled_mr(mr, len(changed_files), len(pending_rule_ids), len(matches), True)
+            except Exception as e:
+                logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
 
 
 async def _run_poll_loop(interval: int, rule_getter):
