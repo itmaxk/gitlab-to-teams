@@ -102,6 +102,10 @@ class ReviewSettingsUpdate(BaseModel):
     system_prompt: str
 
 
+class ReviewPublishRequest(BaseModel):
+    review_id: int
+
+
 class SchemaRequest(BaseModel):
     mr_ids: list[str]
     target_branch: str = "master"
