@@ -30,6 +30,11 @@ async def evaluate_rules_for_mr(
     results = []
     content_cache: dict[str, str] = {}
 
+    async def read_content(file_path: str) -> str:
+        if file_path not in content_cache:
+            content_cache[file_path] = await get_content(file_path)
+        return content_cache[file_path]
+
     for rule_row in rules:
         rule = dict(rule_row)
         pattern = rule["file_pattern"]
@@ -37,24 +42,27 @@ async def evaluate_rules_for_mr(
             if not fnmatch.fnmatch(file_path, pattern):
                 continue
 
-            if file_path not in content_cache:
+            content: str | None = None
+            if _match_content_requires_file(rule["content_match"], rule["match_type"]):
                 try:
-                    content_cache[file_path] = await get_content(file_path)
+                    content = await read_content(file_path)
                 except Exception:
                     continue
-
-            content = content_cache[file_path]
-            if not _match_content(content, rule["content_match"], rule["match_type"]):
-                continue
+                if not _match_content(content, rule["content_match"], rule["match_type"]):
+                    continue
 
             # Исключение: если content_exclude (regex, case-insensitive) совпал — пропускаем
             content_exclude = rule.get("content_exclude") or ""
             if content_exclude:
                 try:
+                    if content is None:
+                        content = await read_content(file_path)
                     if re.search(content_exclude, content, re.IGNORECASE | re.DOTALL):
                         continue
                 except re.error:
                     pass
+                except Exception:
+                    continue
 
             # Проверка наличия файла из changelog в MR
             file_check_mode = rule.get("file_check_mode") or "present"
@@ -68,6 +76,11 @@ async def evaluate_rules_for_mr(
                         continue
                     referenced_files = []
                 else:
+                    if content is None:
+                        try:
+                            content = await read_content(file_path)
+                        except Exception:
+                            continue
                     referenced_files = _extract_file_references(content)
                 file_found = False
                 for ref_file in referenced_files:
@@ -89,11 +102,17 @@ async def evaluate_rules_for_mr(
             results.append({
                 "rule": rule,
                 "file_path": file_path,
-                "file_content": content,
+                "file_content": content or "",
                 "emails": emails,
             })
 
     return results
+
+
+def _match_content_requires_file(match_value: str, match_type: str) -> bool:
+    if match_type == "contains" and not match_value:
+        return False
+    return True
 
 
 def _match_content(content: str, match_value: str, match_type: str) -> bool:
