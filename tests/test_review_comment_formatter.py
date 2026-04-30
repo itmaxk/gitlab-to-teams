@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.review_comment_formatter import format_gitlab_review_comment
 
 
-def test_format_gitlab_review_comment_includes_icons_and_summary():
+def test_format_gitlab_review_comment_uses_russian_labels_and_suggestion():
     comment = format_gitlab_review_comment(
         mr_iid=42,
         mr_title="Improve review publishing",
@@ -16,23 +16,28 @@ def test_format_gitlab_review_comment_includes_icons_and_summary():
                 "category": "bug",
                 "file_path": "services/review.py",
                 "line": 18,
-                "message": "Potential null handling gap",
-                "suggestion": "Guard empty value before access",
+                "message": "Потенциальный пропуск проверки на null",
+                "suggestion": "Добавьте защиту от пустого значения перед обращением",
             }
         ],
-        summary={"errors": 0, "warnings": 1, "info": 0, "total": 1, "files_total": 3, "files_analyzed": 3},
+        summary={
+            "errors": 0,
+            "warnings": 1,
+            "info": 0,
+            "total": 1,
+            "files_total": 3,
+            "files_analyzed": 3,
+        },
         model_used="qwen2.5-coder:14b",
     )
 
-    assert "## AI Code Review Summary (for preview only)" in comment
-    assert "### 🟠 Warnings (1)" in comment
-    assert "🐞 Potential null handling gap" in comment
-    assert "💡 Suggestion:" in comment
-    assert "Guard empty value before access" in comment
-    assert "Merge Request:" not in comment
-    assert "Model:" not in comment
-    assert "_AI (for preview only)_" not in comment
-    assert "[bug]" not in comment
+    assert "## Сводка AI-ревью кода" in comment
+    assert "### Предупреждения (1)" in comment
+    assert "[Баг] Потенциальный пропуск проверки на null" in comment
+    assert "Рекомендация:" in comment
+    assert "Добавьте защиту от пустого значения перед обращением" in comment
+    assert "Warnings" not in comment
+    assert "Suggestion:" not in comment
 
 
 def test_format_gitlab_review_comment_handles_clean_review():
@@ -44,5 +49,5 @@ def test_format_gitlab_review_comment_handles_clean_review():
         model_used="local-model",
     )
 
-    assert "No notable issues were found" in comment
-    assert "_AI (for preview only)_" not in comment
+    assert "Заметных проблем в проанализированном diff не найдено." in comment
+    assert "No notable issues were found" not in comment

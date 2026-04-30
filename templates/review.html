@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Review - GitLab Manager{% endblock %}
 {% block content %}
-<h1 class="text-2xl font-bold mb-4">Code Review</h1>
+<h1 class="text-2xl font-bold mb-4">Ревью кода</h1>
 
 {% if not llm_configured %}
 <div class="bg-amber-900/30 border border-amber-700 rounded-lg p-4 mb-6 text-amber-300">
@@ -22,11 +22,22 @@
       <input type="text" id="customPrompt" placeholder="Проверь обработку ошибок, найди SQL-инъекции..."
              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
     </div>
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Базовая ветка для xlsx-сравнения</label>
+      <input type="text" id="xlsxBaseRef" value="master" placeholder="master"
+             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+    </div>
   </div>
-  <button onclick="runReview()" id="btnReview" {% if not llm_configured %}disabled{% endif %}
-          class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm px-6 py-2 rounded-lg font-medium">
-    Запустить ревью
-  </button>
+  <div class="flex flex-wrap gap-3">
+    <button onclick="runReview()" id="btnReview" {% if not llm_configured %}disabled{% endif %}
+            class="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm px-6 py-2 rounded-lg font-medium">
+      Запустить ревью
+    </button>
+    <button onclick="runXlsxReview()" id="btnReviewXlsx"
+            class="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white text-sm px-6 py-2 rounded-lg font-medium">
+      Запустить ревью xlsx
+    </button>
+  </div>
 </div>
 
 <div id="loading" class="hidden text-center py-8">
@@ -205,6 +216,57 @@ async function runReview() {
   }
 }
 
+async function runXlsxReview() {
+  const mrInput = document.getElementById("mrInput").value.trim();
+  if (!mrInput) {
+    alert("Введите MR IID или URL");
+    return;
+  }
+
+  const baseRef = document.getElementById("xlsxBaseRef").value.trim() || "master";
+  const btn = document.getElementById("btnReviewXlsx");
+  const mainBtn = document.getElementById("btnReview");
+  const loading = document.getElementById("loading");
+  const errorBox = document.getElementById("errorBox");
+  const publishStatus = document.getElementById("publishStatus");
+  const results = document.getElementById("results");
+
+  btn.disabled = true;
+  mainBtn.disabled = true;
+  btn.textContent = "Сравнение...";
+  loading.classList.remove("hidden");
+  startTimer();
+  setBatchProgress(`Подготовка xlsx-сравнения с ${baseRef}...`);
+  errorBox.classList.add("hidden");
+  publishStatus.classList.add("hidden");
+  results.classList.add("hidden");
+
+  try {
+    const startResp = await fetch("/api/review/start-xlsx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mr_input: mrInput, base_ref: baseRef }),
+    });
+    const startData = await startResp.json().catch(() => ({}));
+    if (!startResp.ok) {
+      throw new Error(startData.detail || `HTTP ${startResp.status}`);
+    }
+
+    const data = await waitForReviewJob(startData.job_id);
+    renderResults(data);
+    loadHistory();
+  } catch (e) {
+    errorBox.textContent = "Ошибка: " + e.message;
+    errorBox.classList.remove("hidden");
+  } finally {
+    stopTimer();
+    mainBtn.disabled = {{ 'true' if not llm_configured else 'false' }};
+    btn.disabled = false;
+    btn.textContent = "Запустить ревью xlsx";
+    loading.classList.add("hidden");
+  }
+}
+
 function renderResults(data) {
   currentFindings = data.findings || [];
   activeFilter = "all";
@@ -223,6 +285,7 @@ function renderResults(data) {
       <span>${escHtml(mr.source_branch)} → ${escHtml(mr.target_branch)}</span>
       <span class="mx-2">|</span>
       <span>Файлов: ${mr.files_changed || 0}</span>
+      ${mr.comparison_ref ? '<span class="mx-2">|</span><span>Сравнение с: ' + escHtml(mr.comparison_ref) + '</span>' : ''}
       <span class="mx-2">|</span>
       <span>Модель: ${escHtml(data.model_used || "")}</span>
     </div>
@@ -235,16 +298,17 @@ function renderResults(data) {
   `;
 
   document.getElementById("summaryBar").innerHTML = `
-    <span class="px-3 py-1 rounded text-sm bg-red-900/30 text-red-400 border border-red-700">Errors: ${summary.errors || 0}</span>
-    <span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-400 border border-amber-700">Warnings: ${summary.warnings || 0}</span>
-    <span class="px-3 py-1 rounded text-sm bg-blue-900/30 text-blue-400 border border-blue-700">Info: ${summary.info || 0}</span>
-    <span class="px-3 py-1 rounded text-sm bg-slate-700 text-slate-300">Total: ${summary.total || 0}</span>
-    <span class="px-3 py-1 rounded text-sm bg-slate-700 text-slate-300">Files: ${summary.files_analyzed || 0}/${summary.files_total || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-red-900/30 text-red-400 border border-red-700">Критичных: ${summary.errors || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-400 border border-amber-700">Предупреждений: ${summary.warnings || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-blue-900/30 text-blue-400 border border-blue-700">Инфо: ${summary.info || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-slate-700 text-slate-300">Всего: ${summary.total || 0}</span>
+    <span class="px-3 py-1 rounded text-sm bg-slate-700 text-slate-300">Файлы: ${summary.files_analyzed || 0}/${summary.files_total || 0}</span>
   `;
 
   const filters = document.getElementById("filters");
   filters.innerHTML = ["all", "error", "warning", "info"].map(f => {
-    const label = f === "all" ? "Все" : f.charAt(0).toUpperCase() + f.slice(1);
+    const labelMap = { all: "Все", error: "Критичные", warning: "Предупреждения", info: "Инфо" };
+    const label = labelMap[f] || f;
     return `<button onclick="setFilter('${f}')" data-filter="${f}"
               class="px-3 py-1 rounded text-xs border ${f === 'all' ? 'bg-slate-600 border-slate-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'}">
               ${label}</button>`;
@@ -273,22 +337,33 @@ function renderFindings() {
   }
 
   const severityCfg = {
-    error: { bg: "bg-red-900/20", border: "border-red-800", badge: "bg-red-600", label: "Error" },
-    warning: { bg: "bg-amber-900/20", border: "border-amber-800", badge: "bg-amber-600", label: "Warning" },
-    info: { bg: "bg-blue-900/20", border: "border-blue-800", badge: "bg-blue-600", label: "Info" },
+    error: { bg: "bg-red-900/20", border: "border-red-800", badge: "bg-red-600", label: "Критично" },
+    warning: { bg: "bg-amber-900/20", border: "border-amber-800", badge: "bg-amber-600", label: "Предупреждение" },
+    info: { bg: "bg-blue-900/20", border: "border-blue-800", badge: "bg-blue-600", label: "Инфо" },
+  };
+
+  const categoryLabels = {
+    bug: "Баг",
+    security: "Безопасность",
+    performance: "Производительность",
+    style: "Стиль",
+    logic: "Логика",
+    xlsx: "XLSX",
+    general: "Общее",
   };
 
   list.innerHTML = filtered.map(f => {
     const cfg = severityCfg[f.severity] || severityCfg.info;
+    const category = categoryLabels[(f.category || "general").toLowerCase()] || categoryLabels.general;
     const lineStr = f.line ? `:${f.line}` : "";
     return `<div class="${cfg.bg} border ${cfg.border} rounded-lg p-4">
       <div class="flex items-center gap-2 mb-2">
         <span class="${cfg.badge} text-white text-xs px-2 py-0.5 rounded">${cfg.label}</span>
-        <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.category)}</span>
+        <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(category)}</span>
         <span class="text-slate-400 text-xs font-mono">${escHtml(f.file_path)}${lineStr}</span>
       </div>
       <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
-      ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Suggestion:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
+      ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Рекомендация:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
     </div>`;
   }).join("");
 }
@@ -390,7 +465,7 @@ function renderHistory(rows) {
               ${s.errors ? '<span class="text-red-400 text-xs mr-1">' + s.errors + 'E</span>' : ''}
               ${s.warnings ? '<span class="text-amber-400 text-xs mr-1">' + s.warnings + 'W</span>' : ''}
               ${s.info ? '<span class="text-blue-400 text-xs">' + s.info + 'I</span>' : ''}
-              ${!s.errors && !s.warnings && !s.info ? '<span class="text-green-400 text-xs">Clean</span>' : ''}
+              ${!s.errors && !s.warnings && !s.info ? '<span class="text-green-400 text-xs">Чисто</span>' : ''}
             </td>
             <td class="py-2 px-3 text-slate-500 text-xs">${r.created_at || ""}</td>
             <td class="py-2 px-3">

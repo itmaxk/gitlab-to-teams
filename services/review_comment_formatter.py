@@ -2,21 +2,32 @@ from collections import defaultdict
 
 
 SEVERITY_META = {
-    "error": {"emoji": "🔴", "label": "Errors"},
-    "warning": {"emoji": "🟠", "label": "Warnings"},
-    "info": {"emoji": "🔵", "label": "Info"},
+    "error": {"label": "Критичные"},
+    "warning": {"label": "Предупреждения"},
+    "info": {"label": "Информация"},
 }
 
-CATEGORY_ICONS = {
-    "bug": "🐞",
-    "security": "🔐",
-    "performance": "⚡",
-    "style": "🎨",
-    "logic": "🧠",
-    "general": "📌",
+CATEGORY_LABELS = {
+    "bug": "Баг",
+    "security": "Безопасность",
+    "performance": "Производительность",
+    "style": "Стиль",
+    "logic": "Логика",
+    "xlsx": "XLSX",
+    "general": "Общее",
 }
 
 SEVERITY_ORDER = ["error", "warning", "info"]
+
+
+def _normalize_severity(value: str | None) -> str:
+    severity = str(value or "info").lower()
+    return severity if severity in SEVERITY_META else "info"
+
+
+def _translate_category(value: str | None) -> str:
+    category = str(value or "general").lower()
+    return CATEGORY_LABELS.get(category, CATEGORY_LABELS["general"])
 
 
 def format_gitlab_review_comment(
@@ -28,54 +39,49 @@ def format_gitlab_review_comment(
 ) -> str:
     grouped: dict[str, list[dict]] = defaultdict(list)
     for finding in findings:
-        severity = str(finding.get("severity", "info")).lower()
-        if severity not in SEVERITY_META:
-            severity = "info"
-        grouped[severity].append(finding)
+        grouped[_normalize_severity(finding.get("severity"))].append(finding)
 
     lines = [
-        "## AI Code Review Summary (for preview only)",
+        "## Сводка AI-ревью кода",
         "",
-        f"- Errors: {summary.get('errors', 0)}",
-        f"- Warnings: {summary.get('warnings', 0)}",
-        f"- Info: {summary.get('info', 0)}",
-        f"- Total findings: {summary.get('total', 0)}",
+        f"- Критичных: {summary.get('errors', 0)}",
+        f"- Предупреждений: {summary.get('warnings', 0)}",
+        f"- Информационных: {summary.get('info', 0)}",
+        f"- Всего замечаний: {summary.get('total', 0)}",
     ]
 
     files_total = summary.get("files_total")
     files_analyzed = summary.get("files_analyzed")
     if files_total is not None and files_analyzed is not None:
-        lines.append(f"- Files analyzed: {files_analyzed}/{files_total}")
+        lines.append(f"- Проанализировано файлов: {files_analyzed}/{files_total}")
     if summary.get("truncated"):
-        lines.append("- Diff was truncated before analysis")
+        lines.append("- Diff был сокращён перед анализом")
 
     lines.append("")
 
     if not findings:
-        lines.append("No notable issues were found in the analyzed diff.")
+        lines.append("Заметных проблем в проанализированном diff не найдено.")
         return "\n".join(lines)
 
     for severity in SEVERITY_ORDER:
         items = grouped.get(severity, [])
         if not items:
             continue
-        meta = SEVERITY_META[severity]
         lines.extend([
-            f"### {meta['emoji']} {meta['label']} ({len(items)})",
+            f"### {SEVERITY_META[severity]['label']} ({len(items)})",
             "",
         ])
         for index, finding in enumerate(items, start=1):
-            file_path = finding.get("file_path") or "unknown file"
+            file_path = finding.get("file_path") or "неизвестный файл"
             line = finding.get("line")
             location = f"`{file_path}:{line}`" if line else f"`{file_path}`"
-            category = str(finding.get("category", "general")).lower()
-            category_icon = CATEGORY_ICONS.get(category, CATEGORY_ICONS["general"])
-            message = finding.get("message", "").strip()
-            suggestion = (finding.get("suggestion") or "").strip()
-            lines.append(f"{index}. {location} {category_icon} {message}")
+            category = _translate_category(finding.get("category"))
+            message = str(finding.get("message", "")).strip()
+            suggestion = str(finding.get("suggestion") or "").strip()
+            lines.append(f"{index}. {location} [{category}] {message}")
             if suggestion:
-                lines.append(f"   💡 Suggestion:")
-                lines.append(f"      {suggestion}")
+                lines.append("   Рекомендация:")
+                lines.append(f"   {suggestion}")
         lines.append("")
 
     return "\n".join(lines)

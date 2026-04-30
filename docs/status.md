@@ -1,5 +1,37 @@
 # Status
 
+## XLSX Review In /review
+
+## Current phase
+- `Milestone 1` completed
+
+## Done
+- Confirmed there is no existing xlsx parser in the repo and no spreadsheet dependency in `requirements.txt`
+- Chose a no-new-dependency approach based on parsing `.xlsx` as zip+xml
+
+## In progress
+- None
+
+## Next
+- Manual smoke-check in `/review` against a real MR with changed `.xlsx`
+
+## Decisions
+- Reuse the existing `/review` history and publish pipeline instead of introducing a separate xlsx storage model
+- Store xlsx comparison output as regular review findings so UI and GitLab comment formatting stay aligned
+
+## Assumptions
+- Row-level comparison based on workbook cell values is sufficient for the requested review use case
+
+## Commands
+- `pytest tests/test_xlsx_review_service.py`
+
+## Blockers
+- None
+
+## Audit log
+- 2026-04-30: started xlsx review implementation using GitLab raw file bytes plus zip/xml workbook parsing
+- 2026-04-30: finished `/review` xlsx mode, added row-level compare output, and passed focused tests
+
 ## Review batching stability
 
 ## Current phase

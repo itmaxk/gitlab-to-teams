@@ -1,5 +1,21 @@
 # Test Plan
 
+## XLSX Review In /review
+
+## Scope
+- Workbook row extraction, row-level xlsx diff generation, and MR-level xlsx compare flow
+
+## Critical cases
+- A changed xlsx row is detected with old/new values
+- The compare flow loads base and source-branch versions and emits findings for changed rows
+- The selected base ref is preserved in the review result metadata
+
+## Validation
+- `pytest tests/test_xlsx_review_service.py`
+
+## Out of scope
+- Rich Excel formatting diffs, formulas with formatting semantics, and binary workbook features outside cell value comparison
+
 ## Review batching stability
 
 ## Scope

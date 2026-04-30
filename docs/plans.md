@@ -1,5 +1,29 @@
 # Plan
 
+## XLSX Review In /review
+
+### Goal
+- Add a dedicated xlsx review mode in `/review` that compares changed `.xlsx` files in an MR against `master` by default or a user-provided ref.
+
+### Milestone 1
+- Status: `[x]`
+- Goal: implement backend xlsx diff flow and UI trigger.
+- Tasks:
+- fetch changed xlsx files from the MR and load raw workbook bytes from GitLab
+- compare workbook rows sheet-by-sheet against the selected base ref
+- show results in the existing review UI and allow publishing the same text to GitLab
+- cover parser and MR compare flow with targeted tests
+- Definition of done:
+- `/review` has a separate `Запустить ревью xlsx` button
+- xlsx review returns row-level changes and can publish them to GitLab
+- focused tests for xlsx parsing and compare flow pass
+- Validation commands:
+- `pytest tests/test_xlsx_review_service.py`
+- Known risks:
+- xlsx files with unusual formatting/features may expose parser gaps because we avoid new dependencies
+- Stop-and-fix rule:
+- if workbook parsing is unreliable on target files, narrow support explicitly instead of returning misleading diffs
+
 ## Review batching stability
 
 ### Goal

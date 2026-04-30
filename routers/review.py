@@ -8,10 +8,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from db import get_db
-from models import ReviewPublishRequest, ReviewRequest, ReviewSettingsUpdate
+from models import ReviewPublishRequest, ReviewRequest, ReviewSettingsUpdate, XlsxReviewRequest
 from services.gitlab_notes import post_merge_request_note
 from services.review_comment_formatter import format_gitlab_review_comment
 from services.review_service import review_mr
+from services.xlsx_review_service import review_xlsx_mr
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,35 @@ async def _run_review_job(job_id: str, mr_iid: int, custom_prompt: str) -> None:
         job["message"] = "Ревью завершилось с ошибкой"
 
 
+async def _run_xlsx_review_job(job_id: str, mr_iid: int, base_ref: str) -> None:
+    job = REVIEW_JOBS[job_id]
+    job["status"] = "running"
+    job["message"] = "Поиск xlsx-файлов..."
+
+    async def progress_callback(current_file: int, total_files: int, file_path: str) -> None:
+        current = min(current_file, total_files)
+        job["current_batch"] = current
+        job["total_batches"] = total_files
+        if total_files == 0:
+            job["message"] = "XLSX-файлы в MR не найдены"
+        elif current == 0:
+            job["message"] = f"Найдено xlsx-файлов: {total_files}"
+        else:
+            job["message"] = f"Сравнение xlsx {current}/{total_files}: {file_path}"
+
+    try:
+        result = await review_xlsx_mr(mr_iid, base_ref, progress_callback=progress_callback)
+        job["status"] = "completed"
+        job["result"] = result
+        job["message"] = "XLSX-ревью завершено"
+        job["current_batch"] = job.get("total_batches", 0)
+    except Exception as exc:
+        logger.exception("XLSX review failed for MR !%s", mr_iid)
+        job["status"] = "failed"
+        job["error"] = _translate_review_error(exc)
+        job["message"] = "XLSX-ревью завершилось с ошибкой"
+
+
 @router.post("/run")
 async def run_review(req: ReviewRequest):
     try:
@@ -137,6 +167,40 @@ async def start_review(req: ReviewRequest):
         "error": None,
     }
     asyncio.create_task(_run_review_job(job_id, mr_iid, req.custom_prompt))
+    return {"job_id": job_id}
+
+
+@router.post("/run-xlsx")
+async def run_xlsx_review(req: XlsxReviewRequest):
+    try:
+        mr_iid = _parse_mr_iid(req.mr_input)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        return await review_xlsx_mr(mr_iid, req.base_ref or "master")
+    except Exception as exc:
+        logger.exception("XLSX review failed for MR !%s", req.mr_input)
+        raise HTTPException(status_code=500, detail=_translate_review_error(exc))
+
+
+@router.post("/start-xlsx")
+async def start_xlsx_review(req: XlsxReviewRequest):
+    try:
+        mr_iid = _parse_mr_iid(req.mr_input)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    job_id = uuid.uuid4().hex
+    REVIEW_JOBS[job_id] = {
+        "status": "queued",
+        "message": "Задача xlsx-ревью поставлена в очередь",
+        "current_batch": 0,
+        "total_batches": 0,
+        "result": None,
+        "error": None,
+    }
+    asyncio.create_task(_run_xlsx_review_job(job_id, mr_iid, req.base_ref or "master"))
     return {"job_id": job_id}
 
 

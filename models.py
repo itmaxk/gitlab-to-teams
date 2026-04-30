@@ -89,6 +89,11 @@ class ReviewRequest(BaseModel):
     custom_prompt: str = ""
 
 
+class XlsxReviewRequest(BaseModel):
+    mr_input: str
+    base_ref: str = "master"
+
+
 class ReviewFinding(BaseModel):
     severity: str
     category: str

@@ -95,3 +95,21 @@ def test_resolve_batch_max_chars_caps_explicit_value_to_max_diff(monkeypatch):
     monkeypatch.setenv("REVIEW_BATCH_MAX_CHARS", "40000")
 
     assert review_service._resolve_batch_max_chars() == 15000
+
+
+def test_build_batch_message_requires_russian_human_text():
+    message = review_service._build_batch_message(
+        mr_data={
+            "title": "Test MR",
+            "author": "Dev",
+            "source_branch": "feature/x",
+            "target_branch": "main",
+        },
+        files_changed=2,
+        batch_index=1,
+        batch_total=3,
+        diff_text="--- a.py\n+++ a.py\n+print('ok')",
+        custom_prompt="",
+    )
+
+    assert "Write all human-readable text in fields `message` and `suggestion` in Russian." in message

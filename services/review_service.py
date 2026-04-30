@@ -70,7 +70,12 @@ def _get_system_prompt() -> str:
     conn.close()
     if row:
         return row["system_prompt"]
-    return "You are a code reviewer. Return a JSON array of findings."
+    return (
+        "Ты опытный ревьюер кода. "
+        "Верни JSON-массив замечаний. "
+        "Поля message и suggestion всегда пиши на русском языке. "
+        "Имена файлов, идентификаторы, названия переменных и фрагменты кода не переводи."
+    )
 
 
 def _build_change_text(change: dict, *, part: int | None = None, total_parts: int | None = None) -> str:
@@ -144,6 +149,14 @@ def _build_batch_message(
 
 ## Diff
 {diff_text}"""
+
+    user_message += """
+
+## Output requirements
+- Return only a JSON array.
+- Write all human-readable text in fields `message` and `suggestion` in Russian.
+- Do not translate file paths, identifiers, branch names, config keys, or code fragments.
+"""
 
     if custom_prompt.strip():
         user_message += f"\n\n## Additional instructions from reviewer\n{custom_prompt.strip()}"

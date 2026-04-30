@@ -327,3 +327,13 @@ async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
         resp = await client.get(url, headers=_headers(), params={"ref": ref})
         resp.raise_for_status()
     return resp.text
+
+
+async def get_file_bytes(project_id: int, file_path: str, ref: str) -> bytes:
+    """Получает сырые байты файла из репозитория GitLab."""
+    encoded_path = quote(file_path, safe="")
+    url = f"{_base_url()}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers(), params={"ref": ref})
+        resp.raise_for_status()
+    return resp.content
