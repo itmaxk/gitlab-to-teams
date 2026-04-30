@@ -13,8 +13,55 @@ from services.gitlab_client import get_mr_diff, get_project_id
 
 logger = logging.getLogger(__name__)
 
-MAX_DIFF_CHARS = int(os.getenv("REVIEW_MAX_DIFF_CHARS", "60000"))
-REVIEW_BATCH_MAX_CHARS = int(os.getenv("REVIEW_BATCH_MAX_CHARS", str(MAX_DIFF_CHARS)))
+DEFAULT_MAX_DIFF_CHARS = 60000
+DEFAULT_REVIEW_BATCH_MAX_CHARS = 20000
+DEFAULT_REVIEW_LLM_READ_TIMEOUT = 120.0
+
+
+def _read_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        logger.warning("Invalid integer for %s=%r, using default %s", name, raw, default)
+        return default
+
+
+def _read_float_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        logger.warning("Invalid float for %s=%r, using default %s", name, raw, default)
+        return default
+
+
+def _resolve_batch_max_chars() -> int:
+    max_diff_chars = _read_int_env("REVIEW_MAX_DIFF_CHARS", DEFAULT_MAX_DIFF_CHARS)
+    configured = os.getenv("REVIEW_BATCH_MAX_CHARS", "").strip()
+    if not configured:
+        return min(max_diff_chars, DEFAULT_REVIEW_BATCH_MAX_CHARS)
+
+    try:
+        batch_max_chars = max(1, int(configured))
+    except ValueError:
+        logger.warning(
+            "Invalid integer for REVIEW_BATCH_MAX_CHARS=%r, using safe default", configured
+        )
+        return min(max_diff_chars, DEFAULT_REVIEW_BATCH_MAX_CHARS)
+
+    return min(batch_max_chars, max_diff_chars)
+
+
+MAX_DIFF_CHARS = _read_int_env("REVIEW_MAX_DIFF_CHARS", DEFAULT_MAX_DIFF_CHARS)
+REVIEW_BATCH_MAX_CHARS = _resolve_batch_max_chars()
+REVIEW_LLM_READ_TIMEOUT = _read_float_env(
+    "REVIEW_LLM_READ_TIMEOUT", DEFAULT_REVIEW_LLM_READ_TIMEOUT
+)
 
 
 def _get_system_prompt() -> str:
@@ -125,7 +172,7 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
         "temperature": 0.1,
     }
 
-    timeout = httpx.Timeout(connect=10, read=600, write=30, pool=10)
+    timeout = httpx.Timeout(connect=10, read=REVIEW_LLM_READ_TIMEOUT, write=30, pool=10)
     last_exc = None
     async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
         for attempt in range(3):
@@ -147,6 +194,10 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
             break
         else:
             if last_exc:
+                if isinstance(last_exc, httpx.ReadTimeout):
+                    raise TimeoutError(
+                        f"LLM request timed out after {REVIEW_LLM_READ_TIMEOUT:.0f}s"
+                    ) from last_exc
                 raise last_exc
             resp.raise_for_status()
         data = resp.json()
@@ -154,7 +205,10 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
-def _parse_findings(raw: str) -> list[dict]:
+def _parse_findings(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+
     raw = raw.strip()
     json_match = re.search(r"\[.*\]", raw, re.DOTALL)
     if not json_match:

@@ -98,6 +98,8 @@ REVIEW_API_URL=https://api.openai.com/v1/chat/completions
 REVIEW_API_KEY=
 REVIEW_MODEL=gpt-4o
 REVIEW_MAX_DIFF_CHARS=60000
+REVIEW_BATCH_MAX_CHARS=20000
+REVIEW_LLM_READ_TIMEOUT=120
 
 # Сервер
 HOST=0.0.0.0
@@ -228,6 +230,8 @@ Polling GitLab API стартует автоматически в фоне.
 - `REVIEW_API_KEY` — API ключ
 - `REVIEW_MODEL` — модель (по умолчанию `gpt-4o`)
 - `REVIEW_MAX_DIFF_CHARS` — максимальный размер diff (по умолчанию 60000 символов)
+- `REVIEW_BATCH_MAX_CHARS` — размер одного review-батча; по умолчанию ограничен `20000`
+- `REVIEW_LLM_READ_TIMEOUT` — таймаут ожидания ответа LLM на один батч в секундах (по умолчанию `120`)
 - Системный промпт настраивается через UI
 
 ## Настройки правила

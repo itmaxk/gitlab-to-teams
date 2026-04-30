@@ -77,3 +77,21 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
     assert {finding["file_path"] for finding in result["findings"]} == {"a.py", "b.py"}
     assert progress_updates[0][0] == 0
     assert progress_updates[-1][0] == progress_updates[-1][1]
+
+
+def test_parse_findings_handles_none_response():
+    assert review_service._parse_findings(None) == []
+
+
+def test_resolve_batch_max_chars_defaults_to_safer_limit(monkeypatch):
+    monkeypatch.delenv("REVIEW_MAX_DIFF_CHARS", raising=False)
+    monkeypatch.delenv("REVIEW_BATCH_MAX_CHARS", raising=False)
+
+    assert review_service._resolve_batch_max_chars() == 20000
+
+
+def test_resolve_batch_max_chars_caps_explicit_value_to_max_diff(monkeypatch):
+    monkeypatch.setenv("REVIEW_MAX_DIFF_CHARS", "15000")
+    monkeypatch.setenv("REVIEW_BATCH_MAX_CHARS", "40000")
+
+    assert review_service._resolve_batch_max_chars() == 15000

@@ -1,5 +1,28 @@
 # Plan
 
+## Review batching stability
+
+### Goal
+- Reduce long waits on a single MR review batch and make multi-batch progress move forward predictably.
+
+### Milestone 1
+- Status: `[x]`
+- Goal: tighten review batch defaults and LLM wait limits.
+- Tasks:
+- lower the default batch size so batching actually reduces per-request payload
+- make the LLM read timeout configurable and shorter by default
+- cover the new defaults with targeted tests
+- Definition of done:
+- batch sizing defaults are safer without extra env tuning
+- timeout behavior is configurable via `.env`
+- targeted review batching tests pass
+- Validation commands:
+- `pytest tests/test_review_batching.py tests/test_env_reload.py`
+- Known risks:
+- smaller batches increase request count for very large MRs
+- Stop-and-fix rule:
+- if findings coverage regresses, keep full-file coverage and adjust only limits/timeouts
+
 ## Jira Reports: Переработки
 
 ### Цель

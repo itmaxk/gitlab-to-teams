@@ -53,6 +53,8 @@ def _translate_review_error(exc: Exception) -> str:
     message = str(exc)
     if "REVIEW_API_URL not configured" in message:
         return "Не настроен REVIEW_API_URL для LLM-ревью"
+    if isinstance(exc, TimeoutError) or "timed out" in message.lower():
+        return "LLM API слишком долго отвечает. Попробуйте уменьшить размер батча diff или снизить таймаут ожидания."
     if "429" in message:
         return "LLM API временно ограничил запросы (429). Попробуйте позже или уменьшите размер diff."
     if "Cannot parse" in message or "Не удалось определить IID" in message:

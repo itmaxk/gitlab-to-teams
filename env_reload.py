@@ -19,5 +19,10 @@ def reload_dotenv():
 
     # Обновляем модульные константы, которые читаются при импорте
     import services.review_service as _review
-    _review.MAX_DIFF_CHARS = int(os.getenv("REVIEW_MAX_DIFF_CHARS", "60000"))
-    _review.REVIEW_BATCH_MAX_CHARS = int(os.getenv("REVIEW_BATCH_MAX_CHARS", os.getenv("REVIEW_MAX_DIFF_CHARS", "60000")))
+    _review.MAX_DIFF_CHARS = _review._read_int_env(
+        "REVIEW_MAX_DIFF_CHARS", _review.DEFAULT_MAX_DIFF_CHARS
+    )
+    _review.REVIEW_BATCH_MAX_CHARS = _review._resolve_batch_max_chars()
+    _review.REVIEW_LLM_READ_TIMEOUT = _review._read_float_env(
+        "REVIEW_LLM_READ_TIMEOUT", _review.DEFAULT_REVIEW_LLM_READ_TIMEOUT
+    )
