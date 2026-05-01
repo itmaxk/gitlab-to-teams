@@ -40,6 +40,7 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
             "source_branch": "feature/batch",
             "target_branch": "main",
             "web_url": "https://example.test/mr/9",
+            "overflow": False,
             "changes": [
                 {"old_path": "a.py", "new_path": "a.py", "diff": "A" * 40, "new_file": False, "deleted_file": False, "renamed_file": False},
                 {"old_path": "b.py", "new_path": "b.py", "diff": "B" * 40, "new_file": False, "deleted_file": False, "renamed_file": False},
@@ -72,6 +73,7 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
     assert len(llm_calls) >= 2
     assert result["summary"]["files_total"] == 3
     assert result["summary"]["files_analyzed"] == 3
+    assert result["summary"]["files_skipped"] == 0
     assert result["summary"]["truncated"] is False
     assert result["summary"]["total"] == 2
     assert {finding["file_path"] for finding in result["findings"]} == {"a.py", "b.py"}
@@ -81,6 +83,45 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
 
 def test_parse_findings_handles_none_response():
     assert review_service._parse_findings(None) == []
+
+
+def test_review_mr_marks_files_without_diff_as_skipped(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Sparse diff MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/sparse",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/10",
+            "overflow": False,
+            "changes": [
+                {"old_path": "a.py", "new_path": "a.py", "diff": "A" * 40, "new_file": False, "deleted_file": False, "renamed_file": False},
+                {"old_path": "b.bin", "new_path": "b.bin", "diff": "", "new_file": False, "deleted_file": False, "renamed_file": False},
+            ],
+        }
+
+    async def fake_call_llm(system_prompt, user_message):
+        return "[]"
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)
+
+    result = asyncio.run(review_service.review_mr(10))
+
+    assert result["mr"]["files_changed"] == 2
+    assert result["summary"]["files_total"] == 2
+    assert result["summary"]["files_analyzed"] == 1
+    assert result["summary"]["files_skipped"] == 1
+    assert result["summary"]["truncated"] is True
 
 
 def test_resolve_batch_max_chars_defaults_to_safer_limit(monkeypatch):

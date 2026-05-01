@@ -247,7 +247,13 @@ def _parse_findings(raw: str | None) -> list[dict]:
     return valid
 
 
-def _compute_summary(findings: list[dict], files_total: int, files_analyzed: int, truncated: bool) -> dict:
+def _compute_summary(
+    findings: list[dict],
+    files_total: int,
+    files_analyzed: int,
+    truncated: bool,
+    skipped_files: int = 0,
+) -> dict:
     errors = sum(1 for finding in findings if finding["severity"] == "error")
     warnings = sum(1 for finding in findings if finding["severity"] == "warning")
     info = sum(1 for finding in findings if finding["severity"] == "info")
@@ -258,6 +264,7 @@ def _compute_summary(findings: list[dict], files_total: int, files_analyzed: int
         "total": len(findings),
         "files_total": files_total,
         "files_analyzed": files_analyzed,
+        "files_skipped": max(0, skipped_files),
         "truncated": truncated,
     }
 
@@ -284,6 +291,7 @@ async def review_mr(
 
     changes = mr_data["changes"]
     non_empty = [change for change in changes if change.get("diff")]
+    skipped_files = max(0, len(changes) - len(non_empty))
     diff_batches = _build_diff_batches(non_empty)
     total_batches = max(1, len(diff_batches))
 
@@ -292,8 +300,10 @@ async def review_mr(
 
     await _report_progress(progress_callback, 0, total_batches)
 
+    truncated = bool(mr_data.get("overflow")) or skipped_files > 0
+
     if not diff_batches:
-        summary = _compute_summary(findings, len(changes), 0, False)
+        summary = _compute_summary(findings, len(changes), 0, truncated, skipped_files)
     else:
         for batch_index, diff_text in enumerate(diff_batches, start=1):
             user_message = _build_batch_message(
@@ -308,7 +318,7 @@ async def review_mr(
             findings.extend(_parse_findings(llm_response))
             await _report_progress(progress_callback, batch_index, total_batches)
 
-        summary = _compute_summary(findings, len(changes), len(non_empty), False)
+        summary = _compute_summary(findings, len(changes), len(non_empty), truncated, skipped_files)
 
     model_used = os.getenv("REVIEW_MODEL", "gpt-4o")
 
