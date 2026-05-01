@@ -13,7 +13,13 @@ MR_STATES = ["merged", "opened", "closed", "all"]
 
 
 @router.get("/logs/recent")
-def recent_logs(rule_id: int = 0, teams_sent: int = -1, email_sent: int = -1, limit: int = 100) -> list[dict]:
+def recent_logs(
+    rule_id: int = 0,
+    teams_sent: int = -1,
+    email_sent: int = -1,
+    gitlab_sent: int = -1,
+    limit: int = 100,
+) -> list[dict]:
     conn = get_db()
     query = """SELECT l.*, r.name as rule_name
                FROM notification_log l
@@ -29,6 +35,9 @@ def recent_logs(rule_id: int = 0, teams_sent: int = -1, email_sent: int = -1, li
     if email_sent >= 0:
         query += " AND l.email_sent = ?"
         params.append(email_sent)
+    if gitlab_sent >= 0:
+        query += " AND l.gitlab_sent = ?"
+        params.append(gitlab_sent)
     query += " ORDER BY l.created_at DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(query, params).fetchall()
@@ -47,7 +56,9 @@ def _rule_to_out(row) -> dict:
     d["enabled"] = bool(d["enabled"])
     d["send_teams"] = bool(d.get("send_teams", 1))
     d["send_email"] = bool(d["send_email"])
+    d["send_gitlab"] = bool(d.get("send_gitlab", 0))
     d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
+    d["action_type"] = d.get("action_type", "notify") or "notify"
     return d
 
 
@@ -81,15 +92,26 @@ def create_rule(data: RuleCreate) -> dict:
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            send_teams, teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            data.name, data.description, data.file_pattern,
-            data.content_match, data.content_exclude, data.match_type,
-            data.target_branch, data.mr_state, data.poll_interval_seconds,
-            int(data.file_check_enabled), data.file_check_path_prefix,
+            data.name,
+            data.description,
+            data.file_pattern,
+            data.content_match,
+            data.content_exclude,
+            data.match_type,
+            data.target_branch,
+            data.mr_state,
+            data.poll_interval_seconds,
+            int(data.file_check_enabled),
+            data.file_check_path_prefix,
             data.file_check_mode,
-            int(data.send_teams), data.teams_webhook_url, int(data.send_email),
+            data.action_type,
+            int(data.send_teams),
+            data.teams_webhook_url,
+            int(data.send_email),
+            int(data.send_gitlab),
         ),
     )
     rule_id = cur.lastrowid
@@ -123,15 +145,28 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           send_teams=?, teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
+           action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
-            data.name, data.description, int(data.enabled),
-            data.file_pattern, data.content_match, data.content_exclude, data.match_type,
-            data.target_branch, data.mr_state, data.poll_interval_seconds,
-            int(data.file_check_enabled), data.file_check_path_prefix,
+            data.name,
+            data.description,
+            int(data.enabled),
+            data.file_pattern,
+            data.content_match,
+            data.content_exclude,
+            data.match_type,
+            data.target_branch,
+            data.mr_state,
+            data.poll_interval_seconds,
+            int(data.file_check_enabled),
+            data.file_check_path_prefix,
             data.file_check_mode,
-            int(data.send_teams), data.teams_webhook_url, int(data.send_email), rule_id,
+            data.action_type,
+            int(data.send_teams),
+            data.teams_webhook_url,
+            int(data.send_email),
+            int(data.send_gitlab),
+            rule_id,
         ),
     )
     conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
@@ -194,14 +229,23 @@ def copy_rule(rule_id: int) -> dict:
            (name, description, file_pattern, content_match, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix,
-            teams_webhook_url, send_email, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            action_type, teams_webhook_url, send_email, send_gitlab, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
         (
-            src["name"] + " (копия)", src["description"], src["file_pattern"],
-            src["content_match"], src["match_type"],
-            src["target_branch"], src["mr_state"], src["poll_interval_seconds"],
-            src["file_check_enabled"], src["file_check_path_prefix"],
-            src["teams_webhook_url"], src["send_email"],
+            src["name"] + " (копия)",
+            src["description"],
+            src["file_pattern"],
+            src["content_match"],
+            src["match_type"],
+            src["target_branch"],
+            src["mr_state"],
+            src["poll_interval_seconds"],
+            src["file_check_enabled"],
+            src["file_check_path_prefix"],
+            src.get("action_type", "notify"),
+            src["teams_webhook_url"],
+            src["send_email"],
+            src.get("send_gitlab", 0),
         ),
     )
     new_id = cur.lastrowid
@@ -241,9 +285,13 @@ async def test_rule(rule_id: int):
 
     send_teams = bool(row.get("send_teams", 1))
     send_email = bool(row.get("send_email", 0))
+    send_gitlab = bool(row.get("send_gitlab", 0))
 
-    if not send_teams and not send_email:
-        raise HTTPException(status_code=400, detail="Ни Teams, ни Email не включены в правиле")
+    if not send_teams and not send_email and not send_gitlab:
+        raise HTTPException(
+            status_code=400,
+            detail="Ни Teams, ни Email, ни GitLab не включены в правиле",
+        )
 
     test_data = {
         "mr_title": "Test MR #0 — Тестовое уведомление",
@@ -257,7 +305,9 @@ async def test_rule(rule_id: int):
     if send_teams:
         webhook_url = row["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
         if not webhook_url:
-            raise HTTPException(status_code=400, detail="Teams включён, но webhook URL не настроен")
+            raise HTTPException(
+                status_code=400, detail="Teams включён, но webhook URL не настроен"
+            )
         await send_teams_notification(webhook_url=webhook_url, **test_data)
         results.append("teams")
 
@@ -268,9 +318,24 @@ async def test_rule(rule_id: int):
             if default_email:
                 emails = [e.strip() for e in default_email.split(",") if e.strip()]
         if not emails:
-            raise HTTPException(status_code=400, detail="Email включён, но получатели не настроены")
+            raise HTTPException(
+                status_code=400, detail="Email включён, но получатели не настроены"
+            )
         send_email_fn(recipients=emails, match_type=row["match_type"], **test_data)
         results.append("email")
+
+    if send_gitlab:
+        from services.gitlab_notes import post_merge_request_note
+        from services.review_comment_formatter import format_gitlab_review_comment
+
+        comment = format_gitlab_review_comment(
+            mr_iid=0,
+            mr_title=test_data["mr_title"],
+            findings=[],
+            summary={"errors": 0, "warnings": 0, "info": 0, "total": 0},
+            model_used="test",
+        )
+        results.append("gitlab")
 
     return {"status": "sent", "channels": results}
 
@@ -279,7 +344,7 @@ async def test_rule(rule_id: int):
 async def resend_notification(log_id: int):
     conn = get_db()
     row = conn.execute(
-        """SELECT l.*, r.name as rule_name, r.send_teams, r.teams_webhook_url, r.send_email, r.match_type
+        """SELECT l.*, r.name as rule_name, r.send_teams, r.teams_webhook_url, r.send_email, r.send_gitlab, r.match_type
            FROM notification_log l
            LEFT JOIN notification_rules r ON r.id = l.rule_id
            WHERE l.id = ?""",
@@ -308,6 +373,7 @@ async def resend_notification(log_id: int):
             "send_teams": log.get("send_teams", 1),
             "teams_webhook_url": log.get("teams_webhook_url", ""),
             "send_email": log.get("send_email", 0),
+            "send_gitlab": log.get("send_gitlab", 0),
             "match_type": log.get("match_type", ""),
         },
         "file_path": log["file_path"],
@@ -315,6 +381,10 @@ async def resend_notification(log_id: int):
         "emails": emails,
     }
     await dispatch_notifications(
-        [match], log["mr_iid"], log["mr_title"], log["mr_url"], force=True,
+        [match],
+        log["mr_iid"],
+        log["mr_title"],
+        log["mr_url"],
+        force=True,
     )
     return {"status": "resent"}

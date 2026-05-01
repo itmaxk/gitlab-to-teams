@@ -4,6 +4,8 @@ from typing import Any
 from db import get_db
 from services.teams_client import send_teams_notification
 from services.email_client import send_changelog_email
+from services.gitlab_notes import post_merge_request_note
+from services.review_comment_formatter import format_gitlab_review_comment
 
 
 def _is_already_sent(rule_id: int, mr_iid: int, file_path: str) -> bool:
@@ -11,7 +13,7 @@ def _is_already_sent(rule_id: int, mr_iid: int, file_path: str) -> bool:
     row = conn.execute(
         """SELECT 1 FROM notification_log
            WHERE rule_id = ? AND mr_iid = ? AND file_path = ?
-             AND (teams_sent = 1 OR email_sent = 1)""",
+             AND (teams_sent = 1 OR email_sent = 1 OR gitlab_sent = 1)""",
         (rule_id, mr_iid, file_path),
     ).fetchone()
     conn.close()
@@ -36,6 +38,7 @@ async def dispatch_notifications(
 
         teams_sent = False
         email_sent = False
+        gitlab_sent = False
         error = ""
 
         webhook_url = rule["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
@@ -73,11 +76,25 @@ async def dispatch_notifications(
             except Exception as e:
                 error += f"Email: {e}\n"
 
+        if rule.get("send_gitlab", 0):
+            try:
+                comment = format_gitlab_review_comment(
+                    mr_iid=mr_iid,
+                    mr_title=mr_title,
+                    findings=match.get("findings", []),
+                    summary=match.get("summary", {}),
+                    model_used=match.get("model_used", ""),
+                )
+                await post_merge_request_note(mr_iid, comment)
+                gitlab_sent = True
+            except Exception as e:
+                error += f"GitLab: {e}\n"
+
         conn = get_db()
         conn.execute(
             """INSERT INTO notification_log
-               (rule_id, mr_iid, mr_title, mr_url, file_path, file_content, teams_sent, email_sent, error)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (rule_id, mr_iid, mr_title, mr_url, file_path, file_content, teams_sent, email_sent, gitlab_sent, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rule["id"],
                 mr_iid,
@@ -87,6 +104,7 @@ async def dispatch_notifications(
                 file_content,
                 int(teams_sent),
                 int(email_sent),
+                int(gitlab_sent),
                 error.strip(),
             ),
         )

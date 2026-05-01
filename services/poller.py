@@ -4,9 +4,17 @@ import os
 from datetime import datetime
 
 from db import get_db
-from services.gitlab_client import get_project_id, get_merge_requests, get_mr_changes, get_file_content
+from services.gitlab_client import (
+    get_project_id,
+    get_merge_requests,
+    get_mr_changes,
+    get_file_content,
+)
 from services.rules_engine import evaluate_rules_for_mr
 from services.notification_dispatcher import dispatch_notifications
+from services.xlsx_review_service import review_xlsx_mr
+from services.review_comment_formatter import format_gitlab_review_comment
+from services.gitlab_notes import post_merge_request_note
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +95,9 @@ def _log_polled_mr(
             mr.get("title", ""),
             mr.get("web_url", ""),
             mr.get("state", ""),
-            mr.get("author", {}).get("name", "") if isinstance(mr.get("author"), dict) else "",
+            mr.get("author", {}).get("name", "")
+            if isinstance(mr.get("author"), dict)
+            else "",
             mr.get("source_branch", ""),
             mr.get("target_branch", ""),
             mr.get("created_at", ""),
@@ -109,9 +119,7 @@ def _get_rules_grouped_by_schedule() -> dict[int, list[dict]]:
     """
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM notification_rules WHERE enabled = 1"
-    ).fetchall()
+    rows = conn.execute("SELECT * FROM notification_rules WHERE enabled = 1").fetchall()
     conn.close()
 
     groups: dict[int, list[dict]] = {}
@@ -129,7 +137,6 @@ async def poll_once(rules: list[dict]):
         logger.error("Failed to resolve project ID: %s", e)
         return
 
-    # Группируем правила по (target_branch, mr_state) чтобы не дублировать API-запросы
     branch_state_rules: dict[tuple[str, str], list[dict]] = {}
     for rule in rules:
         key = (rule["target_branch"], rule["mr_state"])
@@ -137,32 +144,57 @@ async def poll_once(rules: list[dict]):
 
     for (branch, state), group_rules in branch_state_rules.items():
         try:
-            mrs = await get_merge_requests(project_id, state=state, target_branch=branch)
+            mrs = await get_merge_requests(
+                project_id, state=state, target_branch=branch
+            )
         except Exception as e:
-            logger.error("Failed to get MRs (branch=%s, state=%s): %s", branch, state, e)
+            logger.error(
+                "Failed to get MRs (branch=%s, state=%s): %s", branch, state, e
+            )
             continue
 
         for mr in mrs:
             mr_iid = mr["iid"]
-            mr_title = mr["title"]
-            mr_url = mr["web_url"]
-            source_branch = mr.get("source_branch") or ""
-            target_branch = mr.get("target_branch") or branch
+            mr_title = mr.get("title", "")
+            mr_url = mr.get("web_url", "")
 
-            # Определяем какие правила ещё не обработали этот MR
+            if mr_title.strip().lower().startswith("draft"):
+                continue
+
             pending_rule_ids = [
-                r["id"] for r in group_rules
-                if not _is_mr_processed(r["id"], mr_iid)
+                r["id"] for r in group_rules if not _is_mr_processed(r["id"], mr_iid)
             ]
             if not pending_rule_ids:
                 continue
 
-            try:
-                changed_files = await get_mr_changes(project_id, mr_iid)
-            except Exception as e:
-                logger.error("Failed to get changes for MR !%s: %s", mr_iid, e)
-                _log_polled_mr(mr, 0, len(pending_rule_ids), 0, False, str(e))
-                continue
+            xlsx_rules = [
+                r
+                for r in group_rules
+                if r["id"] in pending_rule_ids and r.get("action_type") == "xlsx_review"
+            ]
+            notify_rules = [
+                r
+                for r in group_rules
+                if r["id"] in pending_rule_ids
+                and r.get("action_type", "notify") == "notify"
+            ]
+
+            changed_files: list[str] = []
+            source_branch = mr.get("source_branch") or ""
+            target_branch = mr.get("target_branch") or branch
+
+            if notify_rules or (
+                xlsx_rules
+                and any(r.get("file_pattern", "*.xlsx") != "" for r in xlsx_rules)
+            ):
+                try:
+                    changed_files = await get_mr_changes(project_id, mr_iid)
+                except Exception as e:
+                    logger.error("Failed to get changes for MR !%s: %s", mr_iid, e)
+                    _log_polled_mr(mr, 0, len(pending_rule_ids), 0, False, str(e))
+                    for rule_id in pending_rule_ids:
+                        _mark_mr_processed(rule_id, mr_iid)
+                    continue
 
             async def fetch_content(file_path: str) -> str:
                 return await _get_mr_file_content(
@@ -173,17 +205,51 @@ async def poll_once(rules: list[dict]):
                     target_branch,
                 )
 
-            matches = await evaluate_rules_for_mr(pending_rule_ids, changed_files, fetch_content)
+            total_matched = 0
 
-            if matches:
-                await dispatch_notifications(matches, mr_iid, mr_title, mr_url)
+            if notify_rules:
+                notify_ids = [r["id"] for r in notify_rules]
+                matches = await evaluate_rules_for_mr(
+                    notify_ids, changed_files, fetch_content
+                )
+                if matches:
+                    await dispatch_notifications(matches, mr_iid, mr_title, mr_url)
+                total_matched += len(matches)
 
+            for xlsx_rule in xlsx_rules:
+                has_xlsx = any(fp.lower().endswith(".xlsx") for fp in changed_files)
+                if not has_xlsx:
+                    _mark_mr_processed(xlsx_rule["id"], mr_iid)
+                    continue
 
-            # Помечаем MR как обработанный для всех правил в группе
-            for rule_id in pending_rule_ids:
+                try:
+                    result = await review_xlsx_mr(mr_iid)
+                    findings = result.get("findings", [])
+                    summary = result.get("summary", {})
+                    model_used = result.get("model_used", "")
+
+                    match_data = {
+                        "rule": xlsx_rule,
+                        "file_path": f"xlsx-review-!{mr_iid}",
+                        "file_content": "",
+                        "emails": [],
+                        "findings": findings,
+                        "summary": summary,
+                        "model_used": model_used,
+                    }
+                    await dispatch_notifications([match_data], mr_iid, mr_title, mr_url)
+                    total_matched += 1
+                except Exception as e:
+                    logger.error("XLSX review failed for MR !%s: %s", mr_iid, e)
+                _mark_mr_processed(xlsx_rule["id"], mr_iid)
+
+            for rule_id in [r["id"] for r in notify_rules]:
                 _mark_mr_processed(rule_id, mr_iid)
+
             try:
-                _log_polled_mr(mr, len(changed_files), len(pending_rule_ids), len(matches), True)
+                _log_polled_mr(
+                    mr, len(changed_files), len(pending_rule_ids), total_matched, True
+                )
             except Exception as e:
                 logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
 
@@ -193,6 +259,7 @@ async def _run_poll_loop(interval: int, rule_getter):
     while True:
         # Перечитываем .env перед каждым циклом
         from env_reload import reload_dotenv
+
         reload_dotenv()
 
         rules = rule_getter(interval)
@@ -229,11 +296,17 @@ async def start_polling():
     for interval in groups:
         if interval not in seen_intervals:
             seen_intervals.add(interval)
-            tasks.append(asyncio.create_task(_run_poll_loop(interval, get_rules_for_interval)))
+            tasks.append(
+                asyncio.create_task(_run_poll_loop(interval, get_rules_for_interval))
+            )
 
     # Запускаем дефолтный интервал если нет других
     if default_interval not in seen_intervals:
-        tasks.append(asyncio.create_task(_run_poll_loop(default_interval, get_rules_for_interval)))
+        tasks.append(
+            asyncio.create_task(
+                _run_poll_loop(default_interval, get_rules_for_interval)
+            )
+        )
 
     # Ждём все таски (бесконечно)
     await asyncio.gather(*tasks)

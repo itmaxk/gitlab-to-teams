@@ -44,6 +44,16 @@
         <p class="text-xs text-slate-500 mt-1">0 = значение из .env (POLL_INTERVAL_SECONDS)</p>
       </div>
     </div>
+
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Тип действия</label>
+      <select name="action_type"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+        <option value="notify" {{ 'selected' if not rule or rule.action_type == 'notify' }}>Уведомление (notify)</option>
+        <option value="xlsx_review" {{ 'selected' if rule and rule.action_type == 'xlsx_review' }}>XLSX ревью (xlsx_review)</option>
+      </select>
+      <p class="text-xs text-slate-500 mt-1">xlsx_review — автоматический XLSX-ревью для MR с xlsx-файлами. Пропускает MR со статусом merged и title начинающимся с Draft.</p>
+    </div>
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
@@ -151,6 +161,12 @@
       <input type="checkbox" name="send_email" id="send_email" {{ 'checked' if rule and rule.send_email }}
         class="rounded bg-slate-800 border-slate-600">
       <label for="send_email" class="text-sm text-slate-300">Отправлять на Email</label>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="send_gitlab" id="send_gitlab" {{ 'checked' if rule and rule.send_gitlab }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="send_gitlab" class="text-sm text-slate-300">Оставить комментарий в GitLab MR</label>
     </div>
 
     <div>

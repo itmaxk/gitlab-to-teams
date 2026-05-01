@@ -29,9 +29,11 @@ def init_db():
             file_check_enabled INTEGER DEFAULT 0,
             file_check_path_prefix TEXT DEFAULT '',
             file_check_mode TEXT DEFAULT 'present',
+            action_type TEXT DEFAULT 'notify',
             send_teams INTEGER DEFAULT 1,
             teams_webhook_url TEXT DEFAULT '',
             send_email INTEGER DEFAULT 0,
+            send_gitlab INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -54,6 +56,7 @@ def init_db():
             file_content TEXT DEFAULT '',
             teams_sent INTEGER DEFAULT 0,
             email_sent INTEGER DEFAULT 0,
+            gitlab_sent INTEGER DEFAULT 0,
             error TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE
@@ -179,21 +182,24 @@ def init_db():
     """)
 
     _migrate(conn)
-    _seed_rule_if_missing(conn, {
-        "name": "MR changed model without postgres script",
-        "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
-        "file_pattern": "model/*/*",
-        "content_match": "",
-        "match_type": "contains",
-        "target_branch": "master",
-        "mr_state": "opened",
-        "file_check_enabled": 1,
-        "file_check_path_prefix": "database/postgres",
-        "file_check_mode": "absent_any",
-        "send_teams": 1,
-        "send_email": 1,
-        "enabled": 1,
-    })
+    _seed_rule_if_missing(
+        conn,
+        {
+            "name": "MR changed model without postgres script",
+            "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
+            "file_pattern": "model/*/*",
+            "content_match": "",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "file_check_enabled": 1,
+            "file_check_path_prefix": "database/postgres",
+            "file_check_mode": "absent_any",
+            "send_teams": 1,
+            "send_email": 1,
+            "enabled": 1,
+        },
+    )
 
     conn.close()
 
@@ -212,6 +218,8 @@ def _migrate(conn: sqlite3.Connection):
         "content_exclude": "ALTER TABLE notification_rules ADD COLUMN content_exclude TEXT DEFAULT ''",
         "file_check_mode": "ALTER TABLE notification_rules ADD COLUMN file_check_mode TEXT DEFAULT 'present'",
         "send_teams": "ALTER TABLE notification_rules ADD COLUMN send_teams INTEGER DEFAULT 1",
+        "send_gitlab": "ALTER TABLE notification_rules ADD COLUMN send_gitlab INTEGER DEFAULT 0",
+        "action_type": "ALTER TABLE notification_rules ADD COLUMN action_type TEXT DEFAULT 'notify'",
         "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT ''",
     }
 
@@ -238,9 +246,13 @@ def _migrate(conn: sqlite3.Connection):
         cursor2 = conn.execute("PRAGMA table_info(cherry_pick_items)")
         cp_columns = {row[1] for row in cursor2.fetchall()}
         if cp_columns and "cherry_pick_mr_url" not in cp_columns:
-            conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_mr_url TEXT DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_mr_url TEXT DEFAULT ''"
+            )
         if cp_columns and "cherry_pick_merged_at" not in cp_columns:
-            conn.execute("ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_merged_at TEXT DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE cherry_pick_items ADD COLUMN cherry_pick_merged_at TEXT DEFAULT ''"
+            )
     except Exception:
         pass
 
@@ -249,7 +261,9 @@ def _migrate(conn: sqlite3.Connection):
         cursor3 = conn.execute("PRAGMA table_info(cherry_pick_sessions)")
         cs_columns = {row[1] for row in cursor3.fetchall()}
         if cs_columns and "name" not in cs_columns:
-            conn.execute("ALTER TABLE cherry_pick_sessions ADD COLUMN name TEXT DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE cherry_pick_sessions ADD COLUMN name TEXT DEFAULT ''"
+            )
     except Exception:
         pass
 
@@ -258,7 +272,9 @@ def _migrate(conn: sqlite3.Connection):
         cursor_rs = conn.execute("PRAGMA table_info(report_settings)")
         rs_columns = {row[1] for row in cursor_rs.fetchall()}
         if rs_columns and "auto_send_schedules" not in rs_columns:
-            conn.execute("ALTER TABLE report_settings ADD COLUMN auto_send_schedules TEXT DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE report_settings ADD COLUMN auto_send_schedules TEXT DEFAULT ''"
+            )
     except Exception:
         pass
 
@@ -266,7 +282,19 @@ def _migrate(conn: sqlite3.Connection):
         cursor_review = conn.execute("PRAGMA table_info(review_settings)")
         review_columns = {row[1] for row in cursor_review.fetchall()}
         if review_columns and "review_instructions" not in review_columns:
-            conn.execute("ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''"
+            )
+    except Exception:
+        pass
+
+    try:
+        cursor_nl = conn.execute("PRAGMA table_info(notification_log)")
+        nl_columns = {row[1] for row in cursor_nl.fetchall()}
+        if nl_columns and "gitlab_sent" not in nl_columns:
+            conn.execute(
+                "ALTER TABLE notification_log ADD COLUMN gitlab_sent INTEGER DEFAULT 0"
+            )
     except Exception:
         pass
 
@@ -294,52 +322,80 @@ def seed_default_rule():
         )
         conn.commit()
 
-    _seed_rule_if_missing(conn, {
-        "seed_key": "changelog_should_be_breaking",
-        "name": "Changelog должен быть breaking",
-        "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
-        "file_pattern": "changelogs/unreleased/*.md",
-        "content_match": r"(?i)(script|service|publish|паблиш)",
-        "content_exclude": r"type:\s*breaking",
-        "match_type": "regex",
-        "target_branch": "master",
-        "mr_state": "opened",
-        "send_teams": 1,
-        "send_email": 1,
-        "enabled": 0,
-    })
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "changelog_should_be_breaking",
+            "name": "Changelog должен быть breaking",
+            "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
+            "file_pattern": "changelogs/unreleased/*.md",
+            "content_match": r"(?i)(script|service|publish|паблиш)",
+            "content_exclude": r"type:\s*breaking",
+            "match_type": "regex",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "send_teams": 1,
+            "send_email": 1,
+            "enabled": 0,
+        },
+    )
 
-    _seed_rule_if_missing(conn, {
-        "seed_key": "mr_no_breaking_instruction",
-        "name": "MR нет инструкции breaking",
-        "description": "Breaking change без ссылки на .sql файл или без упоминания etlService",
-        "file_pattern": "changelogs/unreleased/*.md",
-        "content_match": "type: breaking",
-        "content_exclude": r"(?=.*\.sql)(?=.*etlservice)",
-        "match_type": "contains",
-        "target_branch": "master",
-        "mr_state": "opened",
-        "send_teams": 1,
-        "send_email": 1,
-        "enabled": 0,
-    })
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "mr_no_breaking_instruction",
+            "name": "MR нет инструкции breaking",
+            "description": "Breaking change без ссылки на .sql файл или без упоминания etlService",
+            "file_pattern": "changelogs/unreleased/*.md",
+            "content_match": "type: breaking",
+            "content_exclude": r"(?=.*\.sql)(?=.*etlservice)",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "send_teams": 1,
+            "send_email": 1,
+            "enabled": 0,
+        },
+    )
 
-    _seed_rule_if_missing(conn, {
-        "seed_key": "mr_file_not_found",
-        "name": "MR не найден файл",
-        "description": "Breaking change со ссылкой на .sql файл, но файл отсутствует в MR",
-        "file_pattern": "changelogs/unreleased/*.md",
-        "content_match": "type: breaking",
-        "match_type": "contains",
-        "target_branch": "master",
-        "mr_state": "opened",
-        "file_check_enabled": 1,
-        "file_check_path_prefix": "database/postgres/migration",
-        "file_check_mode": "absent",
-        "send_teams": 1,
-        "send_email": 1,
-        "enabled": 0,
-    })
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "mr_file_not_found",
+            "name": "MR не найден файл",
+            "description": "Breaking change со ссылкой на .sql файл, но файл отсутствует в MR",
+            "file_pattern": "changelogs/unreleased/*.md",
+            "content_match": "type: breaking",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "file_check_enabled": 1,
+            "file_check_path_prefix": "database/postgres/migration",
+            "file_check_mode": "absent",
+            "send_teams": 1,
+            "send_email": 1,
+            "enabled": 0,
+        },
+    )
+
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "auto_xlsx_review",
+            "name": "XLSX ревью нового MR",
+            "description": "Автоматический XLSX-ревью для новых MR (не merged, не Draft). Результат оставляется комментарием в GitLab.",
+            "file_pattern": "*.xlsx",
+            "content_match": "",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "action_type": "xlsx_review",
+            "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
 
     conn.close()
 
@@ -351,9 +407,7 @@ def seed_report_settings():
             "SELECT 1 FROM report_settings WHERE report_type = ?", (rt,)
         ).fetchone()
         if not exists:
-            conn.execute(
-                "INSERT INTO report_settings (report_type) VALUES (?)", (rt,)
-            )
+            conn.execute("INSERT INTO report_settings (report_type) VALUES (?)", (rt,))
     conn.commit()
     conn.close()
 

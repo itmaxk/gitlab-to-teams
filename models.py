@@ -14,9 +14,11 @@ class RuleCreate(BaseModel):
     file_check_enabled: bool = False
     file_check_path_prefix: str = ""
     file_check_mode: str = "present"
+    action_type: str = "notify"
     send_teams: bool = True
     teams_webhook_url: str = ""
     send_email: bool = False
+    send_gitlab: bool = False
     emails: list[str] = []
 
 
@@ -39,9 +41,11 @@ class RuleOut(BaseModel):
     file_check_enabled: bool
     file_check_path_prefix: str
     file_check_mode: str
+    action_type: str
     send_teams: bool
     teams_webhook_url: str
     send_email: bool
+    send_gitlab: bool
     created_at: str
     updated_at: str
     emails: list[str] = []
@@ -133,5 +137,6 @@ class LogOut(BaseModel):
     file_content: str
     teams_sent: bool
     email_sent: bool
+    gitlab_sent: bool
     error: str
     created_at: str

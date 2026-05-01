@@ -48,22 +48,30 @@ def dashboard(
         "SELECT id, name FROM notification_rules ORDER BY name"
     ).fetchall()
     stats = {
-        "rules_count": conn.execute("SELECT COUNT(*) FROM notification_rules").fetchone()[0],
-        "notifications_count": conn.execute("SELECT COUNT(*) FROM notification_log").fetchone()[0],
+        "rules_count": conn.execute(
+            "SELECT COUNT(*) FROM notification_rules"
+        ).fetchone()[0],
+        "notifications_count": conn.execute(
+            "SELECT COUNT(*) FROM notification_log"
+        ).fetchone()[0],
     }
     conn.close()
 
-    return templates.TemplateResponse(request, "dashboard.html", {
-        "logs": [dict(r) for r in logs],
-        "stats": stats,
-        "rules_list": [dict(r) for r in rules_list],
-        "filters": {
-            "rule_id": rule_id,
-            "teams_sent": teams_sent,
-            "email_sent": email_sent,
-            "has_error": has_error,
+    return templates.TemplateResponse(
+        request,
+        "dashboard.html",
+        {
+            "logs": [dict(r) for r in logs],
+            "stats": stats,
+            "rules_list": [dict(r) for r in rules_list],
+            "filters": {
+                "rule_id": rule_id,
+                "teams_sent": teams_sent,
+                "email_sent": email_sent,
+                "has_error": has_error,
+            },
         },
-    })
+    )
 
 
 @router.get("/polled", response_class=HTMLResponse)
@@ -95,58 +103,93 @@ def polled_mrs(
 
     rows = conn.execute(query, params).fetchall()
     total = conn.execute("SELECT COUNT(*) FROM polled_mrs").fetchone()[0]
-    success_count = conn.execute("SELECT COUNT(*) FROM polled_mrs WHERE success = 1").fetchone()[0]
+    success_count = conn.execute(
+        "SELECT COUNT(*) FROM polled_mrs WHERE success = 1"
+    ).fetchone()[0]
     conn.close()
 
-    return templates.TemplateResponse(request, "polled.html", {
-        "rows": [dict(r) for r in rows],
-        "stats": {
-            "total": total,
-            "success": success_count,
-            "errors": total - success_count,
+    return templates.TemplateResponse(
+        request,
+        "polled.html",
+        {
+            "rows": [dict(r) for r in rows],
+            "stats": {
+                "total": total,
+                "success": success_count,
+                "errors": total - success_count,
+            },
+            "filters": {
+                "mr_state": mr_state,
+                "success": success,
+                "has_matches": has_matches,
+                "target_branch": target_branch,
+            },
         },
-        "filters": {
-            "mr_state": mr_state,
-            "success": success,
-            "has_matches": has_matches,
-            "target_branch": target_branch,
-        },
-    })
+    )
 
 
 @router.get("/queue", response_class=HTMLResponse)
 def queue_page(request: Request):
-    return templates.TemplateResponse(request, "queue.html", {
-        "jira_url": os.getenv("JIRA_URL", ""),
-        "jira_project": os.getenv("JIRA_PROJECT", ""),
-    })
+    return templates.TemplateResponse(
+        request,
+        "queue.html",
+        {
+            "jira_url": os.getenv("JIRA_URL", ""),
+            "jira_project": os.getenv("JIRA_PROJECT", ""),
+        },
+    )
 
 
 @router.get("/compare", response_class=HTMLResponse)
 def compare_page(request: Request):
-    return templates.TemplateResponse(request, "compare.html", {
-        "jira_url": os.getenv("JIRA_URL", ""),
-        "jira_project": os.getenv("JIRA_PROJECT", ""),
-    })
+    return templates.TemplateResponse(
+        request,
+        "compare.html",
+        {
+            "jira_url": os.getenv("JIRA_URL", ""),
+            "jira_project": os.getenv("JIRA_PROJECT", ""),
+        },
+    )
 
 
 @router.get("/review", response_class=HTMLResponse)
 def review_page(request: Request):
     llm_configured = is_review_llm_configured()
-    return templates.TemplateResponse(request, "review.html", {
-        "llm_configured": llm_configured,
-    })
+    return templates.TemplateResponse(
+        request,
+        "review.html",
+        {
+            "llm_configured": llm_configured,
+        },
+    )
 
 
 ENV_KEYS = [
-    "GITLAB_URL", "GITLAB_PROJECT", "GITLAB_TOKEN",
+    "GITLAB_URL",
+    "GITLAB_PROJECT",
+    "GITLAB_TOKEN",
     "TEAMS_WEBHOOK_URL",
-    "POLL_INTERVAL_SECONDS", "DEFAULT_EMAIL",
-    "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM",
-    "JIRA_URL", "JIRA_PROJECT", "JIRA_TOKEN",
-    "REVIEW_API_URL", "REVIEW_API_KEY", "REVIEW_MODEL", "REVIEW_MAX_DIFF_CHARS", "REVIEW_BATCH_MAX_CHARS", "REVIEW_LLM_READ_TIMEOUT",
-    "SONAR_URL", "SONAR_PROJECT", "SONAR_TOKEN",
-    "HOST", "PORT",
+    "POLL_INTERVAL_SECONDS",
+    "DEFAULT_EMAIL",
+    "SMTP_HOST",
+    "SMTP_PORT",
+    "SMTP_USER",
+    "SMTP_PASSWORD",
+    "SMTP_FROM",
+    "JIRA_URL",
+    "JIRA_PROJECT",
+    "JIRA_TOKEN",
+    "REVIEW_API_URL",
+    "REVIEW_API_KEY",
+    "REVIEW_MODEL",
+    "REVIEW_MAX_DIFF_CHARS",
+    "REVIEW_BATCH_MAX_CHARS",
+    "REVIEW_LLM_READ_TIMEOUT",
+    "SONAR_URL",
+    "SONAR_PROJECT",
+    "SONAR_TOKEN",
+    "HOST",
+    "PORT",
 ]
 
 
@@ -183,21 +226,25 @@ def rules_list(request: Request):
         d["enabled"] = bool(d["enabled"])
         d["send_teams"] = bool(d.get("send_teams", 1))
         d["send_email"] = bool(d["send_email"])
+        d["send_gitlab"] = bool(d.get("send_gitlab", 0))
         d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
+        d["action_type"] = d.get("action_type", "notify") or "notify"
         d["effective_interval"] = d["poll_interval_seconds"] or default_interval
         rules.append(d)
     conn.close()
-    return templates.TemplateResponse(request, "rules/list.html", {
-        "rules": rules
-    })
+    return templates.TemplateResponse(request, "rules/list.html", {"rules": rules})
 
 
 @router.get("/rules/new", response_class=HTMLResponse)
 def new_rule_form(request: Request):
-    return templates.TemplateResponse(request, "rules/form.html", {
-        "rule": None,
-        "mr_states": ["merged", "opened", "closed", "all"],
-    })
+    return templates.TemplateResponse(
+        request,
+        "rules/form.html",
+        {
+            "rule": None,
+            "mr_states": ["merged", "opened", "closed", "all"],
+        },
+    )
 
 
 @router.post("/rules/new/save")
@@ -215,9 +262,11 @@ async def save_new_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    action_type: str = Form("notify"),
     send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
+    send_gitlab: Optional[str] = Form(None),
 ):
     form = await request.form()
     emails = form.getlist("emails")
@@ -228,13 +277,26 @@ async def save_new_rule(
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            send_teams, teams_webhook_url, send_email)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            name, description, file_pattern, content_match, content_exclude, match_type,
-            target_branch, mr_state, poll_interval_seconds,
-            1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
-            1 if send_teams else 0, teams_webhook_url, 1 if send_email else 0,
+            name,
+            description,
+            file_pattern,
+            content_match,
+            content_exclude,
+            match_type,
+            target_branch,
+            mr_state,
+            poll_interval_seconds,
+            1 if file_check_enabled else 0,
+            file_check_path_prefix,
+            file_check_mode,
+            action_type,
+            1 if send_teams else 0,
+            teams_webhook_url,
+            1 if send_email else 0,
+            1 if send_gitlab else 0,
         ),
     )
     rule_id = cur.lastrowid
@@ -267,12 +329,18 @@ def edit_rule_form(request: Request, rule_id: int):
     rule["enabled"] = bool(rule["enabled"])
     rule["send_teams"] = bool(rule.get("send_teams", 1))
     rule["send_email"] = bool(rule["send_email"])
+    rule["send_gitlab"] = bool(rule.get("send_gitlab", 0))
     rule["file_check_enabled"] = bool(rule.get("file_check_enabled", 0))
+    rule["action_type"] = rule.get("action_type", "notify") or "notify"
     conn.close()
-    return templates.TemplateResponse(request, "rules/form.html", {
-        "rule": rule,
-        "mr_states": ["merged", "opened", "closed", "all"],
-    })
+    return templates.TemplateResponse(
+        request,
+        "rules/form.html",
+        {
+            "rule": rule,
+            "mr_states": ["merged", "opened", "closed", "all"],
+        },
+    )
 
 
 @router.post("/rules/{rule_id}/save")
@@ -291,9 +359,11 @@ async def save_edit_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    action_type: str = Form("notify"),
     send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
+    send_gitlab: Optional[str] = Form(None),
     enabled: Optional[str] = Form(None),
 ):
     form = await request.form()
@@ -305,14 +375,28 @@ async def save_edit_rule(
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           send_teams=?, teams_webhook_url=?, send_email=?, updated_at=CURRENT_TIMESTAMP
+           action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
-            name, description, 1 if enabled else 0,
-            file_pattern, content_match, content_exclude, match_type,
-            target_branch, mr_state, poll_interval_seconds,
-            1 if file_check_enabled else 0, file_check_path_prefix, file_check_mode,
-            1 if send_teams else 0, teams_webhook_url, 1 if send_email else 0, rule_id,
+            name,
+            description,
+            1 if enabled else 0,
+            file_pattern,
+            content_match,
+            content_exclude,
+            match_type,
+            target_branch,
+            mr_state,
+            poll_interval_seconds,
+            1 if file_check_enabled else 0,
+            file_check_path_prefix,
+            file_check_mode,
+            action_type,
+            1 if send_teams else 0,
+            teams_webhook_url,
+            1 if send_email else 0,
+            1 if send_gitlab else 0,
+            rule_id,
         ),
     )
     conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
