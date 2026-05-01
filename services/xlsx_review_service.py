@@ -487,6 +487,25 @@ async def _load_file_bytes_or_none(project_id: int, file_path: str, ref: str) ->
         raise
 
 
+async def _load_branch_file_for_change(
+    project_id: int,
+    change: dict,
+    ref: str,
+    *,
+    prefer_new_path: bool,
+) -> tuple[bytes | None, str]:
+    preferred = (change.get("new_path") if prefer_new_path else change.get("old_path")) or ""
+    alternate = (change.get("old_path") if prefer_new_path else change.get("new_path")) or ""
+    candidates = [path for path in [preferred, alternate] if path]
+
+    for path in dict.fromkeys(candidates):
+        content = await _load_file_bytes_or_none(project_id, path, ref)
+        if content is not None:
+            return content, path
+
+    return None, preferred or alternate or ""
+
+
 def _resolve_primary_comparison_ref(mr_data: dict, requested_ref: str) -> str:
     if requested_ref.strip():
         return requested_ref.strip()
@@ -510,10 +529,18 @@ async def _analyze_xlsx_change_set(
         file_path = change.get("new_path") or change.get("old_path") or "unknown.xlsx"
         await _report_progress(progress_callback, index, total_files, file_path)
 
-        base_path = change.get("old_path") or file_path
-        head_path = change.get("new_path") or file_path
-        base_bytes = await _load_file_bytes_or_none(project_id, base_path, comparison_ref)
-        head_bytes = await _load_file_bytes_or_none(project_id, head_path, mr_data["source_branch"])
+        base_bytes, resolved_base_path = await _load_branch_file_for_change(
+            project_id,
+            change,
+            comparison_ref,
+            prefer_new_path=False,
+        )
+        head_bytes, resolved_head_path = await _load_branch_file_for_change(
+            project_id,
+            change,
+            mr_data["source_branch"],
+            prefer_new_path=True,
+        )
 
         if base_bytes is None and head_bytes is None:
             findings.append(_decorate_finding({
@@ -523,6 +550,34 @@ async def _analyze_xlsx_change_set(
                 "line": None,
                 "message": f"Файл '{file_path}' не удалось прочитать ни из '{comparison_ref}', ни из '{mr_data['source_branch']}'.",
                 "suggestion": None,
+            }, comparison_ref, is_master_comparison))
+            continue
+
+        if base_bytes is None and not change.get("new_file"):
+            findings.append(_decorate_finding({
+                "severity": "warning",
+                "category": "xlsx",
+                "file_path": file_path,
+                "line": None,
+                "message": (
+                    f"Файл '{file_path}' не удалось прочитать из '{comparison_ref}'. "
+                    f"Проверены пути: '{change.get('old_path') or ''}' и '{change.get('new_path') or ''}'."
+                ),
+                "suggestion": f"В ветке '{mr_data['source_branch']}' файл найден как '{resolved_head_path or file_path}'.",
+            }, comparison_ref, is_master_comparison))
+            continue
+
+        if head_bytes is None and not change.get("deleted_file"):
+            findings.append(_decorate_finding({
+                "severity": "warning",
+                "category": "xlsx",
+                "file_path": file_path,
+                "line": None,
+                "message": (
+                    f"Файл '{file_path}' не удалось прочитать из '{mr_data['source_branch']}'. "
+                    f"Проверены пути: '{change.get('new_path') or ''}' и '{change.get('old_path') or ''}'."
+                ),
+                "suggestion": f"В ветке '{comparison_ref}' файл найден как '{resolved_base_path or file_path}'.",
             }, comparison_ref, is_master_comparison))
             continue
 

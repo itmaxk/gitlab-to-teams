@@ -8,6 +8,7 @@ from zipfile import ZipFile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
+import httpx
 from services import xlsx_review_service
 
 
@@ -389,3 +390,115 @@ def test_review_xlsx_mr_reports_master_differences_separately(tmp_path, monkeypa
     assert result["summary"]["master_comparison"]["finding_count"] == 1
     assert result["findings"][0]["comparison_ref"] == "master"
     assert result["findings"][0]["comparison_kind"] == "master"
+
+
+def test_review_xlsx_mr_uses_alternate_path_when_preferred_path_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-paths.db")
+    db.init_db()
+
+    same_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "100000000"},
+        }
+    })
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Rename-ish xlsx",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/xlsx",
+            "target_branch": "master",
+            "web_url": "https://example.test/mr/17",
+            "changes": [
+                {
+                    "old_path": "config/old-name.xlsx",
+                    "new_path": "config/new-name.xlsx",
+                    "diff": "",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": True,
+                }
+            ],
+        }
+
+    async def fake_get_file_bytes(project_id, file_path, ref):
+        if ref == "master" and file_path == "config/old-name.xlsx":
+            return same_bytes
+        if ref == "feature/xlsx" and file_path == "config/old-name.xlsx":
+            return same_bytes
+        if file_path == "config/new-name.xlsx":
+            raise httpx.HTTPStatusError(
+                "404",
+                request=httpx.Request("GET", "https://example.test"),
+                response=httpx.Response(404, request=httpx.Request("GET", "https://example.test")),
+            )
+        raise AssertionError((project_id, file_path, ref))
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(xlsx_review_service, "get_file_bytes", fake_get_file_bytes)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(17, ""))
+
+    assert result["summary"]["total"] == 0
+
+
+def test_review_xlsx_mr_reports_missing_branch_file_as_warning_not_deleted_sheet(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-missing.db")
+    db.init_db()
+
+    master_bytes = _build_xlsx_bytes({
+        "DLPcoeffs": {
+            1: {"A": "DLP coeffs"},
+        },
+        "_HitPolicy": {
+            1: {"A": "UNIQUE"},
+        },
+    })
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Broken source fetch",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/xlsx",
+            "target_branch": "master",
+            "web_url": "https://example.test/mr/18",
+            "changes": [
+                {
+                    "old_path": "configuration/@config-rgsl/investment-life-insurance/lib/DLPcoeffs.xlsx",
+                    "new_path": "configuration/@config-rgsl/investment-life-insurance/lib/DLPcoeffs.xlsx",
+                    "diff": "",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_bytes(project_id, file_path, ref):
+        if ref == "master":
+            return master_bytes
+        raise httpx.HTTPStatusError(
+            "404",
+            request=httpx.Request("GET", "https://example.test"),
+            response=httpx.Response(404, request=httpx.Request("GET", "https://example.test")),
+        )
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(xlsx_review_service, "get_file_bytes", fake_get_file_bytes)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(18, ""))
+
+    assert result["summary"]["total"] == 1
+    assert result["findings"][0]["severity"] == "warning"
+    assert "не удалось прочитать" in result["findings"][0]["message"]
