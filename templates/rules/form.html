@@ -51,8 +51,9 @@
         class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
         <option value="notify" {{ 'selected' if not rule or rule.action_type == 'notify' }}>Уведомление (notify)</option>
         <option value="xlsx_review" {{ 'selected' if rule and rule.action_type == 'xlsx_review' }}>XLSX ревью (xlsx_review)</option>
+        <option value="code_review" {{ 'selected' if rule and rule.action_type == 'code_review' }}>Code review (code_review)</option>
       </select>
-      <p class="text-xs text-slate-500 mt-1">xlsx_review — автоматический XLSX-ревью для MR с xlsx-файлами. Пропускает MR со статусом merged и title начинающимся с Draft.</p>
+      <p class="text-xs text-slate-500 mt-1">xlsx_review — автоматический XLSX-ревью для MR с xlsx-файлами. code_review — AI-ревью кода через LLM. Пропускают MR со статусом merged и title начинающимся с Draft.</p>
     </div>
   </fieldset>
 

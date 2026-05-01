@@ -397,6 +397,25 @@ def seed_default_rule():
         },
     )
 
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "auto_code_review",
+            "name": "Code review нового MR",
+            "description": "Автоматическое AI-ревью кода для новых MR (не merged, не Draft). Результат оставляется комментарием в GitLab.",
+            "file_pattern": "*",
+            "content_match": "",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "action_type": "code_review",
+            "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
+
     conn.close()
 
 

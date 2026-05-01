@@ -13,6 +13,7 @@ from services.gitlab_client import (
 from services.rules_engine import evaluate_rules_for_mr
 from services.notification_dispatcher import dispatch_notifications
 from services.xlsx_review_service import review_xlsx_mr
+from services.review_service import review_mr
 from services.review_comment_formatter import format_gitlab_review_comment
 from services.gitlab_notes import post_merge_request_note
 
@@ -172,6 +173,11 @@ async def poll_once(rules: list[dict]):
                 for r in group_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "xlsx_review"
             ]
+            code_review_rules = [
+                r
+                for r in group_rules
+                if r["id"] in pending_rule_ids and r.get("action_type") == "code_review"
+            ]
             notify_rules = [
                 r
                 for r in group_rules
@@ -242,6 +248,28 @@ async def poll_once(rules: list[dict]):
                 except Exception as e:
                     logger.error("XLSX review failed for MR !%s: %s", mr_iid, e)
                 _mark_mr_processed(xlsx_rule["id"], mr_iid)
+
+            for cr_rule in code_review_rules:
+                try:
+                    result = await review_mr(mr_iid)
+                    findings = result.get("findings", [])
+                    summary = result.get("summary", {})
+                    model_used = result.get("model_used", "")
+
+                    match_data = {
+                        "rule": cr_rule,
+                        "file_path": f"code-review-!{mr_iid}",
+                        "file_content": "",
+                        "emails": [],
+                        "findings": findings,
+                        "summary": summary,
+                        "model_used": model_used,
+                    }
+                    await dispatch_notifications([match_data], mr_iid, mr_title, mr_url)
+                    total_matched += 1
+                except Exception as e:
+                    logger.error("Code review failed for MR !%s: %s", mr_iid, e)
+                _mark_mr_processed(cr_rule["id"], mr_iid)
 
             for rule_id in [r["id"] for r in notify_rules]:
                 _mark_mr_processed(rule_id, mr_iid)

@@ -38,6 +38,10 @@
           <span class="text-xs px-2 py-0.5 rounded-full border bg-purple-900/30 text-purple-400 border-purple-800">
             XLSX Review
           </span>
+          {% elif rule.action_type == 'code_review' %}
+          <span class="text-xs px-2 py-0.5 rounded-full border bg-amber-900/30 text-amber-400 border-amber-800">
+            Code Review
+          </span>
           {% endif %}
         </div>
         {% if rule.description %}
