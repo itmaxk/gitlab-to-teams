@@ -16,16 +16,25 @@
       <label class="block text-sm text-slate-400 mb-1">MR IID или URL</label>
       <input type="text" id="mrInput" placeholder="123 или https://gitlab.../merge_requests/123"
              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      <textarea id="savedCustomPrompt" rows="5" placeholder="На что обратить внимание, что не учитывать, какие замечания важнее..."
+             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-y"></textarea>
+      <div class="flex gap-2 mt-2">
+        <button onclick="savePrompt()" id="btnSavePrompt"
+                class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
+          Сохранить инструкции
+        </button>
+        <span id="promptStatus" class="text-sm text-slate-400 self-center"></span>
+      </div>
     </div>
     <div>
       <label class="block text-sm text-slate-400 mb-1">Доп. инструкции <span class="text-slate-500">(опционально)</span></label>
       <input type="text" id="customPrompt" placeholder="Проверь обработку ошибок, найди SQL-инъекции..."
-             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+             class="hidden w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
     </div>
     <div>
       <label class="block text-sm text-slate-400 mb-1">Базовая ветка для xlsx-сравнения</label>
-      <input type="text" id="xlsxBaseRef" value="master" placeholder="master"
-             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      <input type="text" id="xlsxBaseRef" value="авто из target branch MR" readonly
+             class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-400 text-sm cursor-not-allowed">
     </div>
   </div>
   <div class="flex flex-wrap gap-3">
@@ -64,11 +73,11 @@
     <textarea id="systemPrompt" rows="12"
       class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm font-mono focus:border-blue-500 focus:outline-none"></textarea>
     <div class="flex gap-2 mt-2">
-      <button onclick="savePrompt()" id="btnSavePrompt"
+      <button onclick="saveSystemPrompt()" id="btnSaveSystemPrompt"
               class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
         Сохранить
       </button>
-      <span id="promptStatus" class="text-sm text-slate-400 self-center"></span>
+      <span id="systemPromptStatus" class="text-sm text-slate-400 self-center"></span>
     </div>
   </div>
 </details>
@@ -175,7 +184,7 @@ async function runReview() {
     return;
   }
 
-  const customPrompt = document.getElementById("customPrompt").value.trim();
+  const customPrompt = document.getElementById("savedCustomPrompt").value.trim();
   const btn = document.getElementById("btnReview");
   const loading = document.getElementById("loading");
   const errorBox = document.getElementById("errorBox");
@@ -222,8 +231,7 @@ async function runXlsxReview() {
     alert("Введите MR IID или URL");
     return;
   }
-
-  const baseRef = document.getElementById("xlsxBaseRef").value.trim() || "master";
+  const baseRef = "target branch MR";
   const btn = document.getElementById("btnReviewXlsx");
   const mainBtn = document.getElementById("btnReview");
   const loading = document.getElementById("loading");
@@ -245,7 +253,7 @@ async function runXlsxReview() {
     const startResp = await fetch("/api/review/start-xlsx", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mr_input: mrInput, base_ref: baseRef }),
+      body: JSON.stringify({ mr_input: mrInput }),
     });
     const startData = await startResp.json().catch(() => ({}));
     if (!startResp.ok) {
@@ -306,6 +314,12 @@ function renderResults(data) {
     ${(summary.files_skipped || 0) > 0 ? `<span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-300 border border-amber-700">Без diff: ${summary.files_skipped}</span>` : ""}
   `;
 
+  if (summary.master_comparison) {
+    document.getElementById("summaryBar").innerHTML += summary.master_comparison.differs
+      ? `<span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-300 border border-amber-700">&#9679; Отличия с ${escHtml(summary.master_comparison.ref)}: ${summary.master_comparison.finding_count}</span>`
+      : `<span class="px-3 py-1 rounded text-sm bg-green-900/30 text-green-300 border border-green-700">&#9679; Различий с ${escHtml(summary.master_comparison.ref)} нет</span>`;
+  }
+
   const filters = document.getElementById("filters");
   filters.innerHTML = ["all", "error", "warning", "info"].map(f => {
     const labelMap = { all: "Все", error: "Критичные", warning: "Предупреждения", info: "Инфо" };
@@ -361,6 +375,7 @@ function renderFindings() {
       <div class="flex items-center gap-2 mb-2">
         <span class="${cfg.badge} text-white text-xs px-2 py-0.5 rounded">${cfg.label}</span>
         <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(category)}</span>
+        ${f.comparison_ref ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.comparison_ref)}</span>` : ""}
         <span class="text-slate-400 text-xs font-mono">${escHtml(f.file_path)}${lineStr}</span>
       </div>
       <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
@@ -406,17 +421,40 @@ async function loadPrompt() {
     const resp = await fetch("/api/review/settings");
     const data = await resp.json();
     document.getElementById("systemPrompt").value = data.system_prompt || "";
+    document.getElementById("savedCustomPrompt").value = data.review_instructions || "";
+    document.getElementById("customPrompt").value = data.review_instructions || "";
   } catch (e) {}
 }
 
 async function savePrompt() {
   const prompt = document.getElementById("systemPrompt").value;
+  const reviewInstructions = document.getElementById("savedCustomPrompt").value;
   const status = document.getElementById("promptStatus");
   try {
     const resp = await fetch("/api/review/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ system_prompt: prompt }),
+      body: JSON.stringify({ system_prompt: prompt, review_instructions: reviewInstructions }),
+    });
+    if (!resp.ok) throw new Error("Не удалось сохранить настройки");
+    status.textContent = "Сохранено";
+    status.className = "text-sm text-green-400 self-center";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  } catch (e) {
+    status.textContent = "Ошибка сохранения";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+async function saveSystemPrompt() {
+  const prompt = document.getElementById("systemPrompt").value;
+  const reviewInstructions = document.getElementById("savedCustomPrompt").value;
+  const status = document.getElementById("systemPromptStatus");
+  try {
+    const resp = await fetch("/api/review/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system_prompt: prompt, review_instructions: reviewInstructions }),
     });
     if (!resp.ok) throw new Error("Не удалось сохранить настройки");
     status.textContent = "Сохранено";
@@ -518,3 +556,5 @@ loadPrompt();
 loadHistory();
 </script>
 {% endblock %}
+
+

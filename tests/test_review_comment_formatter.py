@@ -7,6 +7,7 @@ from services.review_comment_formatter import format_gitlab_review_comment
 
 
 HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430"
+XLSX_HEADER = "## XLSX Analyzer"
 WARNING_LABEL = "### \u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f (1)"
 BUG_LABEL = "[\u0411\u0430\u0433]"
 SUGGESTION_LABEL = "\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:"
@@ -84,3 +85,15 @@ def test_format_gitlab_review_comment_mentions_skipped_files():
     assert ANALYZED_FILES in comment
     assert SKIPPED_FILES in comment
     assert INCOMPLETE_DIFF in comment
+
+
+def test_format_gitlab_review_comment_uses_xlsx_header_for_xlsx_reviews():
+    comment = format_gitlab_review_comment(
+        mr_iid=9,
+        mr_title="XLSX change",
+        findings=[],
+        summary={"errors": 0, "warnings": 0, "info": 0, "total": 0},
+        model_used="xlsx-diff:master",
+    )
+
+    assert comment.startswith(XLSX_HEADER)

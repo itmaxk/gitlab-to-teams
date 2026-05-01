@@ -178,7 +178,7 @@ async def run_xlsx_review(req: XlsxReviewRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        return await review_xlsx_mr(mr_iid, req.base_ref or "master")
+        return await review_xlsx_mr(mr_iid, req.base_ref or "")
     except Exception as exc:
         logger.exception("XLSX review failed for MR !%s", req.mr_input)
         raise HTTPException(status_code=500, detail=_translate_review_error(exc))
@@ -200,7 +200,7 @@ async def start_xlsx_review(req: XlsxReviewRequest):
         "result": None,
         "error": None,
     }
-    asyncio.create_task(_run_xlsx_review_job(job_id, mr_iid, req.base_ref or "master"))
+    asyncio.create_task(_run_xlsx_review_job(job_id, mr_iid, req.base_ref or ""))
     return {"job_id": job_id}
 
 
@@ -274,10 +274,12 @@ def get_history():
 @router.get("/settings")
 def get_settings():
     conn = get_db()
-    row = conn.execute("SELECT system_prompt, updated_at FROM review_settings WHERE id = 1").fetchone()
+    row = conn.execute(
+        "SELECT system_prompt, review_instructions, updated_at FROM review_settings WHERE id = 1"
+    ).fetchone()
     conn.close()
     if not row:
-        return {"system_prompt": "", "updated_at": ""}
+        return {"system_prompt": "", "review_instructions": "", "updated_at": ""}
     return dict(row)
 
 
@@ -285,8 +287,12 @@ def get_settings():
 def update_settings(req: ReviewSettingsUpdate):
     conn = get_db()
     conn.execute(
-        "UPDATE review_settings SET system_prompt = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
-        (req.system_prompt,),
+        """
+        UPDATE review_settings
+        SET system_prompt = ?, review_instructions = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+        """,
+        (req.system_prompt, req.review_instructions),
     )
     conn.commit()
     conn.close()

@@ -101,10 +101,10 @@ def test_extract_workbook_rows_reads_sheet_rows():
     assert rows["Rates"][2] == "A=IDGV03VTB | B=1000000000"
 
 
-def test_build_xlsx_diff_findings_detects_row_change():
+def test_build_xlsx_diff_findings_detects_cell_change():
     findings = xlsx_review_service.build_xlsx_diff_findings(
-        {"Rates": {2: "A=IDGV03VTB | B=100000000"}},
-        {"Rates": {2: "A=IDGV03VTB | B=1000000000"}},
+        {"Rates": {2: {1: "IDGV03VTB", 2: "100000000"}}},
+        {"Rates": {2: {1: "IDGV03VTB", 2: "1000000000"}}},
         "config/rates.xlsx",
     )
 
@@ -114,10 +114,78 @@ def test_build_xlsx_diff_findings_detects_row_change():
             "category": "xlsx",
             "file_path": "config/rates.xlsx",
             "line": 2,
-            "message": "Лист 'Rates', строка 2 изменена.",
-            "suggestion": "Было: A=IDGV03VTB | B=100000000; Стало: A=IDGV03VTB | B=1000000000",
+            "message": "Лист 'Rates', ячейка B2 изменена.",
+            "suggestion": "Было: 100000000; Стало: 1000000000",
+            "comparison_ref": "master",
+            "comparison_kind": "target",
         }
     ]
+
+
+def test_build_xlsx_diff_findings_reports_deleted_column_once():
+    findings = xlsx_review_service.build_xlsx_diff_findings(
+        {
+            "Rates": {
+                1: {1: "Code", 2: "Value", 3: "Coeff"},
+                2: {1: "A", 2: "10", 3: "1"},
+                3: {1: "B", 2: "20", 3: "1"},
+            }
+        },
+        {
+            "Rates": {
+                1: {1: "Code", 2: "Value"},
+                2: {1: "A", 2: "10"},
+                3: {1: "B", 2: "20"},
+            }
+        },
+        "config/rates.xlsx",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["message"] == "Лист 'Rates', столбец C ('Coeff') удален."
+
+
+def test_build_xlsx_diff_findings_groups_many_deleted_rows():
+    findings = xlsx_review_service.build_xlsx_diff_findings(
+        {
+            "_HitPolicy": {
+                1: {1: "UNIQUE"},
+                2: {1: "FIRST"},
+                3: {1: "PRIORITY"},
+                4: {1: "ANY"},
+            }
+        },
+        {"_HitPolicy": {}},
+        "config/rates.xlsx",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["message"] == "Лист '_HitPolicy', удалены строки 1-4."
+
+
+def test_build_xlsx_diff_findings_groups_many_column_value_changes():
+    findings = xlsx_review_service.build_xlsx_diff_findings(
+        {
+            "Rates": {
+                2: {1: "IDGV03VTB", 2: "100000000"},
+                3: {1: "IDGV06VTB", 2: "50000000"},
+                4: {1: "IDGV09VTB", 2: "30000000"},
+                5: {1: "IDGV12VTB", 2: "5000000"},
+            }
+        },
+        {
+            "Rates": {
+                2: {1: "IDGV03VTB", 2: "1000000000"},
+                3: {1: "IDGV06VTB", 2: "1000000000"},
+                4: {1: "IDGV09VTB", 2: "1000000000"},
+                5: {1: "IDGV12VTB", 2: "1000000000"},
+            }
+        },
+        "config/rates.xlsx",
+    )
+
+    assert len(findings) == 1
+    assert findings[0]["message"].startswith("Столбец B изменен в 4 строках")
 
 
 def test_review_xlsx_mr_compares_files_against_base_ref(tmp_path, monkeypatch):
@@ -187,7 +255,137 @@ def test_review_xlsx_mr_compares_files_against_base_ref(tmp_path, monkeypatch):
     assert result["mr"]["comparison_ref"] == "master"
     assert result["summary"]["files_total"] == 1
     assert result["summary"]["total"] == 1
+    assert result["summary"].get("master_comparison") is None
     assert result["findings"][0]["category"] == "xlsx"
     assert result["findings"][0]["line"] == 2
     assert progress[0] == (0, 1, "")
     assert progress[-1] == (1, 1, "config/rates.xlsx")
+
+
+def test_review_xlsx_mr_uses_target_branch_automatically(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-auto.db")
+    db.init_db()
+
+    target_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "100000000"},
+        }
+    })
+    head_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "1000000000"},
+        }
+    })
+    master_bytes = head_bytes
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Update xlsx",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/xlsx",
+            "target_branch": "release/1.0",
+            "web_url": "https://example.test/mr/15",
+            "changes": [
+                {
+                    "old_path": "config/rates.xlsx",
+                    "new_path": "config/rates.xlsx",
+                    "diff": "",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_bytes(project_id, file_path, ref):
+        if ref == "release/1.0":
+            return target_bytes
+        if ref == "feature/xlsx":
+            return head_bytes
+        if ref == "master":
+            return master_bytes
+        raise AssertionError(ref)
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(xlsx_review_service, "get_file_bytes", fake_get_file_bytes)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(15, ""))
+
+    assert result["mr"]["comparison_ref"] == "release/1.0"
+    assert result["summary"]["master_comparison"]["enabled"] is True
+    assert result["summary"]["master_comparison"]["ref"] == "master"
+    assert result["summary"]["master_comparison"]["differs"] is False
+
+
+def test_review_xlsx_mr_reports_master_differences_separately(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-master.db")
+    db.init_db()
+
+    target_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "100000000"},
+        }
+    })
+    head_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "100000000"},
+        }
+    })
+    master_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "50000000"},
+        }
+    })
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Update xlsx",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/xlsx",
+            "target_branch": "release/1.0",
+            "web_url": "https://example.test/mr/16",
+            "changes": [
+                {
+                    "old_path": "config/rates.xlsx",
+                    "new_path": "config/rates.xlsx",
+                    "diff": "",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_bytes(project_id, file_path, ref):
+        if ref == "release/1.0":
+            return target_bytes
+        if ref == "feature/xlsx":
+            return head_bytes
+        if ref == "master":
+            return master_bytes
+        raise AssertionError(ref)
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(xlsx_review_service, "get_file_bytes", fake_get_file_bytes)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(16, ""))
+
+    assert result["summary"]["master_comparison"]["differs"] is True
+    assert result["summary"]["master_comparison"]["finding_count"] == 1
+    assert result["findings"][0]["comparison_ref"] == "master"
+    assert result["findings"][0]["comparison_kind"] == "master"

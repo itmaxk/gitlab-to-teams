@@ -91,7 +91,7 @@ class ReviewRequest(BaseModel):
 
 class XlsxReviewRequest(BaseModel):
     mr_input: str
-    base_ref: str = "master"
+    base_ref: str = ""
 
 
 class ReviewFinding(BaseModel):
@@ -105,6 +105,7 @@ class ReviewFinding(BaseModel):
 
 class ReviewSettingsUpdate(BaseModel):
     system_prompt: str
+    review_instructions: str = ""
 
 
 class ReviewPublishRequest(BaseModel):

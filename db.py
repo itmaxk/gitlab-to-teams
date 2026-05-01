@@ -135,6 +135,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS review_settings (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             system_prompt TEXT NOT NULL,
+            review_instructions TEXT DEFAULT '',
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -258,6 +259,14 @@ def _migrate(conn: sqlite3.Connection):
         rs_columns = {row[1] for row in cursor_rs.fetchall()}
         if rs_columns and "auto_send_schedules" not in rs_columns:
             conn.execute("ALTER TABLE report_settings ADD COLUMN auto_send_schedules TEXT DEFAULT ''")
+    except Exception:
+        pass
+
+    try:
+        cursor_review = conn.execute("PRAGMA table_info(review_settings)")
+        review_columns = {row[1] for row in cursor_review.fetchall()}
+        if review_columns and "review_instructions" not in review_columns:
+            conn.execute("ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''")
     except Exception:
         pass
 
