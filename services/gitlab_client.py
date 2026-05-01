@@ -445,6 +445,11 @@ async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
         "description": data.get("description", ""),
         "author": data.get("author", {}).get("name", ""),
         "source_branch": data.get("source_branch", ""),
+        "source_ref": (
+            data.get("diff_refs", {}).get("head_sha")
+            or data.get("sha")
+            or data.get("source_branch", "")
+        ),
         "target_branch": data.get("target_branch", ""),
         "web_url": data.get("web_url", ""),
         "overflow": bool(data.get("overflow", False)),

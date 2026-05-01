@@ -502,3 +502,66 @@ def test_review_xlsx_mr_reports_missing_branch_file_as_warning_not_deleted_sheet
     assert result["summary"]["total"] == 1
     assert result["findings"][0]["severity"] == "warning"
     assert "не удалось прочитать" in result["findings"][0]["message"]
+
+
+def test_review_xlsx_mr_prefers_head_sha_over_source_branch_for_source_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-headsha.db")
+    db.init_db()
+
+    master_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "100000000"},
+        }
+    })
+    head_bytes = _build_xlsx_bytes({
+        "Rates": {
+            1: {"A": "Code", "B": "Value"},
+            2: {"A": "IDGV03VTB", "B": "1000000000"},
+        }
+    })
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Source sha xlsx",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/ADIRGSLSUPP-6426--fix-dlp",
+            "source_ref": "abc123headsha",
+            "target_branch": "master",
+            "web_url": "https://example.test/mr/19",
+            "changes": [
+                {
+                    "old_path": "configuration/@config-rgsl/investment-life-insurance/lib/DLPcoeffs.xlsx",
+                    "new_path": "configuration/@config-rgsl/investment-life-insurance/lib/DLPcoeffs.xlsx",
+                    "diff": "",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_bytes(project_id, file_path, ref):
+        if ref == "master":
+            return master_bytes
+        if ref == "abc123headsha":
+            return head_bytes
+        raise httpx.HTTPStatusError(
+            "404",
+            request=httpx.Request("GET", "https://example.test"),
+            response=httpx.Response(404, request=httpx.Request("GET", "https://example.test")),
+        )
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(xlsx_review_service, "get_file_bytes", fake_get_file_bytes)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(19, ""))
+
+    assert result["summary"]["total"] == 1
+    assert result["findings"][0]["severity"] == "info"
+    assert result["findings"][0]["message"] == "Лист 'Rates', ячейка B2 изменена."

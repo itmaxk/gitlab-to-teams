@@ -512,6 +512,10 @@ def _resolve_primary_comparison_ref(mr_data: dict, requested_ref: str) -> str:
     return (mr_data.get("target_branch") or DEFAULT_XLSX_BASE_REF).strip() or DEFAULT_XLSX_BASE_REF
 
 
+def _resolve_source_content_ref(mr_data: dict) -> str:
+    return (mr_data.get("source_ref") or mr_data.get("source_branch") or "").strip()
+
+
 async def _analyze_xlsx_change_set(
     project_id: int,
     mr_data: dict,
@@ -535,10 +539,11 @@ async def _analyze_xlsx_change_set(
             comparison_ref,
             prefer_new_path=False,
         )
+        source_content_ref = _resolve_source_content_ref(mr_data)
         head_bytes, resolved_head_path = await _load_branch_file_for_change(
             project_id,
             change,
-            mr_data["source_branch"],
+            source_content_ref,
             prefer_new_path=True,
         )
 
@@ -548,7 +553,7 @@ async def _analyze_xlsx_change_set(
                 "category": "xlsx",
                 "file_path": file_path,
                 "line": None,
-                "message": f"Файл '{file_path}' не удалось прочитать ни из '{comparison_ref}', ни из '{mr_data['source_branch']}'.",
+                "message": f"Файл '{file_path}' не удалось прочитать ни из '{comparison_ref}', ни из '{source_content_ref}'.",
                 "suggestion": None,
             }, comparison_ref, is_master_comparison))
             continue
@@ -563,7 +568,7 @@ async def _analyze_xlsx_change_set(
                     f"Файл '{file_path}' не удалось прочитать из '{comparison_ref}'. "
                     f"Проверены пути: '{change.get('old_path') or ''}' и '{change.get('new_path') or ''}'."
                 ),
-                "suggestion": f"В ветке '{mr_data['source_branch']}' файл найден как '{resolved_head_path or file_path}'.",
+                "suggestion": f"В ref '{source_content_ref}' файл найден как '{resolved_head_path or file_path}'.",
             }, comparison_ref, is_master_comparison))
             continue
 
@@ -574,7 +579,7 @@ async def _analyze_xlsx_change_set(
                 "file_path": file_path,
                 "line": None,
                 "message": (
-                    f"Файл '{file_path}' не удалось прочитать из '{mr_data['source_branch']}'. "
+                    f"Файл '{file_path}' не удалось прочитать из '{source_content_ref}'. "
                     f"Проверены пути: '{change.get('new_path') or ''}' и '{change.get('old_path') or ''}'."
                 ),
                 "suggestion": f"В ветке '{comparison_ref}' файл найден как '{resolved_base_path or file_path}'.",
