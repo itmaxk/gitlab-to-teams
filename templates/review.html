@@ -591,6 +591,47 @@ function setupInstructionUi() {
     savedArea.parentElement.appendChild(list);
   }
 
+  if (savedArea && !document.getElementById("instructionToggle")) {
+    const host = savedArea.parentElement;
+    const label = savedArea.previousElementSibling?.tagName === "LABEL"
+      ? savedArea.previousElementSibling
+      : null;
+    const controls = document.getElementById("promptStatus")?.parentElement;
+    const list = document.getElementById("instructionList");
+    const toggle = document.createElement("button");
+    const panel = document.createElement("div");
+
+    toggle.type = "button";
+    toggle.id = "instructionToggle";
+    toggle.className = "mt-4 text-sm text-blue-400 hover:text-blue-300 hover:underline";
+    toggle.setAttribute("aria-expanded", "false");
+
+    panel.id = "instructionPanel";
+    panel.className = "hidden mt-3 space-y-3";
+
+    window.updateInstructionToggleText = () => {
+      const count = reviewInstructionItems.length;
+      const suffix = count ? ` (${count})` : "";
+      toggle.textContent = panel.classList.contains("hidden")
+        ? `Показать инструкции review${suffix}`
+        : `Скрыть инструкции review${suffix}`;
+    };
+
+    toggle.addEventListener("click", () => {
+      panel.classList.toggle("hidden");
+      toggle.setAttribute("aria-expanded", panel.classList.contains("hidden") ? "false" : "true");
+      window.updateInstructionToggleText();
+    });
+
+    host.insertBefore(toggle, label || savedArea);
+    host.insertBefore(panel, toggle.nextSibling);
+    if (label) panel.appendChild(label);
+    panel.appendChild(savedArea);
+    if (controls) panel.appendChild(controls);
+    if (list) panel.appendChild(list);
+    window.updateInstructionToggleText();
+  }
+
   const oldPromptInput = document.getElementById("customPrompt");
   if (oldPromptInput && oldPromptInput.tagName === "INPUT") {
     const wrapper = oldPromptInput.parentElement;
@@ -610,6 +651,7 @@ function setupInstructionUi() {
 function renderInstructionList() {
   const list = document.getElementById("instructionList");
   if (!list) return;
+  window.updateInstructionToggleText?.();
   if (!reviewInstructionItems.length) {
     list.innerHTML = '<div class="rounded border border-dashed border-slate-700 px-3 py-3 text-sm text-slate-500">Список инструкций пока пуст.</div>';
     return;
