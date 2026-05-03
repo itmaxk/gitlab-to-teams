@@ -8,7 +8,14 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from db import get_db
-from models import ReviewPublishRequest, ReviewRequest, ReviewSettingsUpdate, XlsxReviewRequest
+from models import (
+    ReviewInstructionItemCreate,
+    ReviewInstructionItemUpdate,
+    ReviewPublishRequest,
+    ReviewRequest,
+    ReviewSettingsUpdate,
+    XlsxReviewRequest,
+)
 from services.gitlab_notes import post_merge_request_note
 from services.review_comment_formatter import format_gitlab_review_comment
 from services.review_service import review_mr
@@ -18,6 +25,60 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 REVIEW_JOBS: dict[str, dict] = {}
+
+
+def _normalize_instruction_type(raw_value: str) -> str:
+    return "exclude" if str(raw_value or "").strip().lower() == "exclude" else "include"
+
+
+def _load_review_instruction_items(conn) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT id, instruction_text, instruction_type, sort_order, created_at, updated_at
+        FROM review_instruction_items
+        ORDER BY sort_order ASC, id ASC
+        """
+    ).fetchall()
+    return [
+        {
+            **dict(row),
+            "instruction_type": _normalize_instruction_type(row["instruction_type"]),
+        }
+        for row in rows
+    ]
+
+
+def _build_legacy_review_instructions(items: list[dict]) -> str:
+    include_items = [
+        item["instruction_text"].strip()
+        for item in items
+        if item["instruction_type"] == "include" and item["instruction_text"].strip()
+    ]
+    exclude_items = [
+        item["instruction_text"].strip()
+        for item in items
+        if item["instruction_type"] == "exclude" and item["instruction_text"].strip()
+    ]
+    parts: list[str] = []
+    if include_items:
+        parts.append("Учитывать в ревью:\n- " + "\n- ".join(include_items))
+    if exclude_items:
+        parts.append("Не учитывать в ревью:\n- " + "\n- ".join(exclude_items))
+    return "\n\n".join(parts)
+
+
+def _sync_review_instruction_cache(conn) -> list[dict]:
+    items = _load_review_instruction_items(conn)
+    legacy_text = _build_legacy_review_instructions(items)
+    conn.execute(
+        """
+        UPDATE review_settings
+        SET review_instructions = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+        """,
+        (legacy_text,),
+    )
+    return items
 
 
 def _parse_mr_iid(mr_input: str) -> int:
@@ -277,10 +338,20 @@ def get_settings():
     row = conn.execute(
         "SELECT system_prompt, review_instructions, updated_at FROM review_settings WHERE id = 1"
     ).fetchone()
+    items = _load_review_instruction_items(conn)
     conn.close()
+    legacy_text = _build_legacy_review_instructions(items)
     if not row:
-        return {"system_prompt": "", "review_instructions": "", "updated_at": ""}
-    return dict(row)
+        return {
+            "system_prompt": "",
+            "review_instructions": legacy_text,
+            "review_instruction_items": items,
+            "updated_at": "",
+        }
+    data = dict(row)
+    data["review_instruction_items"] = items
+    data["review_instructions"] = legacy_text or data.get("review_instructions", "")
+    return data
 
 
 @router.put("/settings")
@@ -294,6 +365,105 @@ def update_settings(req: ReviewSettingsUpdate):
         """,
         (req.system_prompt, req.review_instructions),
     )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@router.get("/instructions")
+def get_instruction_items():
+    conn = get_db()
+    items = _load_review_instruction_items(conn)
+    conn.close()
+    return items
+
+
+@router.post("/instructions")
+def create_instruction_item(req: ReviewInstructionItemCreate):
+    instruction_text = req.instruction_text.strip()
+    if not instruction_text:
+        raise HTTPException(status_code=400, detail="Текст инструкции не должен быть пустым")
+
+    instruction_type = _normalize_instruction_type(req.instruction_type)
+    conn = get_db()
+    next_sort_order_row = conn.execute(
+        "SELECT COALESCE(MAX(sort_order), 0) + 1 AS next_sort_order FROM review_instruction_items"
+    ).fetchone()
+    next_sort_order = int(next_sort_order_row["next_sort_order"]) if next_sort_order_row else 1
+    cur = conn.execute(
+        """
+        INSERT INTO review_instruction_items (instruction_text, instruction_type, sort_order)
+        VALUES (?, ?, ?)
+        """,
+        (instruction_text, instruction_type, next_sort_order),
+    )
+    item_id = cur.lastrowid
+    _sync_review_instruction_cache(conn)
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, instruction_text, instruction_type, sort_order, created_at, updated_at
+        FROM review_instruction_items
+        WHERE id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    conn.close()
+    return {
+        **dict(row),
+        "instruction_type": _normalize_instruction_type(row["instruction_type"]),
+    }
+
+
+@router.put("/instructions/{item_id}")
+def update_instruction_item(item_id: int, req: ReviewInstructionItemUpdate):
+    instruction_text = req.instruction_text.strip()
+    if not instruction_text:
+        raise HTTPException(status_code=400, detail="Текст инструкции не должен быть пустым")
+
+    instruction_type = _normalize_instruction_type(req.instruction_type)
+    conn = get_db()
+    exists = conn.execute(
+        "SELECT 1 FROM review_instruction_items WHERE id = ?",
+        (item_id,),
+    ).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Инструкция не найдена")
+
+    conn.execute(
+        """
+        UPDATE review_instruction_items
+        SET instruction_text = ?, instruction_type = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (instruction_text, instruction_type, item_id),
+    )
+    _sync_review_instruction_cache(conn)
+    conn.commit()
+    row = conn.execute(
+        """
+        SELECT id, instruction_text, instruction_type, sort_order, created_at, updated_at
+        FROM review_instruction_items
+        WHERE id = ?
+        """,
+        (item_id,),
+    ).fetchone()
+    conn.close()
+    return {
+        **dict(row),
+        "instruction_type": _normalize_instruction_type(row["instruction_type"]),
+    }
+
+
+@router.delete("/instructions/{item_id}")
+def delete_instruction_item(item_id: int):
+    conn = get_db()
+    cur = conn.execute("DELETE FROM review_instruction_items WHERE id = ?", (item_id,))
+    if cur.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Инструкция не найдена")
+    _sync_review_instruction_cache(conn)
     conn.commit()
     conn.close()
     return {"ok": True}

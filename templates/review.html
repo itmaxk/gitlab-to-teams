@@ -16,10 +16,10 @@
       <label class="block text-sm text-slate-400 mb-1">MR IID или URL</label>
       <input type="text" id="mrInput" placeholder="123 или https://gitlab.../merge_requests/123"
              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
-      <textarea id="savedCustomPrompt" rows="5" placeholder="На что обратить внимание, что не учитывать, какие замечания важнее..."
+      <textarea id="instructionInput" rows="4" placeholder="На что обратить внимание в ревью..."
              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-y"></textarea>
-      <div class="flex gap-2 mt-2">
-        <button onclick="savePrompt()" id="btnSavePrompt"
+      <div class="flex flex-col md:flex-row gap-2 mt-2">
+        <button onclick="saveInstruction()" id="btnSavePrompt"
                 class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
           Сохранить инструкции
         </button>
@@ -98,6 +98,7 @@ let timerInterval = null;
 let currentFindings = [];
 let activeFilter = "all";
 let currentReviewId = null;
+let reviewInstructionItems = [];
 
 function startTimer() {
   const el = document.getElementById("loadingTimer");
@@ -184,7 +185,7 @@ async function runReview() {
     return;
   }
 
-  const customPrompt = document.getElementById("savedCustomPrompt").value.trim();
+  const customPrompt = document.getElementById("customPrompt").value.trim();
   const btn = document.getElementById("btnReview");
   const loading = document.getElementById("loading");
   const errorBox = document.getElementById("errorBox");
@@ -421,8 +422,8 @@ async function loadPrompt() {
     const resp = await fetch("/api/review/settings");
     const data = await resp.json();
     document.getElementById("systemPrompt").value = data.system_prompt || "";
-    document.getElementById("savedCustomPrompt").value = data.review_instructions || "";
-    document.getElementById("customPrompt").value = data.review_instructions || "";
+    reviewInstructionItems = data.review_instruction_items || [];
+    renderInstructionList();
   } catch (e) {}
 }
 
@@ -552,7 +553,202 @@ async function deleteReview(id) {
   } catch (e) {}
 }
 
+function setupInstructionUi() {
+  const savedArea = document.getElementById("instructionInput") || document.getElementById("savedCustomPrompt");
+  if (savedArea) {
+    savedArea.id = "instructionInput";
+    savedArea.rows = 4;
+    savedArea.placeholder = "На что обратить внимание в ревью...";
+    const previousElement = savedArea.previousElementSibling;
+    if (!previousElement || previousElement.tagName !== "LABEL" || previousElement.textContent.indexOf("Сохран") === -1) {
+      const savedLabel = document.createElement("label");
+      savedLabel.className = "block text-sm text-slate-400 mt-4 mb-1";
+      savedLabel.textContent = "Сохранённые инструкции для AI-ревью";
+      savedArea.parentElement.insertBefore(savedLabel, savedArea);
+    }
+  }
+
+  const button = document.getElementById("btnSavePrompt");
+  if (button) {
+    button.textContent = "Сохранить инструкцию";
+  }
+
+  const promptStatus = document.getElementById("promptStatus");
+  if (promptStatus && !document.getElementById("instructionType")) {
+    const controls = promptStatus.parentElement;
+    const select = document.createElement("select");
+    select.id = "instructionType";
+    select.className = "bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none";
+    select.innerHTML = '<option value="include">Учитывать в ревью</option><option value="exclude">Не учитывать в ревью</option>';
+    controls.insertBefore(select, controls.firstElementChild);
+    controls.className = "flex flex-col md:flex-row gap-2 mt-2";
+  }
+
+  if (savedArea && !document.getElementById("instructionList")) {
+    const list = document.createElement("div");
+    list.id = "instructionList";
+    list.className = "mt-3 space-y-2";
+    savedArea.parentElement.appendChild(list);
+  }
+
+  const oldPromptInput = document.getElementById("customPrompt");
+  if (oldPromptInput && oldPromptInput.tagName === "INPUT") {
+    const wrapper = oldPromptInput.parentElement;
+    const label = wrapper.querySelector("label");
+    if (label) {
+      label.innerHTML = 'Разовая инструкция для текущего запуска <span class="text-slate-500">(опционально)</span>';
+    }
+    const textarea = document.createElement("textarea");
+    textarea.id = "customPrompt";
+    textarea.rows = 5;
+    textarea.placeholder = "Проверь обработку ошибок, найди SQL-инъекции...";
+    textarea.className = "w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none resize-y";
+    wrapper.replaceChild(textarea, oldPromptInput);
+  }
+}
+
+function renderInstructionList() {
+  const list = document.getElementById("instructionList");
+  if (!list) return;
+  if (!reviewInstructionItems.length) {
+    list.innerHTML = '<div class="rounded border border-dashed border-slate-700 px-3 py-3 text-sm text-slate-500">Список инструкций пока пуст.</div>';
+    return;
+  }
+
+  list.innerHTML = reviewInstructionItems.map((item) => {
+    const badgeClass = item.instruction_type === "exclude"
+      ? "bg-rose-900/40 text-rose-300 border-rose-700"
+      : "bg-emerald-900/40 text-emerald-300 border-emerald-700";
+    const badgeText = item.instruction_type === "exclude" ? "Не учитывать" : "Учитывать";
+    return `
+      <div class="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div class="min-w-0 flex-1">
+            <span class="inline-flex rounded border px-2 py-0.5 text-xs ${badgeClass}">${badgeText}</span>
+            <p class="mt-2 whitespace-pre-wrap break-words text-sm text-slate-200">${escHtml(item.instruction_text || "")}</p>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <button onclick="editInstruction(${item.id})" class="rounded border border-slate-600 px-3 py-1 text-xs text-slate-300 hover:border-slate-500 hover:text-white">Изменить</button>
+            <button onclick="deleteInstructionItem(${item.id})" class="rounded border border-red-800 px-3 py-1 text-xs text-red-300 hover:border-red-700 hover:text-red-200">Удалить</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadInstructionItems() {
+  const resp = await fetch("/api/review/instructions");
+  if (!resp.ok) throw new Error("Не удалось загрузить список инструкций");
+  reviewInstructionItems = await resp.json();
+  renderInstructionList();
+}
+
+async function loadPrompt() {
+  try {
+    const resp = await fetch("/api/review/settings");
+    const data = await resp.json();
+    document.getElementById("systemPrompt").value = data.system_prompt || "";
+    reviewInstructionItems = data.review_instruction_items || [];
+    renderInstructionList();
+  } catch (e) {}
+}
+
+async function saveInstruction() {
+  const instructionText = document.getElementById("instructionInput")?.value.trim();
+  const instructionType = document.getElementById("instructionType")?.value || "include";
+  const status = document.getElementById("promptStatus");
+  if (!instructionText) {
+    status.textContent = "Введите текст инструкции";
+    status.className = "text-sm text-red-400 self-center";
+    return;
+  }
+
+  try {
+    const resp = await fetch("/api/review/instructions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction_text: instructionText, instruction_type: instructionType }),
+    });
+    if (!resp.ok) throw new Error("Не удалось сохранить инструкцию");
+    document.getElementById("instructionInput").value = "";
+    document.getElementById("instructionType").value = "include";
+    await loadInstructionItems();
+    status.textContent = "Сохранено";
+    status.className = "text-sm text-green-400 self-center";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  } catch (e) {
+    status.textContent = "Ошибка сохранения";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+async function saveSystemPrompt() {
+  const prompt = document.getElementById("systemPrompt").value;
+  const status = document.getElementById("systemPromptStatus");
+  try {
+    const resp = await fetch("/api/review/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system_prompt: prompt }),
+    });
+    if (!resp.ok) throw new Error("Не удалось сохранить настройки");
+    status.textContent = "Сохранено";
+    status.className = "text-sm text-green-400 self-center";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  } catch (e) {
+    status.textContent = "Ошибка сохранения";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+async function editInstruction(id) {
+  const currentItem = reviewInstructionItems.find((item) => item.id === id);
+  if (!currentItem) return;
+
+  const nextText = prompt("Измените текст инструкции", currentItem.instruction_text || "");
+  if (nextText === null) return;
+
+  const trimmedText = nextText.trim();
+  if (!trimmedText) {
+    alert("Текст инструкции не должен быть пустым");
+    return;
+  }
+
+  const currentType = currentItem.instruction_type === "exclude" ? "exclude" : "include";
+  const nextType = prompt("Тип инструкции: include или exclude", currentType);
+  if (nextType === null) return;
+
+  try {
+    const resp = await fetch(`/api/review/instructions/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction_text: trimmedText,
+        instruction_type: nextType.trim().toLowerCase() === "exclude" ? "exclude" : "include",
+      }),
+    });
+    if (!resp.ok) throw new Error("Не удалось обновить инструкцию");
+    await loadInstructionItems();
+  } catch (e) {
+    alert("Ошибка обновления инструкции");
+  }
+}
+
+async function deleteInstructionItem(id) {
+  if (!confirm("Удалить эту инструкцию?")) return;
+  try {
+    const resp = await fetch(`/api/review/instructions/${id}`, { method: "DELETE" });
+    if (!resp.ok) throw new Error("Не удалось удалить инструкцию");
+    await loadInstructionItems();
+  } catch (e) {
+    alert("Ошибка удаления инструкции");
+  }
+}
+
+setupInstructionUi();
 loadPrompt();
+loadInstructionItems();
 loadHistory();
 </script>
 {% endblock %}

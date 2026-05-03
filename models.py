@@ -112,6 +112,16 @@ class ReviewSettingsUpdate(BaseModel):
     review_instructions: str = ""
 
 
+class ReviewInstructionItemCreate(BaseModel):
+    instruction_text: str
+    instruction_type: str = "include"
+
+
+class ReviewInstructionItemUpdate(BaseModel):
+    instruction_text: str
+    instruction_type: str = "include"
+
+
 class ReviewPublishRequest(BaseModel):
     review_id: int
 

@@ -16,6 +16,9 @@ The app is a FastAPI service rooted in `main.py`. Core database setup lives in `
 ## Coding Style & Naming Conventions
 Use 4-space indentation and follow existing Python style: `snake_case` for functions/variables, `PascalCase` for Pydantic models, and uppercase for module constants such as `DEFAULT_XLSX_BASE_REF`. Prefer small helper functions in `services/` over large route handlers. Keep comments brief and only when logic is not obvious. No formatter is enforced in the repo; match surrounding code style carefully.
 
+## Text Encoding
+All text files in this repository use UTF-8 without BOM. Preserve readable Cyrillic text directly in UTF-8; do not introduce CP1251 text, mojibake fragments, or Unicode replacement characters.
+
 ## Testing Guidelines
 Pytest is the test runner. Add tests alongside the affected behavior in `tests/` using `test_*.py` names and descriptive test functions such as `test_review_xlsx_mr_prefers_head_sha_over_source_branch_for_source_content`. For bug fixes, add a regression test first when practical. Favor small, deterministic fixtures over network access.
 

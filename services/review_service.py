@@ -78,6 +78,51 @@ def _get_system_prompt() -> str:
     )
 
 
+def _get_saved_review_instruction_items() -> list[dict]:
+    conn = get_db()
+    rows = conn.execute(
+        """
+        SELECT instruction_text, instruction_type
+        FROM review_instruction_items
+        ORDER BY sort_order ASC, id ASC
+        """
+    ).fetchall()
+    conn.close()
+    return [
+        {
+            "instruction_text": (row["instruction_text"] or "").strip(),
+            "instruction_type": "exclude"
+            if str(row["instruction_type"] or "").strip().lower() == "exclude"
+            else "include",
+        }
+        for row in rows
+        if (row["instruction_text"] or "").strip()
+    ]
+
+
+def _build_saved_instructions_text() -> str:
+    items = _get_saved_review_instruction_items()
+    if not items:
+        return ""
+
+    include_items = [
+        item["instruction_text"]
+        for item in items
+        if item["instruction_type"] == "include"
+    ]
+    exclude_items = [
+        item["instruction_text"]
+        for item in items
+        if item["instruction_type"] == "exclude"
+    ]
+    parts: list[str] = []
+    if include_items:
+        parts.append("Учитывать в ревью:\n- " + "\n- ".join(include_items))
+    if exclude_items:
+        parts.append("Не учитывать в ревью:\n- " + "\n- ".join(exclude_items))
+    return "\n\n".join(parts)
+
+
 def _build_change_text(change: dict, *, part: int | None = None, total_parts: int | None = None) -> str:
     suffix = ""
     if part is not None and total_parts is not None and total_parts > 1:
@@ -138,6 +183,7 @@ def _build_batch_message(
     batch_index: int,
     batch_total: int,
     diff_text: str,
+    saved_instructions: str,
     custom_prompt: str,
 ) -> str:
     user_message = f"""## Merge Request
@@ -157,6 +203,9 @@ def _build_batch_message(
 - Write all human-readable text in fields `message` and `suggestion` in Russian.
 - Do not translate file paths, identifiers, branch names, config keys, or code fragments.
 """
+
+    if saved_instructions.strip():
+        user_message += f"\n\n## Saved review instructions\n{saved_instructions.strip()}"
 
     if custom_prompt.strip():
         user_message += f"\n\n## Additional instructions from reviewer\n{custom_prompt.strip()}"
@@ -296,6 +345,7 @@ async def review_mr(
     total_batches = max(1, len(diff_batches))
 
     system_prompt = _get_system_prompt()
+    saved_instructions = _build_saved_instructions_text()
     findings: list[dict] = []
 
     await _report_progress(progress_callback, 0, total_batches)
@@ -312,6 +362,7 @@ async def review_mr(
                 batch_index=batch_index,
                 batch_total=total_batches,
                 diff_text=diff_text,
+                saved_instructions=saved_instructions,
                 custom_prompt=custom_prompt,
             )
             llm_response = await _call_llm(system_prompt, user_message)

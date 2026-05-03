@@ -150,7 +150,29 @@ def test_build_batch_message_requires_russian_human_text():
         batch_index=1,
         batch_total=3,
         diff_text="--- a.py\n+++ a.py\n+print('ok')",
+        saved_instructions="",
         custom_prompt="",
     )
 
     assert "Write all human-readable text in fields `message` and `suggestion` in Russian." in message
+
+
+def test_build_batch_message_includes_saved_review_instruction_lists():
+    message = review_service._build_batch_message(
+        mr_data={
+            "title": "Test MR",
+            "author": "Dev",
+            "source_branch": "feature/x",
+            "target_branch": "main",
+        },
+        files_changed=2,
+        batch_index=1,
+        batch_total=1,
+        diff_text="--- a.py\n+++ a.py\n+print('ok')",
+        saved_instructions="Учитывать в ревью:\n- Проверяй бизнес-логику\n\nНе учитывать в ревью:\n- Не комментируй форматирование",
+        custom_prompt="",
+    )
+
+    assert "## Saved review instructions" in message
+    assert "Проверяй бизнес-логику" in message
+    assert "Не комментируй форматирование" in message

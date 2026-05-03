@@ -142,6 +142,15 @@ def init_db():
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS review_instruction_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            instruction_text TEXT NOT NULL,
+            instruction_type TEXT NOT NULL DEFAULT 'include',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS code_reviews (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
@@ -284,6 +293,44 @@ def _migrate(conn: sqlite3.Connection):
         if review_columns and "review_instructions" not in review_columns:
             conn.execute(
                 "ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''"
+            )
+    except Exception:
+        pass
+
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS review_instruction_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instruction_text TEXT NOT NULL,
+                instruction_type TEXT NOT NULL DEFAULT 'include',
+                sort_order INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            UPDATE review_instruction_items
+            SET instruction_type = 'include'
+            WHERE instruction_type NOT IN ('include', 'exclude') OR instruction_type IS NULL
+            """
+        )
+        legacy_row = conn.execute(
+            "SELECT review_instructions FROM review_settings WHERE id = 1"
+        ).fetchone()
+        legacy_text = (legacy_row["review_instructions"] if legacy_row else "") or ""
+        items_exist = conn.execute(
+            "SELECT 1 FROM review_instruction_items LIMIT 1"
+        ).fetchone()
+        if legacy_text.strip() and not items_exist:
+            conn.execute(
+                """
+                INSERT INTO review_instruction_items (instruction_text, instruction_type, sort_order)
+                VALUES (?, 'include', 1)
+                """,
+                (legacy_text.strip(),),
             )
     except Exception:
         pass
