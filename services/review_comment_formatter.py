@@ -29,7 +29,7 @@ CATEGORY_ICONS = {
 
 SEVERITY_ORDER = ["error", "warning", "info"]
 
-HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430 - AI (for preview only)"
+HEADER = "## AI (for preview only)"
 XLSX_HEADER = "## XLSX Analyzer"
 UNKNOWN_FILE = "\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0444\u0430\u0439\u043b"
 SUGGESTION_LABEL = "\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:"
@@ -66,16 +66,20 @@ def format_gitlab_review_comment(
         grouped[_normalize_severity(finding.get("severity"))].append(finding)
 
     is_xlsx_review = str(model_used or "").startswith("xlsx-diff:")
+
     header = XLSX_HEADER if is_xlsx_review else HEADER
 
     lines = [
         header,
         "",
+    ]
+
+    lines.extend([
         f"- \u041a\u0440\u0438\u0442\u0438\u0447\u043d\u044b\u0445: {summary.get('errors', 0)}",
         f"- \u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u0439: {summary.get('warnings', 0)}",
         f"- \u0418\u043d\u0444\u043e\u0440\u043c\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0445: {summary.get('info', 0)}",
         f"- \u0412\u0441\u0435\u0433\u043e \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u0439: {summary.get('total', 0)}",
-    ]
+    ])
 
     files_total = summary.get("files_total")
     files_analyzed = summary.get("files_analyzed")

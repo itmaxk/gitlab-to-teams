@@ -6,7 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.review_comment_formatter import format_gitlab_review_comment
 
 
-HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430 - AI (for preview only)"
+REMOVED_HEADER_TEXT = "\u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430"
+HEADER = "## AI (for preview only)"
 XLSX_HEADER = "## XLSX Analyzer"
 WARNING_LABEL = "### \u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f (1)"
 BUG_LABEL = "\U0001f41e **\u0411\u0430\u0433**"
@@ -43,7 +44,8 @@ def test_format_gitlab_review_comment_uses_russian_labels_and_suggestion():
         model_used="qwen2.5-coder:14b",
     )
 
-    assert HEADER in comment
+    assert REMOVED_HEADER_TEXT not in comment
+    assert comment.startswith(HEADER)
     assert WARNING_LABEL in comment
     assert BUG_LABEL in comment
     assert f"**{SUGGESTION_LABEL}**" in comment
