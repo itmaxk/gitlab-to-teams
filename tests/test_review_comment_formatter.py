@@ -6,10 +6,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from services.review_comment_formatter import format_gitlab_review_comment
 
 
-HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430"
+HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430 - AI (for preview only)"
 XLSX_HEADER = "## XLSX Analyzer"
 WARNING_LABEL = "### \u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u044f (1)"
-BUG_LABEL = "[\u0411\u0430\u0433]"
+BUG_LABEL = "\U0001f41e **\u0411\u0430\u0433**"
 SUGGESTION_LABEL = "\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:"
 CLEAN_REVIEW = "\u0417\u0430\u043c\u0435\u0442\u043d\u044b\u0445 \u043f\u0440\u043e\u0431\u043b\u0435\u043c \u0432 \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u043e\u043c diff \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e."
 ANALYZED_FILES = "\u041f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432: 3/5"
@@ -46,7 +46,9 @@ def test_format_gitlab_review_comment_uses_russian_labels_and_suggestion():
     assert HEADER in comment
     assert WARNING_LABEL in comment
     assert BUG_LABEL in comment
-    assert SUGGESTION_LABEL in comment
+    assert f"**{SUGGESTION_LABEL}**" in comment
+    assert "`services/review.py:18`\n   \U0001f41e **\u0411\u0430\u0433**" in comment
+    assert "[\u0411\u0430\u0433]" not in comment
     assert "Warnings" not in comment
     assert "Suggestion:" not in comment
 

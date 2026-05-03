@@ -17,9 +17,19 @@ CATEGORY_LABELS = {
     "general": "\u041e\u0431\u0449\u0435\u0435",
 }
 
+CATEGORY_ICONS = {
+    "bug": "\U0001f41e",
+    "security": "\U0001f512",
+    "performance": "\u26a1",
+    "style": "\U0001f58c\ufe0f",
+    "logic": "\U0001f9e0",
+    "xlsx": "\U0001f4ca",
+    "general": "\U0001f4cc",
+}
+
 SEVERITY_ORDER = ["error", "warning", "info"]
 
-HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430"
+HEADER = "## \u0421\u0432\u043e\u0434\u043a\u0430 AI-\u0440\u0435\u0432\u044c\u044e \u043a\u043e\u0434\u0430 - AI (for preview only)"
 XLSX_HEADER = "## XLSX Analyzer"
 UNKNOWN_FILE = "\u043d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439 \u0444\u0430\u0439\u043b"
 SUGGESTION_LABEL = "\u0420\u0435\u043a\u043e\u043c\u0435\u043d\u0434\u0430\u0446\u0438\u044f:"
@@ -37,6 +47,11 @@ def _normalize_severity(value: str | None) -> str:
 def _translate_category(value: str | None) -> str:
     category = str(value or "general").lower()
     return CATEGORY_LABELS.get(category, CATEGORY_LABELS["general"])
+
+
+def _category_icon(value: str | None) -> str:
+    category = str(value or "general").lower()
+    return CATEGORY_ICONS.get(category, CATEGORY_ICONS["general"])
 
 
 def format_gitlab_review_comment(
@@ -93,12 +108,20 @@ def format_gitlab_review_comment(
             line = finding.get("line")
             location = f"`{file_path}:{line}`" if line else f"`{file_path}`"
             category = _translate_category(finding.get("category"))
+            category_icon = _category_icon(finding.get("category"))
             message = str(finding.get("message", "")).strip()
             suggestion = str(finding.get("suggestion") or "").strip()
-            lines.append(f"{index}. {location} [{category}] {message}")
+            lines.extend([
+                f"{index}. {location}",
+                f"   {category_icon} **{category}**",
+                "",
+                f"   {message}",
+            ])
             if suggestion:
-                lines.append(f"   {SUGGESTION_LABEL}")
+                lines.append("")
+                lines.append(f"   **{SUGGESTION_LABEL}**")
                 lines.append(f"   {suggestion}")
+            lines.append("")
         lines.append("")
 
     return "\n".join(lines)
