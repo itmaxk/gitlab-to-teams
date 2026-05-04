@@ -1,4 +1,6 @@
 import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import inspect
 import json
 import logging
@@ -16,6 +18,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_DIFF_CHARS = 60000
 DEFAULT_REVIEW_BATCH_MAX_CHARS = 20000
 DEFAULT_REVIEW_LLM_READ_TIMEOUT = 120.0
+DEFAULT_REVIEW_LLM_MAX_ATTEMPTS = 5
+DEFAULT_REVIEW_LLM_MAX_RETRY_DELAY = 60.0
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -62,6 +66,46 @@ REVIEW_BATCH_MAX_CHARS = _resolve_batch_max_chars()
 REVIEW_LLM_READ_TIMEOUT = _read_float_env(
     "REVIEW_LLM_READ_TIMEOUT", DEFAULT_REVIEW_LLM_READ_TIMEOUT
 )
+REVIEW_LLM_MAX_ATTEMPTS = _read_int_env(
+    "REVIEW_LLM_MAX_ATTEMPTS", DEFAULT_REVIEW_LLM_MAX_ATTEMPTS
+)
+REVIEW_LLM_MAX_RETRY_DELAY = _read_float_env(
+    "REVIEW_LLM_MAX_RETRY_DELAY", DEFAULT_REVIEW_LLM_MAX_RETRY_DELAY
+)
+
+
+class LLMRateLimitError(RuntimeError):
+    pass
+
+
+def _parse_retry_after_seconds(raw_value: str | None) -> float | None:
+    if not raw_value:
+        return None
+
+    raw_value = raw_value.strip()
+    try:
+        delay = float(raw_value)
+    except ValueError:
+        try:
+            retry_at = parsedate_to_datetime(raw_value)
+        except (TypeError, ValueError, IndexError, OverflowError):
+            return None
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+
+    if delay < 0:
+        return None
+    return min(delay, REVIEW_LLM_MAX_RETRY_DELAY)
+
+
+def _llm_retry_delay(response: httpx.Response | None, attempt_index: int) -> float:
+    retry_after = _parse_retry_after_seconds(
+        response.headers.get("Retry-After") if response is not None else None
+    )
+    if retry_after is not None:
+        return retry_after
+    return min((attempt_index + 1) * 10, REVIEW_LLM_MAX_RETRY_DELAY)
 
 
 def _get_system_prompt() -> str:
@@ -235,33 +279,67 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
     }
 
     timeout = httpx.Timeout(connect=10, read=REVIEW_LLM_READ_TIMEOUT, write=30, pool=10)
-    last_exc = None
+    last_exc: Exception | None = None
+    last_rate_limit_response: httpx.Response | None = None
     async with httpx.AsyncClient(verify=False, timeout=timeout) as client:
-        for attempt in range(3):
+        for attempt in range(REVIEW_LLM_MAX_ATTEMPTS):
+            is_last_attempt = attempt == REVIEW_LLM_MAX_ATTEMPTS - 1
             try:
                 resp = await client.post(api_url, headers=headers, json=payload)
             except (httpx.ReadError, httpx.ReadTimeout, httpx.ConnectError) as e:
                 last_exc = e
-                delay = (attempt + 1) * 10
-                logger.warning("LLM network error (%s), retry %d/3 in %ds", type(e).__name__, attempt + 1, delay)
+                last_rate_limit_response = None
+                if is_last_attempt:
+                    break
+                delay = _llm_retry_delay(None, attempt)
+                logger.warning(
+                    "LLM network error (%s), retry %d/%d in %.0fs",
+                    type(e).__name__,
+                    attempt + 1,
+                    REVIEW_LLM_MAX_ATTEMPTS,
+                    delay,
+                )
                 await asyncio.sleep(delay)
                 continue
             if resp.status_code == 429:
-                delay = (attempt + 1) * 10
-                logger.warning("LLM rate limit (429), retry %d/3 in %ds", attempt + 1, delay)
+                last_rate_limit_response = resp
+                if is_last_attempt:
+                    break
+                delay = _llm_retry_delay(resp, attempt)
+                logger.warning(
+                    "LLM rate limit (429), retry %d/%d in %.0fs",
+                    attempt + 1,
+                    REVIEW_LLM_MAX_ATTEMPTS,
+                    delay,
+                )
                 await asyncio.sleep(delay)
                 continue
             resp.raise_for_status()
             last_exc = None
+            last_rate_limit_response = None
             break
         else:
-            if last_exc:
-                if isinstance(last_exc, httpx.ReadTimeout):
-                    raise TimeoutError(
-                        f"LLM request timed out after {REVIEW_LLM_READ_TIMEOUT:.0f}s"
-                    ) from last_exc
-                raise last_exc
-            resp.raise_for_status()
+            resp = None
+
+        if last_rate_limit_response is not None:
+            retry_after = _parse_retry_after_seconds(
+                last_rate_limit_response.headers.get("Retry-After")
+            )
+            retry_hint = (
+                f" Retry after {retry_after:.0f}s."
+                if retry_after is not None
+                else ""
+            )
+            raise LLMRateLimitError(
+                f"LLM API rate limit exceeded after {REVIEW_LLM_MAX_ATTEMPTS} attempts (429)."
+                f"{retry_hint}"
+            )
+        if last_exc:
+            if isinstance(last_exc, httpx.ReadTimeout):
+                raise TimeoutError(
+                    f"LLM request timed out after {REVIEW_LLM_READ_TIMEOUT:.0f}s"
+                ) from last_exc
+            raise last_exc
         data = resp.json()
 
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")

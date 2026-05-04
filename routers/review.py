@@ -18,7 +18,7 @@ from models import (
 )
 from services.gitlab_notes import post_merge_request_note
 from services.review_comment_formatter import format_gitlab_review_comment
-from services.review_service import review_mr
+from services.review_service import LLMRateLimitError, review_mr
 from services.xlsx_review_service import review_xlsx_mr
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,11 @@ async def _run_review_job(job_id: str, mr_iid: int, custom_prompt: str) -> None:
         job["result"] = result
         job["message"] = "Ревью завершено"
         job["current_batch"] = job.get("total_batches", 0)
+    except LLMRateLimitError as exc:
+        logger.warning("Review rate-limited for MR !%s: %s", mr_iid, exc)
+        job["status"] = "failed"
+        job["error"] = _translate_review_error(exc)
+        job["message"] = job["error"]
     except Exception as exc:
         logger.exception("Review failed for MR !%s", mr_iid)
         job["status"] = "failed"
@@ -206,6 +211,9 @@ async def run_review(req: ReviewRequest):
 
     try:
         return await review_mr(mr_iid, req.custom_prompt)
+    except LLMRateLimitError as exc:
+        logger.warning("Review rate-limited for MR !%s: %s", req.mr_input, exc)
+        raise HTTPException(status_code=429, detail=_translate_review_error(exc))
     except Exception as exc:
         logger.exception("Review failed for MR !%s", req.mr_input)
         raise HTTPException(status_code=500, detail=_translate_review_error(exc))
