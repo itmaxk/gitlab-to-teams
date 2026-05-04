@@ -156,12 +156,11 @@ def _add_to_jira_map(
 
 @router.get("/default-branches")
 async def default_branches():
-    """Возвращает master + последнюю release ветку."""
+    """Возвращает master + две последние release ветки."""
     project_id = await get_project_id()
-    # Paginate through all branches matching "release/" to find the latest
+    # Paginate through all branches matching "release/" to find latest releases.
     release_re = re.compile(r"^release/(\d+)$")
-    latest = None
-    latest_num = -1
+    releases = []
     page = 1
     while True:
         batch = await get_branches(project_id, search="release/", per_page=100, page=page)
@@ -170,16 +169,12 @@ async def default_branches():
         for b in batch:
             m = release_re.match(b["name"])
             if m:
-                num = int(m.group(1))
-                if num > latest_num:
-                    latest_num = num
-                    latest = b["name"]
+                releases.append((int(m.group(1)), b["name"]))
         if len(batch) < 100:
             break
         page += 1
     result = ["master"]
-    if latest:
-        result.append(latest)
+    result.extend(name for _, name in sorted(releases, reverse=True)[:2])
     return {"branches": result}
 
 

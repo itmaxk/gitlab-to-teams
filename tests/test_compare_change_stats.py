@@ -114,3 +114,30 @@ def test_run_compare_can_skip_change_stats(monkeypatch):
     mr = result["rows"][0]["branches"]["master"]["mrs"][0]
     assert result["change_stats_loaded"] is False
     assert mr["change_stats"]["loaded"] is False
+
+
+def test_default_branches_returns_two_latest_release_branches(monkeypatch):
+    async def fake_get_project_id():
+        return 42
+
+    async def fake_get_branches(project_id, search="", per_page=100, page=1):
+        assert project_id == 42
+        assert search == "release/"
+        if page == 1:
+            return [
+                {"name": "release/101"},
+                {"name": "release/103"},
+                {"name": "release/not-number"},
+            ] + [{"name": f"feature/{i}"} for i in range(97)]
+        if page == 2:
+            return [
+                {"name": "release/102"},
+            ]
+        return []
+
+    monkeypatch.setattr(compare, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(compare, "get_branches", fake_get_branches)
+
+    result = asyncio.run(compare.default_branches())
+
+    assert result == {"branches": ["master", "release/103", "release/102"]}
