@@ -13,6 +13,7 @@ from services.gitlab_client import (
     get_all_merged_mrs,
     get_branches,
     get_mr_by_iid,
+    get_mr_diff,
     search_merge_requests,
 )
 
@@ -52,7 +53,80 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
         "merged_at": mr.get("merged_at", ""),
         "author": mr.get("author", {}).get("name", ""),
         "in_range": in_range,
+        "change_stats": {
+            "file_count": None,
+            "total_changed_lines": None,
+            "files": [],
+            "error": "",
+        },
     }
+
+
+def _changed_line_count(diff: str) -> int:
+    count = 0
+    for line in (diff or "").splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+") or line.startswith("-"):
+            count += 1
+    return count
+
+
+def _change_stats_from_diff(diff_data: dict) -> dict:
+    files = []
+    total = 0
+    for change in diff_data.get("changes", []):
+        path = change.get("new_path") or change.get("old_path") or ""
+        changed_lines = _changed_line_count(change.get("diff", ""))
+        total += changed_lines
+        files.append({
+            "path": path,
+            "changed_lines": changed_lines,
+        })
+    files.sort(key=lambda item: (-item["changed_lines"], item["path"]))
+    return {
+        "file_count": len(files),
+        "total_changed_lines": total,
+        "files": files,
+        "error": "",
+    }
+
+
+def _iter_mr_infos(jira_map: dict, no_jira: list):
+    for branch_data in jira_map.values():
+        for mrs in branch_data.values():
+            yield from mrs
+    yield from no_jira
+
+
+async def _attach_change_stats(jira_map: dict, no_jira: list, project_id: int) -> None:
+    by_iid = {}
+    for mr_info in _iter_mr_infos(jira_map, no_jira):
+        by_iid.setdefault(mr_info["mr_iid"], []).append(mr_info)
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def load_one(mr_iid: int):
+        async with semaphore:
+            try:
+                diff_data = await get_mr_diff(project_id, mr_iid)
+                return mr_iid, _change_stats_from_diff(diff_data)
+            except Exception as exc:
+                logger.warning("Не удалось загрузить diff для MR !%s: %s", mr_iid, exc)
+                return mr_iid, {
+                    "file_count": None,
+                    "total_changed_lines": None,
+                    "files": [],
+                    "error": str(exc),
+                }
+
+    if not by_iid:
+        return
+
+    results = await asyncio.gather(*(load_one(mr_iid) for mr_iid in by_iid))
+    for mr_iid, stats in results:
+        for mr_info in by_iid[mr_iid]:
+            mr_info["change_stats"] = stats
 
 
 def _add_to_jira_map(
@@ -226,20 +300,14 @@ async def run_compare(data: CompareRequest):
                     continue  # search returned unrelated MR
                 if mr.get("state") != "merged":
                     continue
-                mr_info = {
-                    "mr_iid": mr["iid"],
-                    "mr_title": title,
-                    "mr_url": mr.get("web_url", ""),
-                    "source_branch": mr.get("source_branch", ""),
-                    "merged_at": mr.get("merged_at", ""),
-                    "author": mr.get("author", {}).get("name", ""),
-                    "in_range": False,
-                }
+                mr_info = _mr_to_info(mr, in_range=False)
                 if jid not in jira_map:
                     jira_map[jid] = {}
                 if tb not in jira_map[jid]:
                     jira_map[jid][tb] = []
                 jira_map[jid][tb].append(mr_info)
+
+    await _attach_change_stats(jira_map, no_jira, project_id)
 
     # Build comparison rows
     rows = []
