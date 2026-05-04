@@ -141,3 +141,43 @@ def test_default_branches_returns_two_latest_release_branches(monkeypatch):
     result = asyncio.run(compare.default_branches())
 
     assert result == {"branches": ["master", "release/103", "release/102"]}
+
+
+def test_annotate_cherry_pick_links_marks_source_and_release_mrs():
+    source_mr = compare._mr_to_info({
+        "iid": 10,
+        "title": "PROJ-1 Source",
+        "web_url": "https://gitlab.example/mr/10",
+        "source_branch": "feature/proj-1",
+        "target_branch": "master",
+        "merge_commit_sha": "abcdef1234567890",
+        "merged_at": "2026-05-01T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    release_mr = compare._mr_to_info({
+        "iid": 11,
+        "title": "PROJ-1 Cherry-pick",
+        "web_url": "https://gitlab.example/mr/11",
+        "source_branch": "cherry-pick-abcdef12",
+        "target_branch": "release/103",
+        "merge_commit_sha": "fedcba9876543210",
+        "merged_at": "2026-05-02T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    branch_data = {
+        "master": [source_mr],
+        "release/103": [release_mr],
+    }
+
+    compare._annotate_cherry_pick_links(branch_data)
+
+    assert branch_data["master"][0]["cherry_picked_to"] == [{
+        "mr_iid": 11,
+        "mr_url": "https://gitlab.example/mr/11",
+        "target_branch": "release/103",
+    }]
+    assert branch_data["release/103"][0]["cherry_pick_of"] == {
+        "mr_iid": 10,
+        "mr_url": "https://gitlab.example/mr/10",
+        "target_branch": "master",
+    }

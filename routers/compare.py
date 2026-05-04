@@ -51,9 +51,14 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
         "mr_title": mr.get("title", ""),
         "mr_url": mr.get("web_url", ""),
         "source_branch": mr.get("source_branch", ""),
+        "target_branch": mr.get("target_branch", ""),
         "merged_at": mr.get("merged_at", ""),
+        "merge_commit_sha": mr.get("merge_commit_sha") or "",
         "author": mr.get("author", {}).get("name", ""),
         "in_range": in_range,
+        "cherry_pick_key": "",
+        "cherry_pick_of": None,
+        "cherry_picked_to": [],
         "change_stats": {
             "file_count": None,
             "total_changed_lines": None,
@@ -152,6 +157,71 @@ def _add_to_jira_map(
             jira_map[jira_id][branch].append(mr_info)
     else:
         no_jira.append({**mr_info, "branch": branch})
+
+
+def _cherry_pick_key_from_source_branch(source_branch: str) -> str:
+    prefix = "cherry-pick-"
+    if not source_branch.startswith(prefix):
+        return ""
+    return source_branch[len(prefix):].strip().lower()
+
+
+def _cherry_pick_key_from_merge_sha(merge_commit_sha: str) -> str:
+    return (merge_commit_sha or "").strip()[:8].lower()
+
+
+def _annotate_cherry_pick_links(branch_data: dict[str, list[dict]]) -> None:
+    source_by_key: dict[str, dict] = {}
+    picked_by_key: dict[str, list[dict]] = {}
+
+    for branch, mrs in branch_data.items():
+        for mr in mrs:
+            mr.setdefault("cherry_pick_key", "")
+            mr["cherry_pick_of"] = None
+            mr["cherry_picked_to"] = []
+
+            source_branch = mr.get("source_branch", "")
+            cp_key = _cherry_pick_key_from_source_branch(source_branch)
+            if cp_key:
+                mr["cherry_pick_key"] = cp_key
+                picked_by_key.setdefault(cp_key, []).append({**mr, "target_branch": branch})
+                continue
+
+            source_key = _cherry_pick_key_from_merge_sha(mr.get("merge_commit_sha", ""))
+            if source_key:
+                mr["cherry_pick_key"] = source_key
+                source_by_key.setdefault(source_key, {**mr, "target_branch": branch})
+
+    for key, picked_mrs in picked_by_key.items():
+        source_mr = source_by_key.get(key)
+        if not source_mr:
+            continue
+        for picked_mr in picked_mrs:
+            picked_mr["cherry_pick_of"] = {
+                "mr_iid": source_mr["mr_iid"],
+                "mr_url": source_mr["mr_url"],
+                "target_branch": source_mr.get("target_branch", ""),
+            }
+        source_mr_refs = source_by_key[key].setdefault("cherry_picked_to", [])
+        for picked_mr in picked_mrs:
+            source_mr_refs.append({
+                "mr_iid": picked_mr["mr_iid"],
+                "mr_url": picked_mr["mr_url"],
+                "target_branch": picked_mr.get("target_branch", ""),
+            })
+
+    for branch, mrs in branch_data.items():
+        for index, mr in enumerate(mrs):
+            key = mr.get("cherry_pick_key", "")
+            if key and key in source_by_key and not _cherry_pick_key_from_source_branch(mr.get("source_branch", "")):
+                linked = source_by_key[key]
+                if linked["mr_iid"] == mr["mr_iid"]:
+                    mr["cherry_picked_to"] = linked.get("cherry_picked_to", [])
+            elif key and key in picked_by_key:
+                for picked_mr in picked_by_key[key]:
+                    if picked_mr["mr_iid"] == mr["mr_iid"]:
+                        mrs[index] = picked_mr
+                        break
 
 
 @router.get("/default-branches")
@@ -313,6 +383,7 @@ async def run_compare(data: CompareRequest):
     rows = []
     for jira_id in sorted(jira_map.keys()):
         branch_data = jira_map[jira_id]
+        _annotate_cherry_pick_links(branch_data)
         branch_info = {}
         for branch in branches:
             mrs_in_branch = branch_data.get(branch, [])

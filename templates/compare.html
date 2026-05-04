@@ -219,6 +219,7 @@ function renderMrChip(m) {
   const stats = m.change_stats || {};
   const files = stats.files || [];
   const hasStats = Boolean(stats.loaded || stats.error);
+  const cherryPickMeta = renderCherryPickMeta(m);
   const statTitle = files.length
     ? files.map(f => `${f.path}: ${f.changed_lines}`).join("\n")
     : (stats.error ? `Diff недоступен: ${stats.error}` : "Нет данных по файлам");
@@ -241,7 +242,32 @@ function renderMrChip(m) {
       <span class="min-w-0 flex-1 truncate text-slate-200" title="${escHtml(title)}">${escHtml(title)}</span>
       ${hasStats ? `<span class="shrink-0 rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300" title="${escHtml(statTitle)}">${fileCount}ф/${lineCount}±</span>` : ""}
     </div>
+    ${cherryPickMeta}
     ${files.length ? `<div class="mt-1 flex max-w-full flex-wrap gap-1">${topFiles}${more}</div>` : ""}
+  </div>`;
+}
+
+function renderCherryPickMeta(m) {
+  if (m.cherry_pick_of) {
+    return `<div class="mt-1 inline-flex max-w-full items-center gap-1 rounded border border-sky-600/60 bg-sky-950/45 px-1.5 py-0.5 text-[10px] text-sky-200">
+      <span class="shrink-0">CP из</span>
+      <a href="${m.cherry_pick_of.mr_url}" target="_blank" class="shrink-0 font-mono text-sky-100 hover:underline">!${m.cherry_pick_of.mr_iid}</a>
+      <span class="min-w-0 truncate text-sky-300">${escHtml(m.cherry_pick_of.target_branch || "")}</span>
+    </div>`;
+  }
+
+  const targets = m.cherry_picked_to || [];
+  if (targets.length === 0) return "";
+
+  const items = targets.map(target => `
+    <span class="inline-flex max-w-full items-center gap-1 rounded border border-cyan-700/60 bg-cyan-950/35 px-1.5 py-0.5">
+      <span class="min-w-0 truncate">${escHtml(target.target_branch || "")}</span>
+      <a href="${target.mr_url}" target="_blank" class="shrink-0 font-mono text-cyan-100 hover:underline">!${target.mr_iid}</a>
+    </span>`).join("");
+
+  return `<div class="mt-1 flex max-w-full flex-wrap items-center gap-1 text-[10px] text-cyan-200">
+    <span class="shrink-0 rounded bg-cyan-950/50 px-1.5 py-0.5 text-cyan-300">CP →</span>
+    ${items}
   </div>`;
 }
 
