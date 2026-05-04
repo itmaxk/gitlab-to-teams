@@ -42,6 +42,12 @@ def test_change_stats_from_diff_counts_files_and_lines():
         {"path": "app.py", "changed_lines": 2},
         {"path": "docs/new.txt", "changed_lines": 2},
     ]
+    assert stats["signature"] == [
+        "app.py|+|new",
+        "app.py|-|old",
+        "docs/new.txt|+|one",
+        "docs/new.txt|+|two",
+    ]
 
 
 def test_attach_change_stats_reuses_single_diff_load_per_mr(monkeypatch):
@@ -288,3 +294,135 @@ def test_annotate_cherry_pick_links_groups_transitive_cherry_picks():
     assert branch_data["master"][0]["cherry_pick_group"] == 1
     assert branch_data["master"][0]["cherry_pick_of"]["mr_iid"] == 21
     assert branch_data["release/102"][0]["cherry_pick_of"]["mr_iid"] == 20
+
+
+def test_annotate_similar_diff_links_groups_manual_cherry_pick_candidates():
+    first = compare._mr_to_info({
+        "iid": 30,
+        "title": "PROJ-3 Add endpoint",
+        "web_url": "https://gitlab.example/mr/30",
+        "source_branch": "feature/proj-3",
+        "target_branch": "master",
+        "merge_commit_sha": "1111222233334444",
+        "merged_at": "2026-05-01T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    second = compare._mr_to_info({
+        "iid": 31,
+        "title": "PROJ-3 Add endpoint release fix",
+        "web_url": "https://gitlab.example/mr/31",
+        "source_branch": "manual/proj-3-release",
+        "target_branch": "release/103",
+        "merge_commit_sha": "5555666677778888",
+        "merged_at": "2026-05-02T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    first["change_stats"] = {
+        "loaded": True,
+        "signature": ["a", "b", "c", "d", "e"],
+        "files": [],
+        "file_count": 0,
+        "total_changed_lines": 0,
+        "error": "",
+    }
+    second["change_stats"] = {
+        "loaded": True,
+        "signature": ["a", "b", "c", "d", "x"],
+        "files": [],
+        "file_count": 0,
+        "total_changed_lines": 0,
+        "error": "",
+    }
+    branch_data = {
+        "master": [first],
+        "release/103": [second],
+    }
+
+    compare._annotate_cherry_pick_links(branch_data)
+    compare._annotate_similar_diff_links(branch_data)
+
+    assert branch_data["master"][0]["similar_pick_group"] == 1
+    assert branch_data["release/103"][0]["similar_pick_group"] == 1
+    assert branch_data["master"][0]["similar_pick_matches"][0]["mr_iid"] == 31
+    assert branch_data["master"][0]["similar_pick_matches"][0]["diff_similarity"] == 0.8
+    assert branch_data["master"][0]["cherry_pick_group"] is None
+
+
+def test_annotate_similar_diff_links_skips_existing_cherry_pick_groups():
+    source = compare._mr_to_info({
+        "iid": 40,
+        "title": "PROJ-4 Source",
+        "web_url": "https://gitlab.example/mr/40",
+        "source_branch": "feature/proj-4",
+        "target_branch": "master",
+        "merge_commit_sha": "9999aaaa33334444",
+        "merged_at": "2026-05-01T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    picked = compare._mr_to_info({
+        "iid": 41,
+        "title": "PROJ-4 Pick",
+        "web_url": "https://gitlab.example/mr/41",
+        "source_branch": "cherry-pick-9999aaaa",
+        "target_branch": "release/103",
+        "merge_commit_sha": "bbbbcccc77778888",
+        "merged_at": "2026-05-02T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    for mr in (source, picked):
+        mr["change_stats"] = {
+            "loaded": True,
+            "signature": ["same", "diff"],
+            "files": [],
+            "file_count": 0,
+            "total_changed_lines": 0,
+            "error": "",
+        }
+    branch_data = {"master": [source], "release/103": [picked]}
+
+    compare._annotate_cherry_pick_links(branch_data)
+    compare._annotate_similar_diff_links(branch_data)
+
+    assert branch_data["master"][0]["cherry_pick_group"] == 1
+    assert branch_data["release/103"][0]["cherry_pick_group"] == 1
+    assert branch_data["master"][0]["similar_pick_group"] is None
+    assert branch_data["release/103"][0]["similar_pick_group"] is None
+
+
+def test_annotate_similar_diff_links_skips_same_target_branch_matches():
+    first = compare._mr_to_info({
+        "iid": 50,
+        "title": "PROJ-5 One",
+        "web_url": "https://gitlab.example/mr/50",
+        "source_branch": "feature/proj-5-a",
+        "target_branch": "master",
+        "merge_commit_sha": "1111aaaa33334444",
+        "merged_at": "2026-05-01T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    second = compare._mr_to_info({
+        "iid": 51,
+        "title": "PROJ-5 Two",
+        "web_url": "https://gitlab.example/mr/51",
+        "source_branch": "feature/proj-5-b",
+        "target_branch": "master",
+        "merge_commit_sha": "2222bbbb33334444",
+        "merged_at": "2026-05-02T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    for mr in (first, second):
+        mr["change_stats"] = {
+            "loaded": True,
+            "signature": ["same", "diff"],
+            "files": [],
+            "file_count": 0,
+            "total_changed_lines": 0,
+            "error": "",
+        }
+    branch_data = {"master": [first, second]}
+
+    compare._annotate_cherry_pick_links(branch_data)
+    compare._annotate_similar_diff_links(branch_data)
+
+    assert branch_data["master"][0]["similar_pick_group"] is None
+    assert branch_data["master"][1]["similar_pick_group"] is None

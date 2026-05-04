@@ -223,7 +223,11 @@ function renderMrChip(m) {
   const groupBadge = m.cherry_pick_group
     ? `<span class="shrink-0 rounded border border-fuchsia-600/70 bg-fuchsia-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="Связанная cherry-pick группа">CP#${m.cherry_pick_group}</span>`
     : "";
+  const similarBadge = !m.cherry_pick_group && m.similar_pick_group
+    ? `<span class="shrink-0 rounded border border-orange-500/70 bg-orange-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-orange-200" title="Похоже на ручной cherry-pick по diff">≈CP#${m.similar_pick_group}</span>`
+    : "";
   const cherryPickMeta = renderCherryPickMeta(m);
+  const similarPickMeta = renderSimilarPickMeta(m);
   const statTitle = files.length
     ? files.map(f => `${f.path}: ${f.changed_lines}`).join("\n")
     : (stats.error ? `Diff недоступен: ${stats.error}` : "Нет данных по файлам");
@@ -245,10 +249,12 @@ function renderMrChip(m) {
       <a href="${m.mr_url}" target="_blank" class="shrink-0 font-mono text-blue-300 hover:underline" title="${escHtml(title)}${dim ? ' (вне диапазона дат)' : ''}">!${m.mr_iid}</a>
       ${stateBadge}
       ${groupBadge}
+      ${similarBadge}
       <span class="min-w-0 flex-1 truncate text-slate-200" title="${escHtml(title)}">${escHtml(title)}</span>
       ${hasStats ? `<span class="shrink-0 rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300" title="${escHtml(statTitle)}">${fileCount}ф/${lineCount}±</span>` : ""}
     </div>
     ${cherryPickMeta}
+    ${similarPickMeta}
     ${files.length ? `<div class="mt-1 flex max-w-full flex-wrap gap-1">${topFiles}${more}</div>` : ""}
   </div>`;
 }
@@ -290,6 +296,24 @@ function renderCherryPickMeta(m) {
 
   return `<div class="mt-1 flex max-w-full flex-wrap items-center gap-1 text-[10px] text-cyan-200">
     <span class="shrink-0 rounded bg-cyan-950/50 px-1.5 py-0.5 text-cyan-300">CP#${m.cherry_pick_group || targets[0].group || "?"} →</span>
+    ${items}
+  </div>`;
+}
+
+function renderSimilarPickMeta(m) {
+  const matches = m.similar_pick_matches || [];
+  if (!m.similar_pick_group || matches.length === 0) return "";
+
+  const items = matches.map(match => `
+    <span class="inline-flex max-w-full items-center gap-1 rounded border border-orange-700/60 bg-orange-950/35 px-1.5 py-0.5"
+          title="diff ${Math.round((match.diff_similarity || 0) * 100)}%, title ${Math.round((match.title_similarity || 0) * 100)}%">
+      <span class="min-w-0 truncate">${escHtml(match.target_branch || "")}</span>
+      <a href="${match.mr_url}" target="_blank" class="shrink-0 font-mono text-orange-100 hover:underline">!${match.mr_iid}</a>
+      <span class="shrink-0 text-orange-300">${Math.round((match.diff_similarity || 0) * 100)}%</span>
+    </span>`).join("");
+
+  return `<div class="mt-1 flex max-w-full flex-wrap items-center gap-1 text-[10px] text-orange-200">
+    <span class="shrink-0 rounded bg-orange-950/50 px-1.5 py-0.5 text-orange-300">≈CP#${m.similar_pick_group}</span>
     ${items}
   </div>`;
 }

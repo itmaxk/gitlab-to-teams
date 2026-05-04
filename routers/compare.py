@@ -1,7 +1,9 @@
 import asyncio
+import difflib
 import logging
 import os
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -22,6 +24,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/compare", tags=["compare"])
 
 JIRA_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
+MANUAL_PICK_DIFF_THRESHOLD = 0.8
+MANUAL_PICK_TITLE_HINT_THRESHOLD = 0.7
 
 
 def _parse_dt(s: str) -> Optional[datetime]:
@@ -61,10 +65,13 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
         "cherry_pick_of": None,
         "cherry_picked_to": [],
         "cherry_pick_group": None,
+        "similar_pick_group": None,
+        "similar_pick_matches": [],
         "change_stats": {
             "file_count": None,
             "total_changed_lines": None,
             "files": [],
+            "signature": [],
             "error": "",
             "loaded": False,
         },
@@ -84,10 +91,13 @@ def _changed_line_count(diff: str) -> int:
 def _change_stats_from_diff(diff_data: dict) -> dict:
     files = []
     total = 0
+    signature = []
     for change in diff_data.get("changes", []):
         path = change.get("new_path") or change.get("old_path") or ""
-        changed_lines = _changed_line_count(change.get("diff", ""))
+        diff = change.get("diff", "")
+        changed_lines = _changed_line_count(diff)
         total += changed_lines
+        signature.extend(_diff_signature(path, diff))
         files.append({
             "path": path,
             "changed_lines": changed_lines,
@@ -97,9 +107,41 @@ def _change_stats_from_diff(diff_data: dict) -> dict:
         "file_count": len(files),
         "total_changed_lines": total,
         "files": files,
+        "signature": sorted(signature),
         "error": "",
         "loaded": True,
     }
+
+
+def _diff_signature(path: str, diff: str) -> list[str]:
+    result = []
+    for line in (diff or "").splitlines():
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if not (line.startswith("+") or line.startswith("-")):
+            continue
+        normalized = re.sub(r"\s+", " ", line[1:].strip()).lower()
+        if not normalized:
+            continue
+        result.append(f"{path}|{line[:1]}|{normalized}")
+    return result
+
+
+def _multiset_similarity(left: list[str], right: list[str]) -> float:
+    if not left or not right:
+        return 0.0
+    left_counts = Counter(left)
+    right_counts = Counter(right)
+    shared = sum((left_counts & right_counts).values())
+    return (2 * shared) / (len(left) + len(right))
+
+
+def _title_similarity(left: str, right: str) -> float:
+    return difflib.SequenceMatcher(
+        None,
+        (left or "").strip().lower(),
+        (right or "").strip().lower(),
+    ).ratio()
 
 
 def _iter_mr_infos(jira_map: dict, no_jira: list):
@@ -127,6 +169,7 @@ async def _attach_change_stats(jira_map: dict, no_jira: list, project_id: int) -
                     "file_count": None,
                     "total_changed_lines": None,
                     "files": [],
+                    "signature": [],
                     "error": str(exc),
                     "loaded": False,
                 }
@@ -187,6 +230,8 @@ def _annotate_cherry_pick_links(branch_data: dict[str, list[dict]]) -> None:
             mr["cherry_pick_of"] = None
             mr["cherry_picked_to"] = []
             mr["cherry_pick_group"] = None
+            mr["similar_pick_group"] = None
+            mr["similar_pick_matches"] = []
 
             source_key = _cherry_pick_key_from_merge_sha(mr.get("merge_commit_sha", ""))
             if source_key:
@@ -250,6 +295,83 @@ def _annotate_cherry_pick_links(branch_data: dict[str, list[dict]]) -> None:
                 {**item, "group": mr["cherry_pick_group"]}
                 for item in mr["cherry_picked_to"]
             ]
+
+
+def _annotate_similar_diff_links(branch_data: dict[str, list[dict]]) -> None:
+    candidates = [
+        mr
+        for mrs in branch_data.values()
+        for mr in mrs
+        if not mr.get("cherry_pick_group")
+        and mr.get("change_stats", {}).get("loaded")
+        and mr.get("change_stats", {}).get("signature")
+    ]
+    if len(candidates) < 2:
+        return
+
+    graph: dict[int, set[int]] = {mr["mr_iid"]: set() for mr in candidates}
+    edge_meta: dict[tuple[int, int], dict] = {}
+
+    for index, left in enumerate(candidates):
+        for right in candidates[index + 1:]:
+            if left.get("target_branch") == right.get("target_branch"):
+                continue
+            left_signature = left.get("change_stats", {}).get("signature", [])
+            right_signature = right.get("change_stats", {}).get("signature", [])
+            diff_score = _multiset_similarity(left_signature, right_signature)
+            if diff_score < MANUAL_PICK_DIFF_THRESHOLD:
+                continue
+
+            title_score = _title_similarity(left.get("mr_title", ""), right.get("mr_title", ""))
+            graph[left["mr_iid"]].add(right["mr_iid"])
+            graph[right["mr_iid"]].add(left["mr_iid"])
+            key = tuple(sorted((left["mr_iid"], right["mr_iid"])))
+            edge_meta[key] = {
+                "diff_similarity": round(diff_score, 3),
+                "title_similarity": round(title_score, 3),
+                "title_hint": title_score >= MANUAL_PICK_TITLE_HINT_THRESHOLD,
+            }
+
+    existing_groups = [
+        mr.get("cherry_pick_group") or 0
+        for mrs in branch_data.values()
+        for mr in mrs
+    ]
+    group = max(existing_groups, default=0) + 1
+    visited: set[int] = set()
+    mr_by_iid = {mr["mr_iid"]: mr for mr in candidates}
+
+    for start_iid in sorted(graph):
+        if start_iid in visited or not graph[start_iid]:
+            continue
+        stack = [start_iid]
+        component = []
+        visited.add(start_iid)
+        while stack:
+            iid = stack.pop()
+            component.append(iid)
+            for next_iid in graph.get(iid, set()):
+                if next_iid in visited:
+                    continue
+                visited.add(next_iid)
+                stack.append(next_iid)
+
+        for iid in component:
+            mr = mr_by_iid[iid]
+            mr["similar_pick_group"] = group
+            matches = []
+            for other_iid in sorted(graph[iid]):
+                other = mr_by_iid[other_iid]
+                key = tuple(sorted((iid, other_iid)))
+                matches.append({
+                    "mr_iid": other["mr_iid"],
+                    "mr_url": other["mr_url"],
+                    "target_branch": other.get("target_branch", ""),
+                    **edge_meta[key],
+                    "group": group,
+                })
+            mr["similar_pick_matches"] = matches
+        group += 1
 
 
 @router.get("/default-branches")
@@ -408,6 +530,8 @@ async def run_compare(data: CompareRequest):
     for jira_id in sorted(jira_map.keys()):
         branch_data = jira_map[jira_id]
         _annotate_cherry_pick_links(branch_data)
+        if data.include_change_stats:
+            _annotate_similar_diff_links(branch_data)
         branch_info = {}
         for branch in branches:
             mrs_in_branch = branch_data.get(branch, [])
