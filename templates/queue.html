@@ -29,6 +29,27 @@
     <span id="jira-stats" class="text-xs text-slate-500"></span>
   </div>
   <div id="jira-results" class="mt-3 hidden"></div>
+
+  <div class="mt-4 border-t border-slate-700 pt-4">
+    <div class="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto] md:items-end">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Базовая ветка</label>
+        <input type="text" id="compare-source-branch" value="master"
+          class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Ветки для сравнения</label>
+        <textarea id="compare-target-branches" rows="1"
+          class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none font-mono"
+          placeholder="release/102, release/101"></textarea>
+      </div>
+      <button onclick="compareJiraBranches()" id="jira-compare-btn"
+        class="bg-cyan-600 hover:bg-cyan-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer">
+        Сверить ветки
+      </button>
+    </div>
+    <div id="branch-compare-results" class="mt-3 hidden"></div>
+  </div>
 </div>
 
 <!-- Ввод MR -->
@@ -133,6 +154,7 @@ let cherryPickState = {};
 let pollTimer = null;
 let autoRunning = false;
 let jiraResults = [];
+let branchCompareRows = [];
 
 function parseJiraInput(raw) {
   return raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean).map(s => {
@@ -264,12 +286,174 @@ function copyJiraTaskLinks() {
 function fillMrIds() {
   if (jiraResults.length === 0) return;
   const ids = jiraResults.map(r => r.mr_id);
+  mergeMrIdsIntoInput(ids);
+}
+
+function mergeMrIdsIntoInput(ids) {
   const existing = document.getElementById('mr-input').value.trim();
   const existingIds = existing
     ? existing.split(/[\s,]+/).map(s => parseInt(s.replace(/[^0-9]/g, ''), 10)).filter(n => !isNaN(n) && n > 0)
     : [];
   const merged = [...new Set([...existingIds, ...ids])];
   document.getElementById('mr-input').value = merged.join('\n');
+}
+
+function parseBranchList(raw) {
+  return raw.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+}
+
+async function loadDefaultBranches() {
+  try {
+    const resp = await fetch('/api/compare/default-branches');
+    const data = await resp.json();
+    if (!resp.ok || !data.branches || data.branches.length === 0) return;
+
+    const source = data.branches[0] || 'master';
+    const releaseBranches = data.branches.slice(1);
+    document.getElementById('compare-source-branch').value = source;
+    if (releaseBranches.length) {
+      document.getElementById('compare-target-branches').value = releaseBranches.join(', ');
+      const targetInput = document.getElementById('target-branch');
+      if (!targetInput.value.trim()) {
+        targetInput.value = releaseBranches[0];
+      }
+    }
+  } catch (e) {
+    console.warn('Не удалось загрузить ветки по умолчанию:', e);
+  }
+}
+
+async function compareJiraBranches() {
+  const input = document.getElementById('jira-input').value.trim();
+  if (!input) {
+    alert('Укажите Jira ID для сравнения');
+    return;
+  }
+
+  const jiraIds = parseJiraInput(input);
+  const sourceBranch = document.getElementById('compare-source-branch').value.trim() || 'master';
+  const targetBranches = parseBranchList(document.getElementById('compare-target-branches').value);
+
+  if (targetBranches.length === 0) {
+    alert('Укажите хотя бы одну ветку для сравнения');
+    return;
+  }
+
+  const btn = document.getElementById('jira-compare-btn');
+  btn.textContent = 'Проверка...';
+  btn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/queue/compare-branches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jira_ids: jiraIds,
+        source_branch: sourceBranch,
+        target_branches: targetBranches,
+      }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok || data.error) {
+      alert(data.detail || data.error || 'Ошибка сравнения веток');
+      return;
+    }
+
+    branchCompareRows = data.rows || [];
+    renderBranchCompare(data);
+  } catch (e) {
+    alert('Ошибка: ' + e.message);
+  } finally {
+    btn.textContent = 'Сверить ветки';
+    btn.disabled = false;
+  }
+}
+
+function fillMissingForBranch(branch, ids) {
+  if (!ids || ids.length === 0) return;
+  document.getElementById('target-branch').value = branch;
+  mergeMrIdsIntoInput(ids);
+  document.getElementById('mr-input').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderBranchCompare(data) {
+  const el = document.getElementById('branch-compare-results');
+  const rows = data.rows || [];
+  const branches = data.target_branches || [];
+  const missingByBranch = data.missing_by_branch || {};
+  const missingTotal = Object.values(missingByBranch).reduce((sum, ids) => sum + ids.length, 0);
+
+  if (rows.length === 0) {
+    el.innerHTML = '<p class="text-slate-500 text-sm">Ничего не найдено для сравнения</p>';
+    el.classList.remove('hidden');
+    return;
+  }
+
+  const actions = branches.map(branch => {
+    const ids = missingByBranch[branch] || [];
+    if (ids.length === 0) {
+      return `<span class="text-xs text-slate-500">${escapeHtml(branch)}: нет пропусков</span>`;
+    }
+    return `<button onclick='fillMissingForBranch(${JSON.stringify(branch)}, ${JSON.stringify(ids)})'
+      class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded cursor-pointer">
+      Подставить ${ids.length} MR для ${escapeHtml(branch)}
+    </button>`;
+  }).join('');
+
+  const header = `
+    <div class="flex items-center gap-2 flex-wrap mb-3">
+      <span class="text-sm text-slate-300">Пропущено: ${missingTotal}</span>
+      ${actions}
+    </div>`;
+
+  const tableRows = rows.map(row => {
+    const sourceLinks = (row.source_mrs || []).map(mr =>
+      `<a href="${mr.web_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${mr.mr_id}</a>`
+    ).join(', ') || '<span class="text-red-400">нет в базе</span>';
+
+    const targetCells = branches.map(branch => {
+      const info = row.targets[branch] || { status: 'missing', mrs: [], source_mr_ids: [] };
+      if (info.status === 'error') {
+        return `<td class="px-3 py-2 text-red-400 text-xs">ошибка</td>`;
+      }
+      if (info.mrs && info.mrs.length) {
+        const links = info.mrs.map(mr =>
+          `<a href="${mr.web_url}" target="_blank" class="text-blue-400 hover:text-blue-300">!${mr.mr_id}</a>`
+        ).join(', ');
+        return `<td class="px-3 py-2"><span class="text-emerald-400 text-xs">есть</span><div>${links}</div></td>`;
+      }
+      const ids = info.source_mr_ids || [];
+      const button = ids.length
+        ? `<button onclick='fillMissingForBranch(${JSON.stringify(branch)}, ${JSON.stringify(ids)})'
+            class="mt-1 bg-orange-600 hover:bg-orange-700 text-white text-xs font-medium px-2 py-1 rounded cursor-pointer">
+            Влить
+          </button>`
+        : '';
+      return `<td class="px-3 py-2"><span class="text-orange-400 text-xs">нет</span>${button}</td>`;
+    }).join('');
+
+    return `<tr class="border-b border-slate-700/50 hover:bg-slate-800/50">
+      <td class="px-3 py-2 text-indigo-300 font-medium">${escapeHtml(row.jira_id)}</td>
+      <td class="px-3 py-2">${sourceLinks}</td>
+      ${targetCells}
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `${header}
+    <div class="overflow-x-auto border border-slate-700 rounded-lg">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-slate-400 border-b border-slate-700 bg-slate-900/50">
+            <th class="px-3 py-2">Jira</th>
+            <th class="px-3 py-2">${escapeHtml(data.source_branch)}</th>
+            ${branches.map(b => `<th class="px-3 py-2">${escapeHtml(b)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+  el.classList.remove('hidden');
 }
 
 async function loadMRs() {
@@ -859,6 +1043,9 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-document.addEventListener('DOMContentLoaded', loadHistory);
+document.addEventListener('DOMContentLoaded', () => {
+  loadDefaultBranches();
+  loadHistory();
+});
 </script>
 {% endblock %}

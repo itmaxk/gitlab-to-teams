@@ -1,4 +1,5 @@
 import logging
+import re
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException
@@ -23,9 +24,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
+JIRA_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
+
 
 class SearchJiraRequest(BaseModel):
     jira_ids: list[str]
+    state: str = "merged"
+
+
+class CompareBranchesRequest(BaseModel):
+    jira_ids: list[str]
+    source_branch: str = "master"
+    target_branches: list[str] = []
     state: str = "merged"
 
 
@@ -64,6 +74,22 @@ class SaveSessionRequest(BaseModel):
     items: list[SaveSessionItem]
 
 
+def _mr_info(mr: dict) -> dict:
+    return {
+        "mr_id": mr["iid"],
+        "title": mr.get("title", ""),
+        "web_url": mr.get("web_url", ""),
+        "state": mr.get("state", ""),
+        "merged_at": mr.get("merged_at"),
+        "source_branch": mr.get("source_branch", ""),
+        "target_branch": mr.get("target_branch", ""),
+    }
+
+
+def _title_has_exact_jira(title: str, jira_id: str) -> bool:
+    return any(match.group(1) == jira_id for match in JIRA_RE.finditer(title or ""))
+
+
 @router.post("/search-jira")
 async def search_jira(data: SearchJiraRequest):
     """Ищет MR по Jira ID в title."""
@@ -99,6 +125,104 @@ async def search_jira(data: SearchJiraRequest):
                 "error": str(e),
             })
     return {"results": results}
+
+
+@router.post("/compare-branches")
+async def compare_branches(data: CompareBranchesRequest):
+    """Сверяет наличие merged MR по Jira ID в базовой и целевых ветках."""
+    jira_ids = []
+    seen_jira = set()
+    for jira_id in data.jira_ids:
+        normalized = jira_id.strip().upper()
+        if normalized and normalized not in seen_jira:
+            seen_jira.add(normalized)
+            jira_ids.append(normalized)
+
+    source_branch = data.source_branch.strip() or "master"
+    target_branches = []
+    seen_branches = {source_branch}
+    for branch in data.target_branches:
+        branch = branch.strip()
+        if branch and branch not in seen_branches:
+            seen_branches.add(branch)
+            target_branches.append(branch)
+
+    if not jira_ids:
+        return {"error": "Укажите хотя бы один Jira ID"}
+    if not target_branches:
+        return {"error": "Укажите хотя бы одну ветку для сравнения"}
+
+    project_id = await get_project_id()
+    rows = []
+    missing_by_branch: dict[str, list[int]] = {branch: [] for branch in target_branches}
+    candidate_ids = []
+
+    for jira_id in jira_ids:
+        found_by_branch: dict[str, list[dict]] = {
+            source_branch: [],
+            **{branch: [] for branch in target_branches},
+        }
+        try:
+            mrs = await search_merge_requests(project_id, jira_id, state=data.state, per_page=50)
+        except Exception as e:
+            logger.warning("Ошибка сравнения MR по Jira %s: %s", jira_id, e)
+            rows.append({
+                "jira_id": jira_id,
+                "source_branch": source_branch,
+                "target_branches": target_branches,
+                "source_mrs": [],
+                "targets": {
+                    branch: {"status": "error", "mrs": [], "can_cherry_pick": False}
+                    for branch in target_branches
+                },
+                "error": str(e),
+            })
+            continue
+
+        for mr in mrs:
+            if mr.get("state") != data.state:
+                continue
+            if not _title_has_exact_jira(mr.get("title", ""), jira_id):
+                continue
+            branch = mr.get("target_branch", "")
+            if branch in found_by_branch:
+                found_by_branch[branch].append(_mr_info(mr))
+
+        source_mrs = found_by_branch[source_branch]
+        source_mr_ids = [mr["mr_id"] for mr in source_mrs]
+        targets = {}
+        for branch in target_branches:
+            branch_mrs = found_by_branch[branch]
+            has_mr = bool(branch_mrs)
+            can_cherry_pick = bool(source_mrs) and not has_mr
+            if can_cherry_pick:
+                for mr_id in source_mr_ids:
+                    if mr_id not in missing_by_branch[branch]:
+                        missing_by_branch[branch].append(mr_id)
+                    if mr_id not in candidate_ids:
+                        candidate_ids.append(mr_id)
+            targets[branch] = {
+                "status": "merged" if has_mr else "missing",
+                "mrs": branch_mrs,
+                "can_cherry_pick": can_cherry_pick,
+                "source_mr_ids": source_mr_ids if can_cherry_pick else [],
+            }
+
+        rows.append({
+            "jira_id": jira_id,
+            "source_branch": source_branch,
+            "target_branches": target_branches,
+            "source_mrs": source_mrs,
+            "targets": targets,
+        })
+
+    return {
+        "rows": rows,
+        "source_branch": source_branch,
+        "target_branches": target_branches,
+        "missing_by_branch": missing_by_branch,
+        "candidate_mr_ids": candidate_ids,
+    }
 
 
 @router.post("/load")
