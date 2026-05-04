@@ -41,6 +41,7 @@ class CompareRequest(BaseModel):
     date_to: str = ""
     jira_ids: list[str] = []
     mr_ids: list[int] = []
+    include_change_stats: bool = True
 
 
 def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
@@ -58,6 +59,7 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
             "total_changed_lines": None,
             "files": [],
             "error": "",
+            "loaded": False,
         },
     }
 
@@ -89,6 +91,7 @@ def _change_stats_from_diff(diff_data: dict) -> dict:
         "total_changed_lines": total,
         "files": files,
         "error": "",
+        "loaded": True,
     }
 
 
@@ -118,6 +121,7 @@ async def _attach_change_stats(jira_map: dict, no_jira: list, project_id: int) -
                     "total_changed_lines": None,
                     "files": [],
                     "error": str(exc),
+                    "loaded": False,
                 }
 
     if not by_iid:
@@ -307,7 +311,8 @@ async def run_compare(data: CompareRequest):
                     jira_map[jid][tb] = []
                 jira_map[jid][tb].append(mr_info)
 
-    await _attach_change_stats(jira_map, no_jira, project_id)
+    if data.include_change_stats:
+        await _attach_change_stats(jira_map, no_jira, project_id)
 
     # Build comparison rows
     rows = []
@@ -367,4 +372,5 @@ async def run_compare(data: CompareRequest):
         "no_jira": no_jira_by_branch,
         "branches": branches,
         "total_mrs": total_mrs,
+        "change_stats_loaded": data.include_change_stats,
     }

@@ -76,3 +76,41 @@ def test_attach_change_stats_reuses_single_diff_load_per_mr(monkeypatch):
     assert calls == [(42, 7)]
     assert mr_info["change_stats"]["file_count"] == 1
     assert mr_info["change_stats"]["total_changed_lines"] == 2
+
+
+def test_run_compare_can_skip_change_stats(monkeypatch):
+    async def fake_get_project_id():
+        return 42
+
+    async def fake_get_mr_by_iid(project_id, mr_id):
+        return {
+            "iid": mr_id,
+            "title": "PROJ-1 Title",
+            "web_url": f"https://gitlab.example/mr/{mr_id}",
+            "state": "merged",
+            "source_branch": "feature/proj-1",
+            "target_branch": "master",
+            "merged_at": "2026-05-01T10:00:00Z",
+            "author": {"name": "User"},
+        }
+
+    async def fail_attach(*args, **kwargs):
+        raise AssertionError("change stats should not be loaded")
+
+    monkeypatch.setattr(compare, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(compare, "get_mr_by_iid", fake_get_mr_by_iid)
+    monkeypatch.setattr(compare, "_attach_change_stats", fail_attach)
+
+    result = asyncio.run(
+        compare.run_compare(
+            compare.CompareRequest(
+                branches=["master"],
+                mr_ids=[7],
+                include_change_stats=False,
+            )
+        )
+    )
+
+    mr = result["rows"][0]["branches"]["master"]["mrs"][0]
+    assert result["change_stats_loaded"] is False
+    assert mr["change_stats"]["loaded"] is False
