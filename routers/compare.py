@@ -59,6 +59,7 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
         "cherry_pick_key": "",
         "cherry_pick_of": None,
         "cherry_picked_to": [],
+        "cherry_pick_group": None,
         "change_stats": {
             "file_count": None,
             "total_changed_lines": None,
@@ -171,57 +172,83 @@ def _cherry_pick_key_from_merge_sha(merge_commit_sha: str) -> str:
 
 
 def _annotate_cherry_pick_links(branch_data: dict[str, list[dict]]) -> None:
-    source_by_key: dict[str, dict] = {}
-    picked_by_key: dict[str, list[dict]] = {}
+    mr_refs: list[dict] = []
+    branch_by_iid: dict[int, str] = {}
+    source_by_key: dict[str, list[dict]] = {}
+    graph: dict[int, set[int]] = {}
 
     for branch, mrs in branch_data.items():
         for mr in mrs:
+            mr_refs.append(mr)
+            branch_by_iid[mr["mr_iid"]] = branch
+            graph.setdefault(mr["mr_iid"], set())
             mr.setdefault("cherry_pick_key", "")
             mr["cherry_pick_of"] = None
             mr["cherry_picked_to"] = []
-
-            source_branch = mr.get("source_branch", "")
-            cp_key = _cherry_pick_key_from_source_branch(source_branch)
-            if cp_key:
-                mr["cherry_pick_key"] = cp_key
-                picked_by_key.setdefault(cp_key, []).append({**mr, "target_branch": branch})
-                continue
+            mr["cherry_pick_group"] = None
 
             source_key = _cherry_pick_key_from_merge_sha(mr.get("merge_commit_sha", ""))
             if source_key:
                 mr["cherry_pick_key"] = source_key
-                source_by_key.setdefault(source_key, {**mr, "target_branch": branch})
+                source_by_key.setdefault(source_key, []).append(mr)
 
-    for key, picked_mrs in picked_by_key.items():
-        source_mr = source_by_key.get(key)
-        if not source_mr:
+    for mr in mr_refs:
+        cp_key = _cherry_pick_key_from_source_branch(mr.get("source_branch", ""))
+        if not cp_key:
             continue
-        for picked_mr in picked_mrs:
-            picked_mr["cherry_pick_of"] = {
-                "mr_iid": source_mr["mr_iid"],
-                "mr_url": source_mr["mr_url"],
-                "target_branch": source_mr.get("target_branch", ""),
-            }
-        source_mr_refs = source_by_key[key].setdefault("cherry_picked_to", [])
-        for picked_mr in picked_mrs:
-            source_mr_refs.append({
-                "mr_iid": picked_mr["mr_iid"],
-                "mr_url": picked_mr["mr_url"],
-                "target_branch": picked_mr.get("target_branch", ""),
-            })
+        mr["cherry_pick_key"] = cp_key
+        source_mrs = source_by_key.get(cp_key, [])
+        if not source_mrs:
+            continue
 
-    for branch, mrs in branch_data.items():
-        for index, mr in enumerate(mrs):
-            key = mr.get("cherry_pick_key", "")
-            if key and key in source_by_key and not _cherry_pick_key_from_source_branch(mr.get("source_branch", "")):
-                linked = source_by_key[key]
-                if linked["mr_iid"] == mr["mr_iid"]:
-                    mr["cherry_picked_to"] = linked.get("cherry_picked_to", [])
-            elif key and key in picked_by_key:
-                for picked_mr in picked_by_key[key]:
-                    if picked_mr["mr_iid"] == mr["mr_iid"]:
-                        mrs[index] = picked_mr
-                        break
+        source_mr = source_mrs[0]
+        mr["cherry_pick_of"] = {
+            "mr_iid": source_mr["mr_iid"],
+            "mr_url": source_mr["mr_url"],
+            "target_branch": branch_by_iid.get(source_mr["mr_iid"], source_mr.get("target_branch", "")),
+        }
+        for source in source_mrs:
+            source["cherry_picked_to"].append({
+                "mr_iid": mr["mr_iid"],
+                "mr_url": mr["mr_url"],
+                "target_branch": branch_by_iid.get(mr["mr_iid"], mr.get("target_branch", "")),
+            })
+            graph.setdefault(source["mr_iid"], set()).add(mr["mr_iid"])
+            graph.setdefault(mr["mr_iid"], set()).add(source["mr_iid"])
+
+    group = 1
+    visited: set[int] = set()
+    mr_by_iid = {mr["mr_iid"]: mr for mr in mr_refs}
+    for start_iid in sorted(graph):
+        if start_iid in visited or not graph[start_iid]:
+            continue
+        stack = [start_iid]
+        component = []
+        visited.add(start_iid)
+        while stack:
+            iid = stack.pop()
+            component.append(iid)
+            for next_iid in graph.get(iid, set()):
+                if next_iid in visited:
+                    continue
+                visited.add(next_iid)
+                stack.append(next_iid)
+        for iid in component:
+            mr_by_iid[iid]["cherry_pick_group"] = group
+        group += 1
+
+    for mr in mr_refs:
+        mr["cherry_picked_to"].sort(key=lambda item: (item["target_branch"], item["mr_iid"]))
+        if mr["cherry_pick_of"] and mr["cherry_pick_group"]:
+            mr["cherry_pick_of"] = {
+                **mr["cherry_pick_of"],
+                "group": mr["cherry_pick_group"],
+            }
+        if mr["cherry_pick_group"]:
+            mr["cherry_picked_to"] = [
+                {**item, "group": mr["cherry_pick_group"]}
+                for item in mr["cherry_picked_to"]
+            ]
 
 
 @router.get("/default-branches")

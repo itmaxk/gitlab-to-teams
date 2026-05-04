@@ -175,9 +175,59 @@ def test_annotate_cherry_pick_links_marks_source_and_release_mrs():
         "mr_iid": 11,
         "mr_url": "https://gitlab.example/mr/11",
         "target_branch": "release/103",
+        "group": 1,
     }]
     assert branch_data["release/103"][0]["cherry_pick_of"] == {
         "mr_iid": 10,
         "mr_url": "https://gitlab.example/mr/10",
         "target_branch": "master",
+        "group": 1,
     }
+    assert branch_data["master"][0]["cherry_pick_group"] == 1
+    assert branch_data["release/103"][0]["cherry_pick_group"] == 1
+
+
+def test_annotate_cherry_pick_links_groups_transitive_cherry_picks():
+    release_source = compare._mr_to_info({
+        "iid": 20,
+        "title": "PROJ-2 Release source",
+        "web_url": "https://gitlab.example/mr/20",
+        "source_branch": "feature/proj-2",
+        "target_branch": "release/101",
+        "merge_commit_sha": "aaaabbbb11112222",
+        "merged_at": "2026-05-01T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    release_pick = compare._mr_to_info({
+        "iid": 21,
+        "title": "PROJ-2 Release chain",
+        "web_url": "https://gitlab.example/mr/21",
+        "source_branch": "cherry-pick-aaaabbbb",
+        "target_branch": "release/102",
+        "merge_commit_sha": "ccccdddd33334444",
+        "merged_at": "2026-05-02T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    master_pick = compare._mr_to_info({
+        "iid": 22,
+        "title": "PROJ-2 Master chain",
+        "web_url": "https://gitlab.example/mr/22",
+        "source_branch": "cherry-pick-ccccdddd",
+        "target_branch": "master",
+        "merge_commit_sha": "eeeeffff55556666",
+        "merged_at": "2026-05-03T10:00:00Z",
+        "author": {"name": "User"},
+    })
+    branch_data = {
+        "master": [master_pick],
+        "release/102": [release_pick],
+        "release/101": [release_source],
+    }
+
+    compare._annotate_cherry_pick_links(branch_data)
+
+    assert branch_data["release/101"][0]["cherry_pick_group"] == 1
+    assert branch_data["release/102"][0]["cherry_pick_group"] == 1
+    assert branch_data["master"][0]["cherry_pick_group"] == 1
+    assert branch_data["master"][0]["cherry_pick_of"]["mr_iid"] == 21
+    assert branch_data["release/102"][0]["cherry_pick_of"]["mr_iid"] == 20

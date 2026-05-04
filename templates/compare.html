@@ -219,6 +219,9 @@ function renderMrChip(m) {
   const stats = m.change_stats || {};
   const files = stats.files || [];
   const hasStats = Boolean(stats.loaded || stats.error);
+  const groupBadge = m.cherry_pick_group
+    ? `<span class="shrink-0 rounded border border-fuchsia-600/70 bg-fuchsia-950/55 px-1.5 py-0.5 text-[10px] font-semibold text-fuchsia-200" title="Связанная cherry-pick группа">CP#${m.cherry_pick_group}</span>`
+    : "";
   const cherryPickMeta = renderCherryPickMeta(m);
   const statTitle = files.length
     ? files.map(f => `${f.path}: ${f.changed_lines}`).join("\n")
@@ -239,6 +242,7 @@ function renderMrChip(m) {
   return `<div class="min-w-[12rem] max-w-[22rem] rounded-md border border-slate-700/80 bg-slate-950/25 px-2 py-1 ${dim ? 'opacity-60' : ''}">
     <div class="flex items-start gap-2">
       <a href="${m.mr_url}" target="_blank" class="shrink-0 font-mono text-blue-300 hover:underline" title="${escHtml(title)}${dim ? ' (вне диапазона дат)' : ''}">!${m.mr_iid}</a>
+      ${groupBadge}
       <span class="min-w-0 flex-1 truncate text-slate-200" title="${escHtml(title)}">${escHtml(title)}</span>
       ${hasStats ? `<span class="shrink-0 rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300" title="${escHtml(statTitle)}">${fileCount}ф/${lineCount}±</span>` : ""}
     </div>
@@ -250,7 +254,7 @@ function renderMrChip(m) {
 function renderCherryPickMeta(m) {
   if (m.cherry_pick_of) {
     return `<div class="mt-1 inline-flex max-w-full items-center gap-1 rounded border border-sky-600/60 bg-sky-950/45 px-1.5 py-0.5 text-[10px] text-sky-200">
-      <span class="shrink-0">CP из</span>
+      <span class="shrink-0">CP#${m.cherry_pick_group || m.cherry_pick_of.group || "?"} из</span>
       <a href="${m.cherry_pick_of.mr_url}" target="_blank" class="shrink-0 font-mono text-sky-100 hover:underline">!${m.cherry_pick_of.mr_iid}</a>
       <span class="min-w-0 truncate text-sky-300">${escHtml(m.cherry_pick_of.target_branch || "")}</span>
     </div>`;
@@ -266,7 +270,7 @@ function renderCherryPickMeta(m) {
     </span>`).join("");
 
   return `<div class="mt-1 flex max-w-full flex-wrap items-center gap-1 text-[10px] text-cyan-200">
-    <span class="shrink-0 rounded bg-cyan-950/50 px-1.5 py-0.5 text-cyan-300">CP →</span>
+    <span class="shrink-0 rounded bg-cyan-950/50 px-1.5 py-0.5 text-cyan-300">CP#${m.cherry_pick_group || targets[0].group || "?"} →</span>
     ${items}
   </div>`;
 }
