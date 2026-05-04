@@ -11,7 +11,7 @@ from typing import Callable
 import httpx
 
 from db import get_db
-from services.gitlab_client import get_mr_diff, get_project_id
+from services.gitlab_client import get_file_content, get_mr_diff, get_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ DEFAULT_REVIEW_BATCH_MAX_CHARS = 20000
 DEFAULT_REVIEW_LLM_READ_TIMEOUT = 120.0
 DEFAULT_REVIEW_LLM_MAX_ATTEMPTS = 5
 DEFAULT_REVIEW_LLM_MAX_RETRY_DELAY = 60.0
+DEFAULT_REVIEW_FILE_CONTEXT_MAX_CHARS = 20000
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -71,6 +72,9 @@ REVIEW_LLM_MAX_ATTEMPTS = _read_int_env(
 )
 REVIEW_LLM_MAX_RETRY_DELAY = _read_float_env(
     "REVIEW_LLM_MAX_RETRY_DELAY", DEFAULT_REVIEW_LLM_MAX_RETRY_DELAY
+)
+REVIEW_FILE_CONTEXT_MAX_CHARS = _read_int_env(
+    "REVIEW_FILE_CONTEXT_MAX_CHARS", DEFAULT_REVIEW_FILE_CONTEXT_MAX_CHARS
 )
 
 
@@ -221,6 +225,61 @@ def _build_diff_batches(changes: list[dict], max_chars: int | None = None) -> li
     return batches
 
 
+def _truncate_file_context(content: str, max_chars: int | None = None) -> str:
+    max_chars = max_chars or REVIEW_FILE_CONTEXT_MAX_CHARS
+    if len(content) <= max_chars:
+        return content
+    return content[:max_chars].rstrip() + "\n... [file context truncated]"
+
+
+async def _load_review_file_contexts(
+    project_id: int,
+    mr_data: dict,
+    changes: list[dict],
+) -> dict[str, str]:
+    ref = mr_data.get("source_ref") or mr_data.get("source_branch", "")
+    if not ref:
+        return {}
+
+    contexts: dict[str, str] = {}
+    for change in changes:
+        if change.get("deleted_file"):
+            continue
+        path = change.get("new_path") or change.get("old_path") or ""
+        if not path or path in contexts:
+            continue
+        try:
+            content = await get_file_content(project_id, path, ref)
+        except Exception as exc:
+            logger.warning("Failed to load review file context for %s at %s: %s", path, ref, exc)
+            continue
+        contexts[path] = _truncate_file_context(content)
+
+    return contexts
+
+
+def _changed_paths_in_diff_text(diff_text: str) -> list[str]:
+    paths: list[str] = []
+    for line in diff_text.splitlines():
+        if not line.startswith("+++ "):
+            continue
+        path = line[4:].strip()
+        path = re.sub(r" \(part \d+/\d+\)$", "", path)
+        if path and path != "/dev/null" and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _build_file_context_text(file_contexts: dict[str, str], diff_text: str) -> str:
+    parts = []
+    for path in _changed_paths_in_diff_text(diff_text):
+        content = file_contexts.get(path)
+        if not content:
+            continue
+        parts.append(f"### {path}\n```text\n{content}\n```")
+    return "\n\n".join(parts)
+
+
 def _build_batch_message(
     mr_data: dict,
     files_changed: int,
@@ -229,6 +288,7 @@ def _build_batch_message(
     diff_text: str,
     saved_instructions: str,
     custom_prompt: str,
+    file_context_text: str = "",
 ) -> str:
     user_message = f"""## Merge Request
 - Title: {mr_data['title']}
@@ -239,6 +299,13 @@ def _build_batch_message(
 
 ## Diff
 {diff_text}"""
+
+    if file_context_text.strip():
+        user_message += f"""
+
+## Full file context after change
+Use this section to validate symbols, imports, requires, module-scope constants, and surrounding code that may be outside the diff.
+{file_context_text.strip()}"""
 
     user_message += """
 
@@ -421,6 +488,7 @@ async def review_mr(
     skipped_files = max(0, len(changes) - len(non_empty))
     diff_batches = _build_diff_batches(non_empty)
     total_batches = max(1, len(diff_batches))
+    file_contexts = await _load_review_file_contexts(project_id, mr_data, non_empty)
 
     system_prompt = _get_system_prompt()
     saved_instructions = _build_saved_instructions_text()
@@ -434,6 +502,7 @@ async def review_mr(
         summary = _compute_summary(findings, len(changes), 0, truncated, skipped_files)
     else:
         for batch_index, diff_text in enumerate(diff_batches, start=1):
+            file_context_text = _build_file_context_text(file_contexts, diff_text)
             user_message = _build_batch_message(
                 mr_data=mr_data,
                 files_changed=len(changes),
@@ -442,6 +511,7 @@ async def review_mr(
                 diff_text=diff_text,
                 saved_instructions=saved_instructions,
                 custom_prompt=custom_prompt,
+                file_context_text=file_context_text,
             )
             llm_response = await _call_llm(system_prompt, user_message)
             findings.extend(_parse_findings(llm_response))
