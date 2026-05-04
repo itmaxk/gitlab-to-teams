@@ -116,6 +116,63 @@ def test_run_compare_can_skip_change_stats(monkeypatch):
     assert mr["change_stats"]["loaded"] is False
 
 
+def test_run_compare_backfills_open_mr_in_missing_branch(monkeypatch):
+    async def fake_get_project_id():
+        return 42
+
+    async def fake_get_all_merged_mrs(project_id, branch, date_from, date_to):
+        if branch == "release/103":
+            return [{
+                "iid": 11,
+                "title": "PROJ-9 Release fix",
+                "web_url": "https://gitlab.example/mr/11",
+                "state": "merged",
+                "source_branch": "feature/proj-9",
+                "target_branch": "release/103",
+                "merge_commit_sha": "aaaabbbb11112222",
+                "merged_at": "2026-05-01T10:00:00Z",
+                "author": {"name": "User"},
+            }]
+        return []
+
+    async def fake_search_merge_requests(project_id, search, state="merged", per_page=20):
+        assert state == "all"
+        assert search == "PROJ-9"
+        return [{
+            "iid": 12,
+            "title": "PROJ-9 Release fix",
+            "web_url": "https://gitlab.example/mr/12",
+            "state": "opened",
+            "source_branch": "cherry-pick-aaaabbbb",
+            "target_branch": "master",
+            "merge_commit_sha": "",
+            "merged_at": None,
+            "author": {"name": "User"},
+        }]
+
+    monkeypatch.setattr(compare, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(compare, "get_all_merged_mrs", fake_get_all_merged_mrs)
+    monkeypatch.setattr(compare, "search_merge_requests", fake_search_merge_requests)
+
+    result = asyncio.run(
+        compare.run_compare(
+            compare.CompareRequest(
+                branches=["master", "release/103"],
+                date_from="2026-05-01",
+                date_to="2026-05-02",
+                include_change_stats=False,
+            )
+        )
+    )
+
+    master_info = result["rows"][0]["branches"]["master"]
+    master_mr = master_info["mrs"][0]
+    assert master_info["status"] == "cherry-pick"
+    assert master_mr["mr_iid"] == 12
+    assert master_mr["mr_state"] == "opened"
+    assert master_mr["cherry_pick_group"] == 1
+
+
 def test_default_branches_returns_two_latest_release_branches(monkeypatch):
     async def fake_get_project_id():
         return 42

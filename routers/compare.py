@@ -50,6 +50,7 @@ def _mr_to_info(mr: dict, *, in_range: bool = True) -> dict:
         "mr_iid": mr["iid"],
         "mr_title": mr.get("title", ""),
         "mr_url": mr.get("web_url", ""),
+        "mr_state": mr.get("state", ""),
         "source_branch": mr.get("source_branch", ""),
         "target_branch": mr.get("target_branch", ""),
         "merged_at": mr.get("merged_at", ""),
@@ -326,7 +327,7 @@ async def run_compare(data: CompareRequest):
     if data.jira_ids:
         jira_ids = [j.strip() for j in data.jira_ids if j.strip()]
         search_tasks = [
-            search_merge_requests(project_id, jid, state="merged", per_page=50)
+            search_merge_requests(project_id, jid, state="all", per_page=50)
             for jid in jira_ids
         ]
         search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -342,8 +343,6 @@ async def run_compare(data: CompareRequest):
                 title = mr.get("title", "")
                 m = JIRA_RE.search(title)
                 if not m or m.group(1) != jid:
-                    continue
-                if mr.get("state") != "merged":
                     continue
                 _add_to_jira_map(jira_map, no_jira, mr, tb, in_range=True)
                 total_mrs += 1
@@ -375,7 +374,7 @@ async def run_compare(data: CompareRequest):
         # Deduplicate searches: group by jira_id to avoid searching same ID multiple times
         jira_ids_to_search = {jira_id for jira_id, _ in gaps}
         search_tasks = [
-            search_merge_requests(project_id, jid, state="merged", per_page=50)
+            search_merge_requests(project_id, jid, state="all", per_page=50)
             for jid in jira_ids_to_search
         ]
         search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -394,8 +393,6 @@ async def run_compare(data: CompareRequest):
                 title = mr.get("title", "")
                 if not JIRA_RE.search(title) or JIRA_RE.search(title).group(1) != jid:
                     continue  # search returned unrelated MR
-                if mr.get("state") != "merged":
-                    continue
                 mr_info = _mr_to_info(mr, in_range=False)
                 if jid not in jira_map:
                     jira_map[jid] = {}

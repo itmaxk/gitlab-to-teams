@@ -216,6 +216,7 @@ function statusBadge(status, mrs) {
 function renderMrChip(m) {
   const dim = !m.in_range;
   const title = m.mr_title || "";
+  const stateBadge = renderMrStateBadge(m.mr_state);
   const stats = m.change_stats || {};
   const files = stats.files || [];
   const hasStats = Boolean(stats.loaded || stats.error);
@@ -242,6 +243,7 @@ function renderMrChip(m) {
   return `<div class="min-w-[12rem] max-w-[22rem] rounded-md border border-slate-700/80 bg-slate-950/25 px-2 py-1 ${dim ? 'opacity-60' : ''}">
     <div class="flex items-start gap-2">
       <a href="${m.mr_url}" target="_blank" class="shrink-0 font-mono text-blue-300 hover:underline" title="${escHtml(title)}${dim ? ' (вне диапазона дат)' : ''}">!${m.mr_iid}</a>
+      ${stateBadge}
       ${groupBadge}
       <span class="min-w-0 flex-1 truncate text-slate-200" title="${escHtml(title)}">${escHtml(title)}</span>
       ${hasStats ? `<span class="shrink-0 rounded border border-slate-600 bg-slate-900 px-1.5 py-0.5 text-[10px] text-slate-300" title="${escHtml(statTitle)}">${fileCount}ф/${lineCount}±</span>` : ""}
@@ -249,6 +251,23 @@ function renderMrChip(m) {
     ${cherryPickMeta}
     ${files.length ? `<div class="mt-1 flex max-w-full flex-wrap gap-1">${topFiles}${more}</div>` : ""}
   </div>`;
+}
+
+function renderMrStateBadge(state) {
+  const normalized = (state || "").toLowerCase();
+  const cfg = {
+    "merged": { label: "M", title: "Merged", cls: "border-purple-600/70 bg-purple-950/55 text-purple-200" },
+    "opened": { label: "O", title: "Open", cls: "border-emerald-600/70 bg-emerald-950/55 text-emerald-200" },
+    "open": { label: "O", title: "Open", cls: "border-emerald-600/70 bg-emerald-950/55 text-emerald-200" },
+    "closed": { label: "C", title: "Closed", cls: "border-slate-600/70 bg-slate-800/70 text-slate-300" },
+    "locked": { label: "L", title: "Locked", cls: "border-amber-600/70 bg-amber-950/55 text-amber-200" },
+  };
+  const item = cfg[normalized] || {
+    label: normalized ? normalized.slice(0, 1).toUpperCase() : "?",
+    title: state || "Unknown",
+    cls: "border-slate-600/70 bg-slate-900 text-slate-300",
+  };
+  return `<span class="shrink-0 rounded border ${item.cls} px-1.5 py-0.5 text-[10px] font-semibold" title="${escHtml(item.title)}">${item.label}</span>`;
 }
 
 function renderCherryPickMeta(m) {
