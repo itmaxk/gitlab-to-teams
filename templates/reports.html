@@ -726,7 +726,10 @@ function renderOvertime(data) {
       <th class="px-3 py-2">${JIRA_PROJECT}</th><th class="px-3 py-2">Другие</th>
       <th class="px-3 py-2">Итого рабочих дней (часы)</th><th class="px-3 py-2">Итого выходных (часы)</th>
       <th class="px-3 py-2">Итого сверх нормы</th></tr></thead><tbody>`;
+    let totDays = 0, totProject = 0, totOther = 0, totWorkday = 0, totWeekend = 0, totTotal = 0;
     for (const [name, s] of Object.entries(byUser).sort((a,b) => a[0].localeCompare(b[0]))) {
+      totDays += s.days; totProject += s.project; totOther += s.other;
+      totWorkday += s.workday; totWeekend += s.weekend; totTotal += s.total;
       shtml += `<tr class="border-b border-slate-700/50">
         <td class="px-3 py-2 font-medium">${name}</td>
         <td class="px-3 py-2">${s.days}</td>
@@ -736,6 +739,14 @@ function renderOvertime(data) {
         <td class="px-3 py-2 text-red-400">${s.weekend.toFixed(1)}h</td>
         <td class="px-3 py-2 text-red-400 font-bold">+${s.total.toFixed(1)}h</td></tr>`;
     }
+    shtml += `<tr class="border-t-2 border-slate-600 font-bold">
+      <td class="px-3 py-2">Итого</td>
+      <td class="px-3 py-2">${totDays}</td>
+      <td class="px-3 py-2 text-cyan-400">${totProject.toFixed(1)}h</td>
+      <td class="px-3 py-2 text-slate-400">${totOther.toFixed(1)}h</td>
+      <td class="px-3 py-2 text-orange-400">${totWorkday.toFixed(1)}h</td>
+      <td class="px-3 py-2 text-red-400">${totWeekend.toFixed(1)}h</td>
+      <td class="px-3 py-2 text-red-400 font-bold">+${totTotal.toFixed(1)}h</td></tr>`;
     shtml += '</tbody></table>';
     summaryDiv.innerHTML = shtml;
     summaryDiv.classList.remove('hidden');

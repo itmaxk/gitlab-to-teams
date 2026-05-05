@@ -1075,8 +1075,11 @@ async def send_overtime_email(body: SendReportRequest):
     jira_url = os.getenv("JIRA_URL", "").rstrip("/")
 
     summary = _build_overtime_summary(rows)
+    totals = {"days": 0, "project": 0.0, "other": 0.0, "workday_hours": 0.0, "weekend_hours": 0.0, "total": 0.0}
     summary_html = ""
     for name, s in sorted(summary.items()):
+        for k in totals:
+            totals[k] += s[k]
         summary_html += (
             f"<tr>"
             f'<td style="padding:4px 8px;font-weight:bold">{name}</td>'
@@ -1088,6 +1091,17 @@ async def send_overtime_email(body: SendReportRequest):
             f'<td style="padding:4px 8px;color:red;font-weight:bold">+{s["total"]:.1f}h</td>'
             f"</tr>"
         )
+    summary_html += (
+        f'<tr style="border-top:2px solid #999;font-weight:bold">'
+        f'<td style="padding:4px 8px">Итого</td>'
+        f'<td style="padding:4px 8px">{totals["days"]}</td>'
+        f'<td style="padding:4px 8px;color:#06b6d4">{totals["project"]:.1f}h</td>'
+        f'<td style="padding:4px 8px;color:gray">{totals["other"]:.1f}h</td>'
+        f'<td style="padding:4px 8px;color:orange">{totals["workday_hours"]:.1f}h</td>'
+        f'<td style="padding:4px 8px;color:red">{totals["weekend_hours"]:.1f}h</td>'
+        f'<td style="padding:4px 8px;color:red;font-weight:bold">+{totals["total"]:.1f}h</td>'
+        f'</tr>'
+    )
 
     html_rows = ""
     for r in rows:
