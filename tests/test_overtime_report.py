@@ -49,7 +49,7 @@ def test_overtime_report_includes_inactive_user_with_overtime(monkeypatch, tmp_p
                     "issue_key": "OPS-1",
                     "date": "2026-03-02",
                     "seconds": 10 * 3600,
-                    "project": "OPS",
+                    "project": "MAIN",
                     "display_name": "Inactive User",
                     "email": "inactive@example.com",
                     "author_key": "inactive-user",
@@ -77,6 +77,128 @@ def test_overtime_report_includes_inactive_user_with_overtime(monkeypatch, tmp_p
     assert result["rows"][0]["display_name"] == "Inactive User"
     assert result["rows"][0]["day_type"] == "workday"
     assert result["rows"][0]["over_norm"] == "2.0"
+
+
+def test_overtime_report_excludes_db_user_without_project_worklogs(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "cross-project-user.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+
+    conn = db.get_db()
+    conn.execute(
+        """
+        INSERT INTO jira_users (account_id, display_name, email_address, active)
+        VALUES (?, ?, ?, ?)
+        """,
+        ("other-user", "Other User", "other@example.com", 1),
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_all_worklogs_for_project(project, date_from, date_to):
+        return {}
+
+    async def fake_get_worklogs_for_users_all_projects_by_candidates(
+        user_candidates, date_from, date_to
+    ):
+        assert "other-user" in user_candidates
+        return {
+            "other-user": [
+                {
+                    "issue_key": "OTHER-1",
+                    "date": "2026-03-02",
+                    "seconds": 10 * 3600,
+                    "project": "OTHER",
+                    "display_name": "Other User",
+                    "email": "other@example.com",
+                    "author_key": "other-user",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_all_worklogs_for_project",
+        fake_get_all_worklogs_for_project,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_worklogs_for_users_all_projects_by_candidates",
+        fake_get_worklogs_for_users_all_projects_by_candidates,
+    )
+
+    result = asyncio.run(reports.overtime_report(ReportRequest(year=2026, month=3)))
+
+    assert result["rows"] == []
+
+
+def test_overtime_report_excludes_overtime_days_without_project_hours(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "cross-project-day.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+    monkeypatch.setenv("JIRA_PROJECT", "MAIN")
+
+    async def fake_get_all_worklogs_for_project(project, date_from, date_to):
+        return {
+            "mixed-user": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 2 * 3600,
+                    "project": "MAIN",
+                    "display_name": "Mixed User",
+                    "email": "mixed@example.com",
+                    "author_key": "mixed-user",
+                }
+            ]
+        }
+
+    async def fake_get_worklogs_for_users_all_projects_by_candidates(
+        user_candidates, date_from, date_to
+    ):
+        return {
+            "mixed-user": [
+                {
+                    "issue_key": "MAIN-1",
+                    "date": "2026-03-02",
+                    "seconds": 2 * 3600,
+                    "project": "MAIN",
+                    "display_name": "Mixed User",
+                    "email": "mixed@example.com",
+                    "author_key": "mixed-user",
+                },
+                {
+                    "issue_key": "OTHER-1",
+                    "date": "2026-03-03",
+                    "seconds": 10 * 3600,
+                    "project": "OTHER",
+                    "display_name": "Mixed User",
+                    "email": "mixed@example.com",
+                    "author_key": "mixed-user",
+                },
+            ]
+        }
+
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_all_worklogs_for_project",
+        fake_get_all_worklogs_for_project,
+    )
+    monkeypatch.setattr(
+        reports.jira_client,
+        "get_worklogs_for_users_all_projects_by_candidates",
+        fake_get_worklogs_for_users_all_projects_by_candidates,
+    )
+
+    result = asyncio.run(reports.overtime_report(ReportRequest(year=2026, month=3)))
+
+    assert result["rows"] == []
 
 
 def test_overtime_report_uses_author_candidates_for_user_lookup(monkeypatch, tmp_path):
@@ -148,6 +270,31 @@ def test_overtime_report_uses_author_candidates_for_user_lookup(monkeypatch, tmp
     assert result["rows"][0]["display_name"] == "Eka"
     assert result["rows"][0]["total_hours"] == "10.0"
     assert result["rows"][0]["over_norm"] == "2.0"
+
+
+def test_build_overtime_summary_splits_workday_and_weekend_hours():
+    summary = reports._build_overtime_summary(
+        [
+            {
+                "display_name": "User A",
+                "day_type": "workday",
+                "over_norm": "2.0",
+                "project_hours": "10.0",
+                "other_hours": "0.0",
+            },
+            {
+                "display_name": "User A",
+                "day_type": "weekend",
+                "over_norm": "3.0",
+                "project_hours": "3.0",
+                "other_hours": "0.0",
+            },
+        ]
+    )
+
+    assert summary["User A"]["workday_hours"] == 2.0
+    assert summary["User A"]["weekend_hours"] == 3.0
+    assert summary["User A"]["total"] == 5.0
 
 
 def test_overtime_debug_issue_explains_why_user_is_missing(monkeypatch, tmp_path):

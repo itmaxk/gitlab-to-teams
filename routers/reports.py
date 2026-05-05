@@ -234,7 +234,7 @@ def _evaluate_overtime_day(
     projects_list = sorted({e["project"] for e in day_entries})
 
     report_row = None
-    if qualifies_overtime:
+    if qualifies_overtime and proj_seconds > 0:
         report_row = {
             "date": day_str,
             "day_type": day_type,
@@ -280,7 +280,7 @@ def _build_overtime_rows_and_checks(
     for day_str, day_entries in sorted(by_date.items()):
         check = _evaluate_overtime_day(day_str, day_entries, project, year_cal)
         day_checks.append(check)
-        if not check["qualifies_overtime"]:
+        if not check["qualifies_overtime"] or not check["report_row"]:
             continue
         row = dict(check["report_row"])
         row["account_id"] = uid
@@ -569,38 +569,66 @@ async def overtime_report(body: ReportRequest):
     conn.close()
     db_user_ids = {r["account_id"] for r in db_users}
 
-    user_ids = list(project_user_ids | db_user_ids)
+    user_ids = sorted(project_user_ids | db_user_ids)
     if not user_ids:
-        return {"rows": [], "year": body.year, "month": body.month}
+        return {"rows": [], "year": body.year, "month": body.month, "project": project}
 
-    # 3. Для всех пользователей ищем ворклоги в других проектах
-    #    (аналогично time_logging_report)
     other_worklogs: dict[str, list[dict]] = {}
-    if user_ids:
-        try:
-            other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-                user_ids,
-                date_from,
-                date_to,
-            )
-        except Exception as exc:
-            logger.error("overtime_report other worklogs failed: %s", exc)
-            raise HTTPException(
-                status_code=502,
-                detail="Failed to load Jira user worklogs for overtime report",
-            ) from exc
+    user_candidates = {
+        uid: _collect_user_lookup_candidates(uid, project_worklogs, db_users)
+        for uid in user_ids
+    }
+    try:
+        other_worklogs = await jira_client.get_worklogs_for_users_all_projects_by_candidates(
+            user_candidates,
+            date_from,
+            date_to,
+        )
+    except Exception as exc:
+        logger.error("overtime_report other worklogs failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to load Jira user worklogs for overtime report",
+        ) from exc
 
     year_cal = _get_year_calendar(body.year)
     rows = []
+    db_users_by_id = {r["account_id"]: dict(r) for r in db_users}
 
-    for uid in sorted(user_ids):
+    for uid in user_ids:
         proj_entries = project_worklogs.get(uid, [])
         other_entries = other_worklogs.get(uid, [])
-        entries = jira_client.dedupe_worklog_entries(proj_entries + other_entries)
+        has_project_entries = proj_entries or any(
+            entry.get("project") == project for entry in other_entries
+        )
+        if not has_project_entries:
+            continue
+
+        other_entry_scope = {
+            (
+                entry.get("issue_key", ""),
+                entry.get("date", ""),
+                entry.get("project", ""),
+            )
+            for entry in other_entries
+        }
+        fallback_project_entries = [
+            entry
+            for entry in proj_entries
+            if (
+                entry.get("issue_key", ""),
+                entry.get("date", ""),
+                entry.get("project", ""),
+            )
+            not in other_entry_scope
+        ]
+        entries = jira_client.dedupe_worklog_entries(
+            fallback_project_entries + other_entries
+        )
         if not entries:
             continue
 
-        display_name = _resolve_display_name(uid, entries)
+        display_name = _resolve_display_name(uid, entries, db_users_by_id)
         user_rows, _ = _build_overtime_rows_and_checks(
             uid, display_name, entries, project, year_cal
         )
@@ -655,6 +683,26 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
     report_scope_user_ids = sorted(project_user_ids | db_user_ids)
     diagnostic_user_ids = sorted(issue_user_ids | db_user_ids)
 
+    lookup_diagnostics: dict[str, dict] = {}
+    lookup_diagnostics_error = ""
+    if issue_user_ids:
+        try:
+            lookup_diagnostics = await asyncio.wait_for(
+                jira_client.diagnose_worklog_author_candidates(
+                    sorted(issue_user_ids),
+                    date_from,
+                    date_to,
+                    issue_key=issue_key,
+                ),
+                timeout=_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            lookup_diagnostics_error = (
+                f"lookup timeout after {_LOOKUP_DIAGNOSTICS_TIMEOUT_SECONDS}s"
+            )
+        except Exception as exc:
+            lookup_diagnostics_error = str(exc)
+
     year_cal = _get_year_calendar(body.year)
     users = []
 
@@ -696,7 +744,7 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
 
         # Причина исключения
         if issue_day_rows:
-            exclusion_reason = "included"
+            exclusion_reason = "included_via_issue"
         elif not issue_specific_entries:
             exclusion_reason = "no_issue_worklogs_in_period"
         elif uid not in report_scope_user_ids:
@@ -735,8 +783,12 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
                     sum(e["seconds"] for e in all_period_entries)
                 ),
                 "included_in_monthly_report": bool(issue_day_rows),
+                "included_due_to_issue": bool(issue_day_rows or issue_only_rows),
                 "exclusion_reason": exclusion_reason,
+                "lookup_diagnostics": lookup_diagnostics,
+                "lookup_diagnostics_error": lookup_diagnostics_error,
                 "issue_worklogs": issue_specific_entries,
+                "issue_day_checks": issue_day_checks,
                 "issue_day_checks_full": issue_day_checks,
                 "issue_day_checks_issue_only": issue_only_checks,
                 "report_rows": issue_day_rows,
@@ -987,8 +1039,20 @@ def _build_overtime_summary(rows: list[dict]) -> dict[str, dict]:
     for r in rows:
         name = r.get("display_name", "")
         if name not in summary:
-            summary[name] = {"total": 0.0, "project": 0.0, "other": 0.0, "days": 0}
-        summary[name]["total"] += float(r.get("over_norm", 0))
+            summary[name] = {
+                "total": 0.0,
+                "workday_hours": 0.0,
+                "weekend_hours": 0.0,
+                "project": 0.0,
+                "other": 0.0,
+                "days": 0,
+            }
+        over_norm = float(r.get("over_norm", 0))
+        summary[name]["total"] += over_norm
+        if r.get("day_type") == "workday":
+            summary[name]["workday_hours"] += over_norm
+        else:
+            summary[name]["weekend_hours"] += over_norm
         summary[name]["project"] += float(r.get("project_hours", 0))
         summary[name]["other"] += float(r.get("other_hours", 0))
         summary[name]["days"] += 1
@@ -1019,6 +1083,8 @@ async def send_overtime_email(body: SendReportRequest):
             f'<td style="padding:4px 8px">{s["days"]}</td>'
             f'<td style="padding:4px 8px;color:#06b6d4">{s["project"]:.1f}h</td>'
             f'<td style="padding:4px 8px;color:gray">{s["other"]:.1f}h</td>'
+            f'<td style="padding:4px 8px;color:orange">{s["workday_hours"]:.1f}h</td>'
+            f'<td style="padding:4px 8px;color:red">{s["weekend_hours"]:.1f}h</td>'
             f'<td style="padding:4px 8px;color:red;font-weight:bold">+{s["total"]:.1f}h</td>'
             f"</tr>"
         )
@@ -1054,6 +1120,8 @@ async def send_overtime_email(body: SendReportRequest):
 <td style="padding:4px 8px">Дней</td>
 <td style="padding:4px 8px">{project}</td>
 <td style="padding:4px 8px">Другие</td>
+<td style="padding:4px 8px">Итого рабочих дней (часы)</td>
+<td style="padding:4px 8px">Итого выходных (часы)</td>
 <td style="padding:4px 8px">Итого сверх нормы</td>
 </tr>
 {summary_html}
