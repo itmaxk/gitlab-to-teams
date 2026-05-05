@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class RuleCreate(BaseModel):
@@ -52,28 +52,34 @@ class RuleOut(BaseModel):
 
 
 class ReportRequest(BaseModel):
-    year: int
-    month: int
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
 
 
 class OvertimeDebugRequest(BaseModel):
-    year: int
-    month: int
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
     issue_key: str
 
 
 class NotifyMissingRequest(BaseModel):
     user_ids: list[str]
-    year: int
-    month: int
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
 
 
 class SendReportRequest(BaseModel):
-    year: int
-    month: int
+    year: int = Field(ge=2020, le=2100)
+    month: int = Field(ge=1, le=12)
     emails: list[str]
     rows: list[dict] = []
     project: str = ""
+
+
+class VacationCreateRequest(BaseModel):
+    date_from: str
+    date_to: str
+    note: str = ""
 
 
 class ReportSettingsUpdate(BaseModel):

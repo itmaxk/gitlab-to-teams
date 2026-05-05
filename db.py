@@ -118,6 +118,7 @@ def init_db():
             missing_time_auto_notify INTEGER DEFAULT 0,
             missing_time_interval_days INTEGER DEFAULT 0,
             last_auto_sent_at TEXT DEFAULT '',
+            last_missing_notify_at TEXT DEFAULT '',
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -293,6 +294,16 @@ def _migrate(conn: sqlite3.Connection):
         if review_columns and "review_instructions" not in review_columns:
             conn.execute(
                 "ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''"
+            )
+    except Exception:
+        pass
+
+    try:
+        cursor_rs2 = conn.execute("PRAGMA table_info(report_settings)")
+        rs2_columns = {row[1] for row in cursor_rs2.fetchall()}
+        if rs2_columns and "last_missing_notify_at" not in rs2_columns:
+            conn.execute(
+                "ALTER TABLE report_settings ADD COLUMN last_missing_notify_at TEXT DEFAULT ''"
             )
     except Exception:
         pass

@@ -235,11 +235,11 @@
           <td class="px-3 py-2 text-slate-400 text-xs">{{ u.first_seen_at }}</td>
           <td class="px-3 py-2 text-slate-400 text-xs">{{ u.last_seen_at }}</td>
           <td class="px-3 py-2 flex gap-1">
-            <button onclick="toggleUser('{{ u.account_id }}')"
+            <button onclick="toggleUser('{{ u.account_id|e }}')"
               class="text-xs px-2 py-1 rounded {% if u.active %}bg-red-600/20 text-red-400 hover:bg-red-600/40{% else %}bg-green-600/20 text-green-400 hover:bg-green-600/40{% endif %}">
               {% if u.active %}Деактивировать{% else %}Восстановить{% endif %}
             </button>
-            <button onclick="openVacationModal('{{ u.account_id }}', '{{ u.display_name or u.account_id }}')"
+            <button onclick="openVacationModal('{{ u.account_id|e }}', {{ (u.display_name or u.account_id)|tojson }})"
               class="text-xs px-2 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/40">
               Отпуска
             </button>
@@ -375,6 +375,12 @@
 const JIRA_PROJECT = "{{ jira_project }}";
 const JIRA_URL = "{{ jira_url }}";
 
+function esc(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 // ========== Schedules ==========
 const SCHEDULES_DATA = {};
 
@@ -504,18 +510,18 @@ function renderTimeLogging(data) {
     const missingTitle = r.missing_days.length > 0 ? 'Пропущено: ' + r.missing_days.join(', ') : '';
 
     const notifyBtn = isMissing
-      ? `<button onclick="notifyUser('${r.account_id}')" class="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/40">Уведомить</button>`
+      ? `<button onclick="notifyUser('${esc(r.account_id)}')" class="text-xs px-2 py-1 rounded bg-orange-600/20 text-orange-400 hover:bg-orange-600/40">Уведомить</button>`
       : `<button disabled class="text-xs px-2 py-1 rounded bg-slate-700/30 text-slate-500 cursor-not-allowed">Уведомить</button>`;
 
     tbody.innerHTML += `
       <tr class="border-b border-slate-700/50 hover:bg-slate-800/50 cursor-pointer" onclick="toggleUserDetails(${i}, event)">
-        <td class="px-3 py-2" onclick="event.stopPropagation()"><input type="checkbox" class="tl-check" data-uid="${r.account_id}" ${isMissing ? 'checked' : ''}></td>
-        <td class="px-3 py-2">${r.display_name} <span class="text-slate-500 text-xs ml-1">▶</span></td>
+        <td class="px-3 py-2" onclick="event.stopPropagation()"><input type="checkbox" class="tl-check" data-uid="${esc(r.account_id)}" ${isMissing ? 'checked' : ''}></td>
+        <td class="px-3 py-2">${esc(r.display_name)} <span class="text-slate-500 text-xs ml-1">▶</span></td>
         <td class="px-3 py-2">${statusBadge || '<span class="text-slate-500 text-xs">—</span>'}</td>
         <td class="px-3 py-2">${r.days_logged} / ${r.total_workdays}</td>
-        <td class="px-3 py-2 text-cyan-400 font-medium">${r.project_hours}h</td>
-        <td class="px-3 py-2 text-slate-400">${r.other_hours}h</td>
-        <td class="px-3 py-2 ${isMissing ? 'text-red-400 font-medium' : 'text-green-400'}" title="${missingTitle}">
+        <td class="px-3 py-2 text-cyan-400 font-medium">${esc(r.project_hours)}h</td>
+        <td class="px-3 py-2 text-slate-400">${esc(r.other_hours)}h</td>
+        <td class="px-3 py-2 ${isMissing ? 'text-red-400 font-medium' : 'text-green-400'}" title="${esc(missingTitle)}">
           ${isMissing ? r.missing_count + ' дн.' : '✓'}
         </td>
         <td class="px-3 py-2" onclick="event.stopPropagation()">
@@ -548,9 +554,9 @@ function renderUserDetails(r) {
     for (const iss of issues) {
       const isMain = iss.project === JIRA_PROJECT;
       html += `<tr class="border-b border-slate-700/30">
-        <td class="px-2 py-1"><a href="${JIRA_URL}/browse/${iss.issue_key}" target="_blank" class="text-blue-400 hover:underline">${iss.issue_key}</a></td>
-        <td class="px-2 py-1 ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${iss.project}</td>
-        <td class="px-2 py-1 text-right ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${iss.hours}h</td>
+        <td class="px-2 py-1"><a href="${JIRA_URL}/browse/${esc(iss.issue_key)}" target="_blank" class="text-blue-400 hover:underline">${esc(iss.issue_key)}</a></td>
+        <td class="px-2 py-1 ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${esc(iss.project)}</td>
+        <td class="px-2 py-1 text-right ${isMain ? 'text-cyan-400' : 'text-slate-400'}">${esc(iss.hours)}h</td>
       </tr>`;
     }
     html += '</tbody></table></div>';
@@ -690,15 +696,15 @@ function renderOvertime(data) {
 
     tbody.innerHTML += `
       <tr class="border-b border-slate-700/50 ${rowClass}">
-        <td class="px-3 py-2">${r.display_name}</td>
-        <td class="px-3 py-2">${r.date}</td>
-        <td class="px-3 py-2 ${dayColor} font-medium">${dayLabels[r.day_type] || r.day_type}</td>
-        <td class="px-3 py-2 font-medium">${r.total_hours}h</td>
-        <td class="px-3 py-2 text-cyan-400">${r.project_hours}h</td>
-        <td class="px-3 py-2 text-slate-400">${r.other_hours}h</td>
-        <td class="px-3 py-2 ${dayColor} font-medium">+${r.over_norm}h</td>
-        <td class="px-3 py-2 text-xs">${(r.issues||[]).map(ik => `<a href="${JIRA_URL}/browse/${ik}" target="_blank" class="text-blue-400 hover:underline">${ik}</a>`).join(', ')}</td>
-        <td class="px-3 py-2 text-slate-400 text-xs">${r.projects.join(', ')}</td>
+        <td class="px-3 py-2">${esc(r.display_name)}</td>
+        <td class="px-3 py-2">${esc(r.date)}</td>
+        <td class="px-3 py-2 ${dayColor} font-medium">${dayLabels[r.day_type] || esc(r.day_type)}</td>
+        <td class="px-3 py-2 font-medium">${esc(r.total_hours)}h</td>
+        <td class="px-3 py-2 text-cyan-400">${esc(r.project_hours)}h</td>
+        <td class="px-3 py-2 text-slate-400">${esc(r.other_hours)}h</td>
+        <td class="px-3 py-2 ${dayColor} font-medium">+${esc(r.over_norm)}h</td>
+        <td class="px-3 py-2 text-xs">${(r.issues||[]).map(ik => `<a href="${JIRA_URL}/browse/${esc(ik)}" target="_blank" class="text-blue-400 hover:underline">${esc(ik)}</a>`).join(', ')}</td>
+        <td class="px-3 py-2 text-slate-400 text-xs">${(r.projects||[]).map(esc).join(', ')}</td>
       </tr>`;
   }
 
@@ -731,7 +737,7 @@ function renderOvertime(data) {
       totDays += s.days; totProject += s.project; totOther += s.other;
       totWorkday += s.workday; totWeekend += s.weekend; totTotal += s.total;
       shtml += `<tr class="border-b border-slate-700/50">
-        <td class="px-3 py-2 font-medium">${name}</td>
+        <td class="px-3 py-2 font-medium">${esc(name)}</td>
         <td class="px-3 py-2">${s.days}</td>
         <td class="px-3 py-2 text-cyan-400">${s.project.toFixed(1)}h</td>
         <td class="px-3 py-2 text-slate-400">${s.other.toFixed(1)}h</td>
@@ -832,14 +838,14 @@ function renderOvertimeDebug(data) {
 
     tbody.innerHTML += `
       <tr class="border-b border-slate-700/50 align-top">
-        <td class="px-3 py-2 font-medium">${user.display_name}<div class="text-xs text-slate-500">${user.account_id}</div></td>
-        <td class="px-3 py-2">${user.issue_hours}h<div class="text-xs text-slate-500">${user.issue_entry_count} logs</div></td>
+        <td class="px-3 py-2 font-medium">${esc(user.display_name)}<div class="text-xs text-slate-500">${esc(user.account_id)}</div></td>
+        <td class="px-3 py-2">${esc(user.issue_hours)}h<div class="text-xs text-slate-500">${user.issue_entry_count} logs</div></td>
         <td class="px-3 py-2">${scopeMark}</td>
         <td class="px-3 py-2">${dbMark}</td>
-        <td class="px-3 py-2">${user.period_hours}h<div class="text-xs text-slate-500">${user.period_entry_count} logs</div></td>
+        <td class="px-3 py-2">${esc(user.period_hours)}h<div class="text-xs text-slate-500">${user.period_entry_count} logs</div></td>
         <td class="px-3 py-2">${reportMark}</td>
         <td class="px-3 py-2">${issueMark}</td>
-        <td class="px-3 py-2 text-xs text-slate-300">${user.exclusion_reason}</td>
+        <td class="px-3 py-2 text-xs text-slate-300">${esc(user.exclusion_reason)}</td>
       </tr>`;
   }
 
@@ -855,6 +861,7 @@ function renderOvertimeDebug(data) {
 async function toggleUser(accountId) {
   try {
     const resp = await fetch(`/api/reports/users/${encodeURIComponent(accountId)}`, {method: 'PATCH'});
+    if (!resp.ok) throw new Error(await resp.text());
     if (resp.ok) location.reload();
   } catch (e) {
     alert('Ошибка: ' + e.message);
@@ -878,6 +885,7 @@ function closeVacModal() {
 
 async function loadVacations() {
   const resp = await fetch(`/api/reports/users/${encodeURIComponent(vacCurrentUser)}/vacations`);
+  if (!resp.ok) { list.innerHTML = '<div class="text-red-400 text-sm py-2">Ошибка загрузки отпусков</div>'; return; }
   const vacs = await resp.json();
   const list = document.getElementById('vacList');
   if (!vacs.length) {
@@ -889,9 +897,9 @@ async function loadVacations() {
     '<th class="px-2 py-1 text-left">Заметка</th><th class="px-2 py-1"></th></tr></thead><tbody>';
   for (const v of vacs) {
     html += `<tr class="border-b border-slate-700/30">
-      <td class="px-2 py-1">${v.date_from}</td>
-      <td class="px-2 py-1">${v.date_to}</td>
-      <td class="px-2 py-1 text-slate-400">${v.note || ''}</td>
+      <td class="px-2 py-1">${esc(v.date_from)}</td>
+      <td class="px-2 py-1">${esc(v.date_to)}</td>
+      <td class="px-2 py-1 text-slate-400">${esc(v.note || '')}</td>
       <td class="px-2 py-1"><button onclick="deleteVacation(${v.id})" class="text-red-400 hover:text-red-300 text-xs">Удалить</button></td>
     </tr>`;
   }
@@ -905,21 +913,22 @@ async function addVacation() {
   const note = document.getElementById('vacNote').value;
   if (!date_from || !date_to) return alert('Укажите даты');
   if (date_from > date_to) return alert('Дата начала должна быть раньше даты окончания');
-  await fetch(`/api/reports/users/${encodeURIComponent(vacCurrentUser)}/vacations`, {
+  const resp = await fetch(`/api/reports/users/${encodeURIComponent(vacCurrentUser)}/vacations`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({date_from, date_to, note}),
   });
+  if (!resp.ok) { const err = await resp.text(); alert('Ошибка: ' + err); return; }
   document.getElementById('vacFrom').value = '';
   document.getElementById('vacTo').value = '';
   document.getElementById('vacNote').value = '';
   loadVacations();
-  // Reload page to update vacation counts
   setTimeout(() => location.reload(), 500);
 }
 
 async function deleteVacation(id) {
-  await fetch(`/api/reports/vacations/${id}`, {method: 'DELETE'});
+  const resp = await fetch(`/api/reports/vacations/${id}`, {method: 'DELETE'});
+  if (!resp.ok) { const err = await resp.text(); alert('Ошибка: ' + err); return; }
   loadVacations();
   setTimeout(() => location.reload(), 500);
 }
@@ -949,6 +958,8 @@ async function saveSettings(rt) {
       const ok = document.getElementById(`s_${rt}_ok`);
       ok.classList.remove('hidden');
       setTimeout(() => ok.classList.add('hidden'), 3000);
+    } else {
+      alert('Ошибка сохранения: ' + await resp.text());
     }
   } catch (e) {
     alert('Ошибка: ' + e.message);

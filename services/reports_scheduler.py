@@ -1,4 +1,5 @@
 import asyncio
+import html as html_mod
 import json
 import logging
 import os
@@ -91,10 +92,10 @@ async def _auto_generate_and_send(report_type: str, year: int, month: int, setti
             missing_cls = 'color:red' if r["missing_count"] > 0 else ''
             rows_html += (
                 f'<tr>'
-                f'<td style="padding:4px 8px">{r["display_name"]}</td>'
-                f'<td style="padding:4px 8px">{r["days_logged"]}/{r["total_workdays"]}</td>'
-                f'<td style="padding:4px 8px;color:cyan">{r["project_hours"]}h</td>'
-                f'<td style="padding:4px 8px;color:gray">{r["other_hours"]}h</td>'
+                f'<td style="padding:4px 8px">{html_mod.escape(str(r["display_name"]))}</td>'
+                f'<td style="padding:4px 8px">{html_mod.escape(str(r["days_logged"]))}/{html_mod.escape(str(r["total_workdays"]))}</td>'
+                f'<td style="padding:4px 8px;color:cyan">{html_mod.escape(str(r["project_hours"]))}h</td>'
+                f'<td style="padding:4px 8px;color:gray">{html_mod.escape(str(r["other_hours"]))}h</td>'
                 f'<td style="padding:4px 8px;{missing_cls}">{r["missing_count"]} дн.</td>'
                 f'</tr>'
             )
@@ -103,12 +104,12 @@ async def _auto_generate_and_send(report_type: str, year: int, month: int, setti
         html = f"""\
 <html><body style="font-family:Arial,sans-serif;color:#333">
 <h2>Отчёт учёта времени — {month_name}</h2>
-<p>Проект: {data['project']}</p>
+<p>Проект: {html_mod.escape(data['project'])}</p>
 <table style="border-collapse:collapse;border:1px solid #ccc">
 <tr style="background:#f0f0f0;font-weight:bold">
 <td style="padding:4px 8px">Пользователь</td>
 <td style="padding:4px 8px">Дни</td>
-<td style="padding:4px 8px">{data['project']}</td>
+<td style="padding:4px 8px">{html_mod.escape(data['project'])}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Пропущено</td>
 </tr>
@@ -138,11 +139,11 @@ async def _check_missing_time_notify():
     interval = s["missing_time_interval_days"]
     today = date.today()
 
-    last_sent = s["last_auto_sent_at"] or ""
-    if last_sent:
+    last_missing = s["last_missing_notify_at"] or ""
+    if last_missing:
         try:
-            last_date = date.fromisoformat(last_sent[:10])
-            if (today - last_date).days < interval:
+            last_missing_date = date.fromisoformat(last_missing[:10])
+            if (today - last_missing_date).days < interval:
                 return
         except ValueError:
             pass
@@ -169,5 +170,12 @@ async def _check_missing_time_notify():
             year=today.year,
             month=today.month,
         ))
+        conn3 = get_db()
+        conn3.execute(
+            "UPDATE report_settings SET last_missing_notify_at = ? WHERE report_type = 'time_logging'",
+            (datetime.now().isoformat(timespec="seconds"),),
+        )
+        conn3.commit()
+        conn3.close()
     except Exception as e:
         logger.error("Auto-notify missing time failed: %s", e)

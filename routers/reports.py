@@ -1,5 +1,6 @@
 import asyncio
 import calendar
+import html as html_mod
 import logging
 import os
 import smtplib
@@ -19,6 +20,7 @@ from models import (
     ReportRequest,
     ReportSettingsUpdate,
     SendReportRequest,
+    VacationCreateRequest,
 )
 from services import jira_client
 
@@ -136,7 +138,7 @@ def _upsert_users(user_map: dict[str, dict]):
                 new_users.append(uid)
         else:
             conn.execute(
-                "INSERT INTO jira_users (account_id, display_name, email_address, first_seen_at, last_seen_at) VALUES (?,?,?,?,?)",
+                "INSERT OR REPLACE INTO jira_users (account_id, display_name, email_address, first_seen_at, last_seen_at, active) VALUES (?,?,?,?,?,1)",
                 (uid, info["display_name"], info["email"], now, now),
             )
             new_users.append(uid)
@@ -194,8 +196,8 @@ def _collect_user_lookup_candidates(
 
     for user in db_users or []:
         account_id = user["account_id"] if hasattr(user, "__getitem__") else user.get("account_id")
-        if account_id == uid and uid not in candidates:
-            candidates.append(uid)
+        if account_id not in candidates:
+            candidates.append(account_id)
 
     return candidates
 
@@ -351,7 +353,10 @@ def _send_email(recipients: list[str], subject: str, html_body: str):
     host = os.getenv("SMTP_HOST", "")
     if not recipients or not host:
         raise ConnectionError("SMTP не настроен или нет получателей")
-    port = int(os.getenv("SMTP_PORT", "587"))
+    try:
+        port = int(os.getenv("SMTP_PORT", "587"))
+    except ValueError:
+        port = 587
     user = os.getenv("SMTP_USER", "")
     password = os.getenv("SMTP_PASSWORD", "")
     sender = os.getenv("SMTP_FROM", user)
@@ -362,7 +367,7 @@ def _send_email(recipients: list[str], subject: str, html_body: str):
     msg["To"] = ", ".join(recipients)
     msg.attach(MIMEText(html_body, "html", "utf-8"))
 
-    with smtplib.SMTP(host, port) as server:
+    with smtplib.SMTP(host, port, timeout=30) as server:
         if port == 587:
             server.starttls()
         if user and password:
@@ -439,11 +444,18 @@ async def time_logging_report(body: ReportRequest):
     user_ids = list(project_worklogs.keys())
     other_worklogs: dict[str, list[dict]] = {}
     if user_ids:
-        other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
-            user_ids,
-            date_from,
-            date_to,
-        )
+        try:
+            other_worklogs = await jira_client.get_worklogs_for_users_all_projects(
+                user_ids,
+                date_from,
+                date_to,
+            )
+        except Exception as exc:
+            logger.error("time_logging_report other worklogs failed: %s", exc)
+            raise HTTPException(
+                status_code=502,
+                detail="Failed to load Jira user worklogs for time logging report",
+            ) from exc
 
     workdays = get_workdays_in_month(body.year, body.month)
     workday_strs = {d.isoformat() for d in workdays}
@@ -522,6 +534,7 @@ async def time_logging_report(body: ReportRequest):
                 "other_hours": _format_hours(other_seconds),
                 "days_logged": len(proj_dates),
                 "total_workdays": len(past_workdays),
+                "available_workdays": len(past_workdays) - len(missing_days),
                 "missing_days": missing_days,
                 "missing_count": len(missing_days),
                 "issues": [
@@ -649,7 +662,14 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
     date_from, date_to = _month_range(body.year, body.month)
 
     # 1. Прямой запрос ворклогов задачи (эталон)
-    raw_issue_worklogs = await jira_client.get_issue_worklogs(issue_key)
+    try:
+        raw_issue_worklogs = await jira_client.get_issue_worklogs(issue_key)
+    except Exception as exc:
+        logger.error("overtime_debug_issue get_issue_worklogs failed: %s", exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to load worklogs for issue {issue_key}",
+        ) from exc
     issue_entries = _build_issue_debug_entries(
         issue_key,
         raw_issue_worklogs.get("worklogs", []),
@@ -850,7 +870,7 @@ def toggle_user(account_id: str):
     ).fetchone()
     if not row:
         conn.close()
-        return {"error": "not found"}
+        raise HTTPException(status_code=404, detail="User not found")
     new_active = 0 if row["active"] else 1
     conn.execute(
         "UPDATE jira_users SET active = ? WHERE account_id = ?",
@@ -878,12 +898,19 @@ def get_vacations(account_id: str):
 
 
 @router.post("/api/reports/users/{account_id}/vacations")
-def add_vacation(account_id: str, body: dict):
-    date_from = body.get("date_from", "")
-    date_to = body.get("date_to", "")
-    note = body.get("note", "")
+def add_vacation(account_id: str, body: VacationCreateRequest):
+    date_from = body.date_from
+    date_to = body.date_to
+    note = body.note
     if not date_from or not date_to:
-        return {"error": "date_from and date_to required"}
+        raise HTTPException(status_code=422, detail="date_from and date_to required")
+    try:
+        d_from = date.fromisoformat(date_from)
+        d_to = date.fromisoformat(date_to)
+        if d_from > d_to:
+            raise HTTPException(status_code=422, detail="date_from must be <= date_to")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid date format, expected YYYY-MM-DD")
     conn = get_db()
     conn.execute(
         "INSERT INTO user_vacations (account_id, date_from, date_to, note) VALUES (?,?,?,?)",
@@ -897,7 +924,10 @@ def add_vacation(account_id: str, body: dict):
 @router.delete("/api/reports/vacations/{vacation_id}")
 def delete_vacation(vacation_id: int):
     conn = get_db()
-    conn.execute("DELETE FROM user_vacations WHERE id = ?", (vacation_id,))
+    cursor = conn.execute("DELETE FROM user_vacations WHERE id = ?", (vacation_id,))
+    if cursor.rowcount == 0:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Vacation not found")
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -976,13 +1006,15 @@ async def notify_missing(body: NotifyMissingRequest):
             "SELECT * FROM jira_users WHERE account_id = ?", (uid,)
         ).fetchone()
         conn2.close()
-        display_name = user_row["display_name"] if user_row else uid
+        display_name = (user_row["display_name"] or uid) if user_row else uid
 
         month_name = f"{body.year}-{body.month:02d}"
         missing_str = ", ".join(missing)
+        display_name_esc = html_mod.escape(display_name)
+        project_esc = html_mod.escape(project)
         message = (
-            f"Напоминание: у пользователя {display_name} не залогировано время "
-            f"за {month_name} в проекте {project}.\n"
+            f"Напоминание: у пользователя {display_name_esc} не залогировано время "
+            f"за {month_name} в проекте {project_esc}.\n"
             f"Пропущенные дни: {missing_str}"
         )
 
@@ -1007,7 +1039,7 @@ async def notify_missing(body: NotifyMissingRequest):
                 error = str(e)
                 logger.error("notify_missing teams %s: %s", uid, e)
 
-        email = user_row["email_address"] if user_row else ""
+        email = (user_row["email_address"] or "") if user_row else ""
         if email:
             try:
                 now_str = datetime.now().strftime("%H:%M")
@@ -1061,13 +1093,11 @@ def _build_overtime_summary(rows: list[dict]) -> dict[str, dict]:
 
 @router.post("/api/reports/send-overtime")
 async def send_overtime_email(body: SendReportRequest):
-    rows = body.rows
     project = body.project or os.getenv("JIRA_PROJECT", "")
 
-    if not rows:
-        report = await overtime_report(ReportRequest(year=body.year, month=body.month))
-        rows = report["rows"]
-        project = report["project"]
+    report = await overtime_report(ReportRequest(year=body.year, month=body.month))
+    rows = report["rows"]
+    project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no overtime data"}
@@ -1080,9 +1110,10 @@ async def send_overtime_email(body: SendReportRequest):
     for name, s in sorted(summary.items()):
         for k in totals:
             totals[k] += s[k]
+        name_esc = html_mod.escape(name)
         summary_html += (
             f"<tr>"
-            f'<td style="padding:4px 8px;font-weight:bold">{name}</td>'
+            f'<td style="padding:4px 8px;font-weight:bold">{name_esc}</td>'
             f'<td style="padding:4px 8px">{s["days"]}</td>'
             f'<td style="padding:4px 8px;color:#06b6d4">{s["project"]:.1f}h</td>'
             f'<td style="padding:4px 8px;color:gray">{s["other"]:.1f}h</td>'
@@ -1107,17 +1138,17 @@ async def send_overtime_email(body: SendReportRequest):
     for r in rows:
         day_class = "color:red" if r.get("day_type") != "workday" else "color:orange"
         issues_links = ", ".join(
-            f'<a href="{jira_url}/browse/{ik}">{ik}</a>' for ik in r.get("issues", [])
+            f'<a href="{jira_url}/browse/{html_mod.escape(ik)}">{html_mod.escape(ik)}</a>' for ik in r.get("issues", [])
         )
         html_rows += (
             f'<tr style="{day_class}">'
-            f'<td style="padding:4px 8px">{r.get("display_name", "")}</td>'
-            f'<td style="padding:4px 8px">{r.get("date", "")}</td>'
-            f'<td style="padding:4px 8px">{r.get("day_type", "")}</td>'
-            f'<td style="padding:4px 8px">{r.get("total_hours", "")}h</td>'
-            f'<td style="padding:4px 8px">{r.get("project_hours", "")}h</td>'
-            f'<td style="padding:4px 8px">{r.get("other_hours", "")}h</td>'
-            f'<td style="padding:4px 8px">+{r.get("over_norm", "")}h</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("display_name", "")))}</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("date", "")))}</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("day_type", "")))}</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("total_hours", "")))}h</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
+            f'<td style="padding:4px 8px">+{html_mod.escape(str(r.get("over_norm", "")))}h</td>'
             f'<td style="padding:4px 8px">{issues_links}</td>'
             f"</tr>"
         )
@@ -1132,7 +1163,7 @@ async def send_overtime_email(body: SendReportRequest):
 <tr style="background:#f0f0f0;font-weight:bold">
 <td style="padding:4px 8px">Пользователь</td>
 <td style="padding:4px 8px">Дней</td>
-<td style="padding:4px 8px">{project}</td>
+<td style="padding:4px 8px">{html_mod.escape(project)}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Итого рабочих дней (часы)</td>
 <td style="padding:4px 8px">Итого выходных (часы)</td>
@@ -1148,7 +1179,7 @@ async def send_overtime_email(body: SendReportRequest):
 <td style="padding:4px 8px">Дата</td>
 <td style="padding:4px 8px">Тип дня</td>
 <td style="padding:4px 8px">Всего</td>
-<td style="padding:4px 8px">{project}</td>
+<td style="padding:4px 8px">{html_mod.escape(project)}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Сверх нормы</td>
 <td style="padding:4px 8px">Задачи</td>
@@ -1169,15 +1200,13 @@ async def send_overtime_email(body: SendReportRequest):
 
 @router.post("/api/reports/send-time-logging")
 async def send_time_logging_email(body: SendReportRequest):
-    rows = body.rows
     project = body.project or os.getenv("JIRA_PROJECT", "")
 
-    if not rows:
-        report = await time_logging_report(
-            ReportRequest(year=body.year, month=body.month)
-        )
-        rows = report["rows"]
-        project = report["project"]
+    report = await time_logging_report(
+        ReportRequest(year=body.year, month=body.month)
+    )
+    rows = report["rows"]
+    project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no time logging data"}
@@ -1187,10 +1216,10 @@ async def send_time_logging_email(body: SendReportRequest):
         missing_style = "color:red" if r.get("missing_count", 0) > 0 else ""
         html_rows += (
             f"<tr>"
-            f'<td style="padding:4px 8px">{r.get("display_name", "")}</td>'
-            f'<td style="padding:4px 8px">{r.get("days_logged", "")}/{r.get("total_workdays", "")}</td>'
-            f'<td style="padding:4px 8px;color:#06b6d4">{r.get("project_hours", "")}h</td>'
-            f'<td style="padding:4px 8px;color:gray">{r.get("other_hours", "")}h</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("display_name", "")))}</td>'
+            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("days_logged", "")))}/{html_mod.escape(str(r.get("total_workdays", "")))}</td>'
+            f'<td style="padding:4px 8px;color:#06b6d4">{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
+            f'<td style="padding:4px 8px;color:gray">{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
             f'<td style="padding:4px 8px;{missing_style}">{r.get("missing_count", 0)} дн.</td>'
             f"</tr>"
         )
@@ -1199,12 +1228,12 @@ async def send_time_logging_email(body: SendReportRequest):
     html = f"""\
 <html><body style="font-family:Arial,sans-serif;color:#333">
 <h2>Отчёт учёта времени — {month_name}</h2>
-<p>Проект: {project}</p>
+<p>Проект: {html_mod.escape(project)}</p>
 <table style="border-collapse:collapse;border:1px solid #ccc">
 <tr style="background:#f0f0f0;font-weight:bold">
 <td style="padding:4px 8px">Пользователь</td>
 <td style="padding:4px 8px">Дни</td>
-<td style="padding:4px 8px">{project}</td>
+<td style="padding:4px 8px">{html_mod.escape(project)}</td>
 <td style="padding:4px 8px">Другие</td>
 <td style="padding:4px 8px">Пропущено</td>
 </tr>
@@ -1273,7 +1302,7 @@ def get_calendar(year: int):
 
 
 @router.put("/api/reports/calendar/{year}")
-def save_calendar(year: int, body: dict):
+async def save_calendar(year: int, body: dict):
     """Сохраняет переопределения календаря.
     Body: {overrides: {date_str: day_type}} — только дни, отличающиеся от дефолта."""
     overrides = body.get("overrides", {})
@@ -1283,7 +1312,12 @@ def save_calendar(year: int, body: dict):
     conn.execute("DELETE FROM holiday_overrides WHERE dt LIKE ?", (f"{year}-%",))
 
     for dt_str, day_type in overrides.items():
-        d = date.fromisoformat(dt_str)
+        try:
+            d = date.fromisoformat(dt_str)
+        except (ValueError, TypeError):
+            continue
+        if d.year != year:
+            continue
         default_non_working = d.weekday() >= 5 or (d.month, d.day) in holidays_set
         default_type = 1 if default_non_working else 0
         if day_type != default_type:
@@ -1312,8 +1346,8 @@ async def fetch_calendar_from_isdayoff(year: int):
     except Exception as e:
         return {"ok": False, "error": f"Не удалось подключиться к isdayoff.ru: {e}"}
 
-    if len(data) < 365:
-        return {"ok": False, "error": f"Некорректный ответ ({len(data)} символов)"}
+    if len(data) != 365 + int(calendar.isleap(year)):
+        return {"ok": False, "error": f"Некорректный ответ ({len(data)} символов, ожидалось {365 + int(calendar.isleap(year))})"}
 
     holidays_set = {(m, d) for m, d in _RU_HOLIDAY_DATES}
     conn = get_db()
