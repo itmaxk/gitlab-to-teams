@@ -42,7 +42,12 @@ async def lifespan(app: FastAPI):
     reports_task.cancel()
 
 
-app = FastAPI(title="GitLab Manager", lifespan=lifespan)
+app = FastAPI(title="Project Manager", lifespan=lifespan)
+
+
+@app.get("/.well-known/appspecific/com.chrome.devtools.json")
+async def _chrome_devtools_probe():
+    return {}
 
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
