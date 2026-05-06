@@ -10,7 +10,7 @@ from services.gitlab_client import (
     get_mr_changes,
     get_file_content,
 )
-from services.rules_engine import evaluate_rules_for_mr
+from services.rules_engine import evaluate_rules_for_mr, should_skip_by_global_title
 from services.notification_dispatcher import dispatch_notifications
 from services.xlsx_review_service import review_xlsx_mr
 from services.review_service import review_mr
@@ -200,6 +200,9 @@ async def poll_once(rules: list[dict]):
             mr_url = mr.get("web_url", "")
 
             if mr_title.strip().lower().startswith("draft"):
+                continue
+
+            if should_skip_by_global_title(mr_title):
                 continue
 
             pending_rule_ids = [

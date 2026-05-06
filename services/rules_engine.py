@@ -193,7 +193,7 @@ def _extract_file_references(content: str) -> list[str]:
     return [m for m in matches if m.rsplit(".", 1)[-1].lower() in extensions]
 
 
-def _should_skip_by_global_title(mr_title: str) -> bool:
+def should_skip_by_global_title(mr_title: str) -> bool:
     """
     Проверяет заголовок MR на совпадение с глобальными исключениями.
     Шаблоны хранятся в таблице global_settings (ключ global_title_excludes),
@@ -214,3 +214,6 @@ def _should_skip_by_global_title(mr_title: str) -> bool:
         if pattern.lower() in title_lower:
             return True
     return False
+
+
+_should_skip_by_global_title = should_skip_by_global_title
