@@ -272,6 +272,49 @@ def test_overtime_report_uses_author_candidates_for_user_lookup(monkeypatch, tmp
     assert result["rows"][0]["over_norm"] == "2.0"
 
 
+def test_overtime_report_does_not_expand_each_user_lookup_to_all_db_users(
+    monkeypatch, tmp_path
+):
+    test_db = tmp_path / "candidate-scope.db"
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    db.init_db()
+
+    conn = db.get_db()
+    conn.executemany(
+        """
+        INSERT INTO jira_users (account_id, display_name, email_address, active)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            ("db-user-a", "DB User A", "a@example.com", 1),
+            ("db-user-b", "DB User B", "b@example.com", 1),
+        ],
+    )
+    db_users = conn.execute("SELECT * FROM jira_users").fetchall()
+    conn.close()
+
+    candidates = reports._collect_user_lookup_candidates(
+        "project-user",
+        {
+            "project-user": [
+                {
+                    "author_account_id": "acc-project",
+                    "author_key_field": "project-user",
+                    "author_name": "project.login",
+                    "author_candidates": [
+                        "acc-project",
+                        "project-user",
+                        "project.login",
+                    ],
+                }
+            ]
+        },
+        db_users,
+    )
+
+    assert candidates == ["project-user", "acc-project", "project.login"]
+
+
 def test_build_overtime_summary_splits_workday_and_weekend_hours():
     summary = reports._build_overtime_summary(
         [

@@ -194,11 +194,6 @@ def _collect_user_lookup_candidates(
             if field and field not in candidates:
                 candidates.append(field)
 
-    for user in db_users or []:
-        account_id = user["account_id"] if hasattr(user, "__getitem__") else user.get("account_id")
-        if account_id not in candidates:
-            candidates.append(account_id)
-
     return candidates
 
 

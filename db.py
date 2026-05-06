@@ -269,6 +269,14 @@ def _migrate(conn: sqlite3.Connection):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_rules_seed_key "
         "ON notification_rules(seed_key)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jira_users_display_name "
+        "ON jira_users(display_name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_user_vacations_account_period "
+        "ON user_vacations(account_id, date_from, date_to)"
+    )
 
     # Миграция cherry_pick_items
     try:
