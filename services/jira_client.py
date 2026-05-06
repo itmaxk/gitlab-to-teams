@@ -180,6 +180,35 @@ async def _fetch_issue_worklogs(client: httpx.AsyncClient, issue_key: str) -> li
     return all_worklogs
 
 
+async def _fetch_worklogs_for_issues(
+    client: httpx.AsyncClient,
+    issue_keys: set[str],
+) -> dict[str, list[dict]]:
+    """Параллельная загрузка ворклогов для набора задач с дедупликацией."""
+    if not issue_keys:
+        return {}
+
+    async def _fetch_one(key: str) -> tuple[str, list[dict]]:
+        worklogs = await _fetch_issue_worklogs(client, key)
+        return (key, worklogs)
+
+    results = await asyncio.gather(*[_fetch_one(k) for k in issue_keys])
+    return {key: worklogs for key, worklogs in results}
+
+
+def _deduplicate_issues(*issue_lists: list[dict]) -> list[dict]:
+    """Объединяет списки задач, удаляя дубликаты по key."""
+    seen: set[str] = set()
+    result: list[dict] = []
+    for issues in issue_lists:
+        for issue in issues:
+            key = issue["key"]
+            if key not in seen:
+                seen.add(key)
+                result.append(issue)
+    return result
+
+
 async def get_all_worklogs_for_project(
     project: str, date_from: str, date_to: str,
 ) -> dict[str, list[dict]]:
@@ -202,24 +231,22 @@ async def get_all_worklogs_for_project(
     d_to = date.fromisoformat(date_to)
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        issues_by_wl = await _fetch_all_issues(client, jql_worklog_date)
-        issues_by_upd = await _fetch_all_issues(client, jql_updated)
+        issues_by_wl, issues_by_upd = await asyncio.gather(
+            _fetch_all_issues(client, jql_worklog_date),
+            _fetch_all_issues(client, jql_updated),
+        )
 
-        # Merge and deduplicate by issue key
-        seen_keys: set[str] = set()
-        all_issues: list[dict] = []
-        for issue in issues_by_wl + issues_by_upd:
-            key = issue["key"]
-            if key not in seen_keys:
-                seen_keys.add(key)
-                all_issues.append(issue)
+        all_issues = _deduplicate_issues(issues_by_wl, issues_by_upd)
+
+        worklog_cache = await _fetch_worklogs_for_issues(
+            client, {issue["key"] for issue in all_issues}
+        )
 
         result: dict[str, list[dict]] = {}
         for issue in all_issues:
             issue_key = issue["key"]
             issue_project = issue["fields"]["project"]["key"]
-            worklogs = await _fetch_issue_worklogs(client, issue_key)
-            for entry in _extract_worklogs(worklogs, issue_key, issue_project, d_from, d_to):
+            for entry in _extract_worklogs(worklog_cache.get(issue_key, []), issue_key, issue_project, d_from, d_to):
                 result.setdefault(entry["author_key"], []).append(entry)
 
     return result
@@ -234,24 +261,41 @@ async def get_worklogs_for_users_all_projects(
     result: dict[str, list[dict]] = {}
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        for user_id in user_ids:
+        async def _fetch_user_issues(user_id: str) -> tuple[str, list[dict]]:
             jql = (
                 f'worklogAuthor = "{user_id}" '
                 f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
             )
             issues = await _fetch_all_issues(client, jql)
+            return (user_id, issues)
 
-            entries: list[dict] = []
+        user_issues = await asyncio.gather(
+            *[_fetch_user_issues(uid) for uid in user_ids]
+        )
+
+        issue_key_to_project: dict[str, str] = {}
+        user_issue_keys: dict[str, set[str]] = {}
+        for uid, issues in user_issues:
+            user_issue_keys[uid] = set()
             for issue in issues:
-                issue_key = issue["key"]
-                issue_project = issue["fields"]["project"]["key"]
-                worklogs = await _fetch_issue_worklogs(client, issue_key)
+                key = issue["key"]
+                issue_key_to_project[key] = issue["fields"]["project"]["key"]
+                user_issue_keys[uid].add(key)
+
+        worklog_cache = await _fetch_worklogs_for_issues(
+            client, set(issue_key_to_project.keys())
+        )
+
+        for uid in user_ids:
+            entries: list[dict] = []
+            for issue_key in user_issue_keys.get(uid, set()):
+                issue_project = issue_key_to_project[issue_key]
+                worklogs = worklog_cache.get(issue_key, [])
                 entries.extend(_extract_worklogs(
                     worklogs, issue_key, issue_project, d_from, d_to,
-                    author_filter=user_id,
+                    author_filter=uid,
                 ))
-
-            result[user_id] = entries
+            result[uid] = entries
 
     return result
 
@@ -284,8 +328,8 @@ async def get_worklogs_for_users_all_projects_by_candidates(
     result: dict[str, list[dict]] = {}
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
+        all_jql_tasks: list[tuple[str, str, str]] = []
         for user_id, candidates in user_candidates.items():
-            entries: list[dict] = []
             unique_candidates = [
                 candidate for candidate in dict.fromkeys(candidates) if candidate
             ]
@@ -294,22 +338,42 @@ async def get_worklogs_for_users_all_projects_by_candidates(
                     f'worklogAuthor = "{candidate}" '
                     f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
                 )
-                issues = await _fetch_all_issues(client, jql)
+                all_jql_tasks.append((user_id, candidate, jql))
 
-                for issue in issues:
-                    issue_key = issue["key"]
-                    issue_project = issue["fields"]["project"]["key"]
-                    worklogs = await _fetch_issue_worklogs(client, issue_key)
-                    extracted_entries = _extract_worklogs(
-                        worklogs, issue_key, issue_project, d_from, d_to
+        jql_results = await asyncio.gather(
+            *[_fetch_all_issues(client, jql) for _, _, jql in all_jql_tasks]
+        )
+
+        issue_key_to_project: dict[str, str] = {}
+        user_candidate_issues: dict[str, dict[str, set[str]]] = {}
+
+        for (user_id, candidate, _), issues in zip(all_jql_tasks, jql_results):
+            user_candidate_issues.setdefault(user_id, {}).setdefault(candidate, set())
+            for issue in issues:
+                key = issue["key"]
+                issue_key_to_project[key] = issue["fields"]["project"]["key"]
+                user_candidate_issues[user_id][candidate].add(key)
+
+        worklog_cache = await _fetch_worklogs_for_issues(
+            client, set(issue_key_to_project.keys())
+        )
+
+        for user_id, candidates in user_candidates.items():
+            entries: list[dict] = []
+            unique_candidates = [
+                candidate for candidate in dict.fromkeys(candidates) if candidate
+            ]
+            for candidate in unique_candidates:
+                issue_keys = user_candidate_issues.get(user_id, {}).get(candidate, set())
+                for issue_key in issue_keys:
+                    issue_project = issue_key_to_project[issue_key]
+                    worklogs = worklog_cache.get(issue_key, [])
+                    extracted = _extract_worklogs(
+                        worklogs, issue_key, issue_project, d_from, d_to,
                     )
-                    # Match against ALL user candidates, not just the one
-                    # used in the JQL — Jira may index by one identifier
-                    # but return a different one in the worklog author object.
                     entries.extend(_match_any_candidate_entries(
-                        extracted_entries, unique_candidates,
+                        extracted, unique_candidates,
                     ))
-
             result[user_id] = dedupe_worklog_entries(entries)
 
     return result
