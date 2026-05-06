@@ -471,6 +471,30 @@ async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     return resp.text
 
 
+async def get_mr_pipelines(
+    project_id: int,
+    mr_iid: int,
+) -> list[dict]:
+    """Return pipelines for a merge request, most recent first."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/pipelines"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+    return resp.json()
+
+
+async def get_pipeline_jobs(
+    project_id: int,
+    pipeline_id: int,
+) -> list[dict]:
+    """Return jobs for a pipeline."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/pipelines/{pipeline_id}/jobs"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+    return resp.json()
+
+
 async def get_file_bytes(project_id: int, file_path: str, ref: str) -> bytes:
     """Return repository file content as raw bytes."""
     encoded_path = quote(file_path, safe="")

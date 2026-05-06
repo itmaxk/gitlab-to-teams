@@ -497,6 +497,25 @@ def seed_default_rule():
         },
     )
 
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "pipeline_changelog_validate",
+            "name": "Проверка changelog:validate",
+            "description": "Проверяет, что job changelog:validate в pipeline MR прошёл успешно. Если job упал — создаёт discussion с упоминанием assignee.",
+            "file_pattern": "*",
+            "content_match": "changelog:validate",
+            "match_type": "contains",
+            "target_branch": "*",
+            "mr_state": "opened",
+            "action_type": "pipeline_check",
+            "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
+
     for seed_key, title_exclude_val in [
         ("mr_no_breaking_instruction", "prepare_release_candidate"),
         ("mr_file_not_found", "prepare_release_candidate"),
