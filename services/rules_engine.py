@@ -5,6 +5,11 @@ from typing import Any, Callable, Awaitable
 
 from db import get_db
 
+GLOBAL_TITLE_SKIP_PATTERN = re.compile(
+    r"(Changelog for version|\[skip_changelog\]|\[release_version_release\]|\[prepare_release_candidate\])",
+    re.IGNORECASE,
+)
+
 
 async def evaluate_rules_for_mr(
     rule_ids: list[int],
@@ -16,6 +21,9 @@ async def evaluate_rules_for_mr(
     Проверяет изменённые файлы на соответствие указанным правилам.
     Возвращает список совпадений: [{rule, file_path, file_content}, ...]
     """
+    if mr_title and GLOBAL_TITLE_SKIP_PATTERN.search(mr_title):
+        return []
+
     conn = get_db()
     placeholders = ",".join("?" for _ in rule_ids)
     rules = conn.execute(

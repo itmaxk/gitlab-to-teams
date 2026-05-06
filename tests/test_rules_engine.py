@@ -131,3 +131,85 @@ def test_empty_contains_rule_does_not_fetch_every_matching_file(tmp_path, monkey
         "configuration/mapping.js",
     ]
     assert fetched_files == []
+
+
+def test_global_title_skip_skips_changelog_for_version(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id FROM notification_rules WHERE name = ?",
+        ("MR changed model without postgres script",),
+    ).fetchone()
+    conn.close()
+
+    async def get_content(_: str) -> str:
+        return "class CustomerModel: pass"
+
+    matches = asyncio.run(
+        evaluate_rules_for_mr(
+            [row["id"]],
+            ["model/customer/profile.py"],
+            get_content,
+            mr_title="Changelog for version 2.0.1",
+        )
+    )
+    assert matches == []
+
+
+def test_global_title_skip_skips_release_tag(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id FROM notification_rules WHERE name = ?",
+        ("MR changed model without postgres script",),
+    ).fetchone()
+    conn.close()
+
+    async def get_content(_: str) -> str:
+        return "content"
+
+    for title in [
+        "Changelog for version 3.1",
+        "[skip_changelog]",
+        "[release_version_release]",
+        "[prepare_release_candidate]",
+        "Merge [skip_changelog] into master",
+    ]:
+        matches = asyncio.run(
+            evaluate_rules_for_mr(
+                [row["id"]],
+                ["model/customer/profile.py"],
+                get_content,
+                mr_title=title,
+            )
+        )
+        assert matches == [], f"Expected no matches for title: {title}"
+
+
+def test_global_title_skip_allows_normal_titles(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id FROM notification_rules WHERE name = ?",
+        ("MR changed model without postgres script",),
+    ).fetchone()
+    conn.close()
+
+    async def get_content(_: str) -> str:
+        return "class CustomerModel: pass"
+
+    matches = asyncio.run(
+        evaluate_rules_for_mr(
+            [row["id"]],
+            ["model/customer/profile.py"],
+            get_content,
+            mr_title="Fix customer profile validation",
+        )
+    )
+    assert len(matches) == 1
