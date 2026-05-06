@@ -72,6 +72,25 @@ def list_rules() -> list[dict]:
     return [_rule_to_out(r) for r in rows]
 
 
+@router.get("/global-title-excludes")
+def get_global_title_excludes():
+    value = get_global_setting("global_title_excludes")
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    return {"patterns": lines}
+
+
+@router.put("/global-title-excludes")
+def update_global_title_excludes(data: dict):
+    patterns = data.get("patterns", [])
+    if isinstance(patterns, list):
+        value = "\n".join(str(p).strip() for p in patterns if str(p).strip())
+    else:
+        value = str(patterns)
+    set_global_setting("global_title_excludes", value)
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    return {"patterns": lines}
+
+
 @router.get("/{rule_id}")
 def get_rule(rule_id: int) -> dict:
     conn = get_db()
@@ -392,22 +411,3 @@ async def resend_notification(log_id: int):
         force=True,
     )
     return {"status": "resent"}
-
-
-@router.get("/global-title-excludes")
-def get_global_title_excludes():
-    value = get_global_setting("global_title_excludes")
-    lines = [line.strip() for line in value.splitlines() if line.strip()]
-    return {"patterns": lines}
-
-
-@router.put("/global-title-excludes")
-def update_global_title_excludes(data: dict):
-    patterns = data.get("patterns", [])
-    if isinstance(patterns, list):
-        value = "\n".join(str(p).strip() for p in patterns if str(p).strip())
-    else:
-        value = str(patterns)
-    set_global_setting("global_title_excludes", value)
-    lines = [line.strip() for line in value.splitlines() if line.strip()]
-    return {"patterns": lines}
