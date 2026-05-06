@@ -349,6 +349,92 @@ def _build_issue_debug_entries(
     return entries
 
 
+def _build_email_html(
+    title: str,
+    subtitle: str,
+    accent_color: str,
+    accent_dark: str,
+    body_content: str,
+) -> str:
+    bg = "#f4f6f9"
+    card_bg = "#ffffff"
+    text_color = "#2d3748"
+    muted = "#718096"
+    border_light = "#e2e8f0"
+    row_alt = "#f7fafc"
+
+    return f"""\
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:{bg};font-family:Arial,Helvetica,sans-serif;color:{text_color}">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{bg}">
+<tr><td align="center" style="padding:24px 16px">
+<table width="600" cellpadding="0" cellspacing="0" border="0" style="background:{card_bg};border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+
+<!-- Header banner -->
+<tr><td style="background:{accent_color};padding:28px 32px 24px 32px">
+<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr>
+<td style="font-size:28px;line-height:1;vertical-align:middle;padding-right:16px" width="48">
+<table cellpadding="0" cellspacing="0" border="0" style="width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,.2)"><tr><td align="center" valign="middle" style="font-size:24px;color:#ffffff">&#9201;</td></tr></table>
+</td>
+<td style="vertical-align:middle">
+<h1 style="margin:0;font-size:20px;font-weight:700;color:#ffffff;line-height:1.3">{title}</h1>
+<p style="margin:4px 0 0 0;font-size:14px;color:rgba(255,255,255,.85);line-height:1.4">{subtitle}</p>
+</td>
+</tr>
+</table>
+</td></tr>
+
+<!-- Accent stripe -->
+<tr><td style="height:4px;background:{accent_dark};font-size:0;line-height:0">&nbsp;</td></tr>
+
+<!-- Body -->
+<tr><td style="padding:24px 32px 8px 32px">
+{body_content}
+</td></tr>
+
+<!-- Footer -->
+<tr><td style="padding:16px 32px 24px 32px">
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid {border_light}">
+<tr><td style="padding-top:12px;font-size:11px;color:{muted};line-height:1.5">
+Отчёт сформирован автоматически. Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')} (МСК).
+</td></tr>
+</table>
+</td></tr>
+
+</table>
+</td></tr>
+</table>
+</body></html>"""
+
+
+_EMAIL_ROW_ALT = "#f7fafc"
+
+
+def _style_table_header(accent_color: str, accent_dark: str) -> str:
+    return (
+        f'style="background:{accent_color};color:#ffffff;font-size:12px;'
+        f'text-transform:uppercase;letter-spacing:.5px;font-weight:600"'
+    )
+
+
+def _style_th() -> str:
+    return 'style="padding:10px 14px;color:#ffffff;font-weight:600;text-align:left"'
+
+
+def _style_td(is_alt: bool = False) -> str:
+    bg = f"background:{_EMAIL_ROW_ALT};" if is_alt else ""
+    return f'style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{bg}line-height:1.5"'
+
+
+def _style_td_highlight(is_alt: bool = False, color: str = "") -> str:
+    bg = f"background:{_EMAIL_ROW_ALT};" if is_alt else ""
+    col = f"color:{color};font-weight:600;" if color else ""
+    return f'style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{bg}{col}line-height:1.5"'
+
+
 def _send_email(recipients: list[str], subject: str, html_body: str):
     host = os.getenv("SMTP_HOST", "")
     if not recipients or not host:
@@ -1043,10 +1129,38 @@ async def notify_missing(body: NotifyMissingRequest):
         if email:
             try:
                 now_str = datetime.now().strftime("%H:%M")
+                accent = "#c2410c"
+                accent_dark = "#9a3412"
+                missing_str = ", ".join(missing)
+                display_name_esc = html_mod.escape(display_name)
+                project_esc = html_mod.escape(project)
+                month_name = f"{body.year}-{body.month:02d}"
+
+                missing_items = ""
+                for d in missing:
+                    missing_items += f'<span style="display:inline-block;background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;border-radius:4px;padding:2px 8px;margin:2px 4px;font-size:12px;font-weight:600">{html_mod.escape(d)}</span>'
+
+                body_content = (
+                    f'<p style="margin:0 0 16px 0;font-size:14px;color:#2d3748;line-height:1.6">'
+                    f'У пользователя <strong>{display_name_esc}</strong> не залогировано время '
+                    f'за <strong>{month_name}</strong> в проекте <strong>{project_esc}</strong>.</p>'
+                    f'<h2 style="margin:20px 0 12px 0;font-size:14px;color:#2d3748">Пропущенные дни:</h2>'
+                    f'<div style="margin-bottom:16px">{missing_items}</div>'
+                    f'<p style="margin:16px 0 0 0;font-size:13px;color:#718096">Всего пропущено дней: <strong style="color:#dc2626">{len(missing)}</strong></p>'
+                )
+
+                html = _build_email_html(
+                    title="Незалогированное время",
+                    subtitle=f"{display_name_esc} — {month_name}",
+                    accent_color=accent,
+                    accent_dark=accent_dark,
+                    body_content=body_content,
+                )
+
                 _send_email(
                     [email],
-                    f"\u26a0\ufe0f Незалогированное время — {month_name} ({now_str})",
-                    f"<h3>{message}</h3>",
+                    f"\u231a Незалогированное время \u2014 {display_name} ({now_str})",
+                    html,
                 )
                 sent_email = True
             except Exception as e:
@@ -1107,89 +1221,110 @@ async def send_overtime_email(body: SendReportRequest):
     summary = _build_overtime_summary(rows)
     totals = {"days": 0, "project": 0.0, "other": 0.0, "workday_hours": 0.0, "weekend_hours": 0.0, "total": 0.0}
     summary_html = ""
-    for name, s in sorted(summary.items()):
+    for idx, (name, s) in enumerate(sorted(summary.items())):
+        is_alt = idx % 2 == 1
         for k in totals:
             totals[k] += s[k]
         name_esc = html_mod.escape(name)
         summary_html += (
             f"<tr>"
-            f'<td style="padding:4px 8px;font-weight:bold">{name_esc}</td>'
-            f'<td style="padding:4px 8px">{s["days"]}</td>'
-            f'<td style="padding:4px 8px;color:#06b6d4">{s["project"]:.1f}h</td>'
-            f'<td style="padding:4px 8px;color:gray">{s["other"]:.1f}h</td>'
-            f'<td style="padding:4px 8px;color:orange">{s["workday_hours"]:.1f}h</td>'
-            f'<td style="padding:4px 8px;color:red">{s["weekend_hours"]:.1f}h</td>'
-            f'<td style="padding:4px 8px;color:red;font-weight:bold">+{s["total"]:.1f}h</td>'
+            f'<td {_style_td(is_alt)}>{name_esc}</td>'
+            f'<td {_style_td(is_alt)}>{s["days"]}</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{s["project"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#718096")}>{s["other"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#c2410c")}>{s["workday_hours"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#dc2626")}>{s["weekend_hours"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#dc2626")}>+{s["total"]:.1f}h</td>'
             f"</tr>"
         )
     summary_html += (
-        f'<tr style="border-top:2px solid #999;font-weight:bold">'
-        f'<td style="padding:4px 8px">Итого</td>'
-        f'<td style="padding:4px 8px">{totals["days"]}</td>'
-        f'<td style="padding:4px 8px;color:#06b6d4">{totals["project"]:.1f}h</td>'
-        f'<td style="padding:4px 8px;color:gray">{totals["other"]:.1f}h</td>'
-        f'<td style="padding:4px 8px;color:orange">{totals["workday_hours"]:.1f}h</td>'
-        f'<td style="padding:4px 8px;color:red">{totals["weekend_hours"]:.1f}h</td>'
-        f'<td style="padding:4px 8px;color:red;font-weight:bold">+{totals["total"]:.1f}h</td>'
+        f'<tr style="border-top:2px solid #e2e8f0">'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px">Итого</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px">{totals["days"]}</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#0891b2">{totals["project"]:.1f}h</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#718096">{totals["other"]:.1f}h</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#c2410c">{totals["workday_hours"]:.1f}h</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#dc2626">{totals["weekend_hours"]:.1f}h</td>'
+        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#dc2626">+{totals["total"]:.1f}h</td>'
         f'</tr>'
     )
 
+    day_labels = {"workday": "Рабочий", "weekend": "Выходной", "holiday": "Праздник"}
     html_rows = ""
     for r in rows:
-        day_class = "color:red" if r.get("day_type") != "workday" else "color:orange"
+        is_alt = False
+        day_type = r.get("day_type", "")
         issues_links = ", ".join(
-            f'<a href="{jira_url}/browse/{html_mod.escape(ik)}">{html_mod.escape(ik)}</a>' for ik in r.get("issues", [])
+            f'<a href="{jira_url}/browse/{html_mod.escape(ik)}" style="color:#0891b2;text-decoration:none">{html_mod.escape(ik)}</a>' for ik in r.get("issues", [])
         )
+        over_norm_style = 'color:#dc2626;font-weight:600' if day_type != "workday" else 'color:#c2410c;font-weight:600'
+        day_label = day_labels.get(day_type, day_type)
         html_rows += (
-            f'<tr style="{day_class}">'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("display_name", "")))}</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("date", "")))}</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("day_type", "")))}</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("total_hours", "")))}h</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
-            f'<td style="padding:4px 8px">+{html_mod.escape(str(r.get("over_norm", "")))}h</td>'
-            f'<td style="padding:4px 8px">{issues_links}</td>'
+            f'<tr>'
+            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("display_name", "")))}</td>'
+            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("date", "")))}</td>'
+            f'<td {_style_td_highlight(is_alt, "#dc2626" if day_type != "workday" else "#c2410c")}>{day_label}</td>'
+            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("total_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#718096")}>{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
+            f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{over_norm_style}">+{html_mod.escape(str(r.get("over_norm", "")))}h</td>'
+            f'<td {_style_td(is_alt)}>{issues_links or "&mdash;"}</td>'
             f"</tr>"
         )
 
     month_name = f"{body.year}-{body.month:02d}"
-    html = f"""\
-<html><body style="font-family:Arial,sans-serif;color:#333">
-<h2>Отчёт по переработкам — {month_name}</h2>
+    accent = "#b91c1c"
+    accent_dark = "#991b1b"
+    project_esc = html_mod.escape(project)
 
-<h3>Сводка по пользователям</h3>
-<table style="border-collapse:collapse;border:1px solid #ccc;margin-bottom:20px">
-<tr style="background:#f0f0f0;font-weight:bold">
-<td style="padding:4px 8px">Пользователь</td>
-<td style="padding:4px 8px">Дней</td>
-<td style="padding:4px 8px">{html_mod.escape(project)}</td>
-<td style="padding:4px 8px">Другие</td>
-<td style="padding:4px 8px">Итого рабочих дней (часы)</td>
-<td style="padding:4px 8px">Итого выходных (часы)</td>
-<td style="padding:4px 8px">Итого сверх нормы</td>
-</tr>
-{summary_html}
-</table>
+    summary_table = (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0;margin-bottom:24px">'
+        f'<tr {_style_table_header(accent, accent_dark)}>'
+        f'<th {_style_th()}>Пользователь</th>'
+        f'<th {_style_th()}>Дней</th>'
+        f'<th {_style_th()}>{project_esc}</th>'
+        f'<th {_style_th()}>Другие</th>'
+        f'<th {_style_th()}>Рабочих (ч)</th>'
+        f'<th {_style_th()}>Выходных (ч)</th>'
+        f'<th {_style_th()}>Сверх нормы</th>'
+        f'</tr>'
+        f'{summary_html}'
+        f'</table>'
+    )
 
-<h3>Детализация</h3>
-<table style="border-collapse:collapse;border:1px solid #ccc">
-<tr style="background:#f0f0f0;font-weight:bold">
-<td style="padding:4px 8px">Пользователь</td>
-<td style="padding:4px 8px">Дата</td>
-<td style="padding:4px 8px">Тип дня</td>
-<td style="padding:4px 8px">Всего</td>
-<td style="padding:4px 8px">{html_mod.escape(project)}</td>
-<td style="padding:4px 8px">Другие</td>
-<td style="padding:4px 8px">Сверх нормы</td>
-<td style="padding:4px 8px">Задачи</td>
-</tr>
-{html_rows}
-</table>
-</body></html>"""
+    detail_table = (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0">'
+        f'<tr {_style_table_header(accent, accent_dark)}>'
+        f'<th {_style_th()}>Пользователь</th>'
+        f'<th {_style_th()}>Дата</th>'
+        f'<th {_style_th()}>Тип дня</th>'
+        f'<th {_style_th()}>Всего</th>'
+        f'<th {_style_th()}>{project_esc}</th>'
+        f'<th {_style_th()}>Другие</th>'
+        f'<th {_style_th()}>Сверх нормы</th>'
+        f'<th {_style_th()}>Задачи</th>'
+        f'</tr>'
+        f'{html_rows}'
+        f'</table>'
+    )
+
+    body_content = (
+        f'<h2 style="margin:0 0 16px 0;font-size:16px;color:#2d3748">Сводка по пользователям</h2>'
+        f'{summary_table}'
+        f'<h2 style="margin:24px 0 16px 0;font-size:16px;color:#2d3748">Детализация</h2>'
+        f'{detail_table}'
+    )
+
+    html = _build_email_html(
+        title="Отчёт по переработкам",
+        subtitle=f"Период: {month_name}  |  Проект: {project_esc}",
+        accent_color=accent,
+        accent_dark=accent_dark,
+        body_content=body_content,
+    )
 
     now_str = datetime.now().strftime("%H:%M")
-    _send_email(body.emails, f"\U0001f525 Отчёт по переработкам — {month_name} ({now_str})", html)
+    _send_email(body.emails, f"\u267b\ufe0f Отчёт по переработкам \u2014 {month_name} ({now_str})", html)
     return {"sent": True}
 
 
@@ -1212,37 +1347,51 @@ async def send_time_logging_email(body: SendReportRequest):
         return {"sent": False, "reason": "no time logging data"}
 
     html_rows = ""
-    for r in rows:
-        missing_style = "color:red" if r.get("missing_count", 0) > 0 else ""
+    for idx, r in enumerate(rows):
+        is_alt = idx % 2 == 1
+        missing = r.get("missing_count", 0)
+        missing_color = "#dc2626" if missing > 0 else "#16a34a"
+        missing_text = f'<span style="color:{missing_color};font-weight:600">{missing} дн.</span>' if missing > 0 else '<span style="color:#16a34a;font-weight:600">&#10003;</span>'
         html_rows += (
             f"<tr>"
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("display_name", "")))}</td>'
-            f'<td style="padding:4px 8px">{html_mod.escape(str(r.get("days_logged", "")))}/{html_mod.escape(str(r.get("total_workdays", "")))}</td>'
-            f'<td style="padding:4px 8px;color:#06b6d4">{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
-            f'<td style="padding:4px 8px;color:gray">{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
-            f'<td style="padding:4px 8px;{missing_style}">{r.get("missing_count", 0)} дн.</td>'
+            f'<td {_style_td(is_alt)} style="font-weight:600">{html_mod.escape(str(r.get("display_name", "")))}</td>'
+            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("days_logged", "")))}/{html_mod.escape(str(r.get("total_workdays", "")))}</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#718096")}>{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
+            f'<td {_style_td(is_alt)}>{missing_text}</td>'
             f"</tr>"
         )
 
     month_name = f"{body.year}-{body.month:02d}"
-    html = f"""\
-<html><body style="font-family:Arial,sans-serif;color:#333">
-<h2>Отчёт учёта времени — {month_name}</h2>
-<p>Проект: {html_mod.escape(project)}</p>
-<table style="border-collapse:collapse;border:1px solid #ccc">
-<tr style="background:#f0f0f0;font-weight:bold">
-<td style="padding:4px 8px">Пользователь</td>
-<td style="padding:4px 8px">Дни</td>
-<td style="padding:4px 8px">{html_mod.escape(project)}</td>
-<td style="padding:4px 8px">Другие</td>
-<td style="padding:4px 8px">Пропущено</td>
-</tr>
-{html_rows}
-</table>
-</body></html>"""
+    accent = "#1d4ed8"
+    accent_dark = "#1e40af"
+    project_esc = html_mod.escape(project)
+
+    table = (
+        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0">'
+        f'<tr {_style_table_header(accent, accent_dark)}>'
+        f'<th {_style_th()}>Пользователь</th>'
+        f'<th {_style_th()}>Дни</th>'
+        f'<th {_style_th()}>{project_esc}</th>'
+        f'<th {_style_th()}>Другие</th>'
+        f'<th {_style_th()}>Пропущено</th>'
+        f'</tr>'
+        f'{html_rows}'
+        f'</table>'
+    )
+
+    body_content = table
+
+    html = _build_email_html(
+        title="Отчёт учёта времени",
+        subtitle=f"Период: {month_name}  |  Проект: {project_esc}",
+        accent_color=accent,
+        accent_dark=accent_dark,
+        body_content=body_content,
+    )
 
     now_str = datetime.now().strftime("%H:%M")
-    _send_email(body.emails, f"\U0001f552 Отчёт учёта времени — {month_name} ({now_str})", html)
+    _send_email(body.emails, f"\u231b Учёт времени \u2014 {month_name} ({now_str})", html)
     return {"sent": True}
 
 
