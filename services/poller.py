@@ -77,6 +77,41 @@ def _mark_mr_processed(rule_id: int, mr_iid: int):
     conn.close()
 
 
+def _is_title_check_notified(rule_id: int, mr_iid: int) -> bool:
+    conn = get_db()
+    row = conn.execute(
+        """SELECT 1 FROM notification_log
+           WHERE rule_id = ? AND mr_iid = ? AND file_path = ?
+             AND gitlab_sent = 1""",
+        (rule_id, mr_iid, "title_check"),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def _log_title_check(rule_id: int, mr_iid: int, mr_title: str, mr_url: str, error_msg: str):
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO notification_log
+           (rule_id, mr_iid, mr_title, mr_url, file_path, file_content,
+            teams_sent, email_sent, gitlab_sent, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (rule_id, mr_iid, mr_title, mr_url, "title_check", error_msg, 0, 0, 1, ""),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _clear_title_check_log(rule_id: int, mr_iid: int):
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM notification_log WHERE rule_id = ? AND mr_iid = ? AND file_path = ?",
+        (rule_id, mr_iid, "title_check"),
+    )
+    conn.commit()
+    conn.close()
+
+
 def _log_polled_mr(
     mr: dict,
     changed_files_count: int,
@@ -170,7 +205,13 @@ async def poll_once(rules: list[dict]):
             pending_rule_ids = [
                 r["id"] for r in group_rules if not _is_mr_processed(r["id"], mr_iid)
             ]
-            if not pending_rule_ids:
+            tc_rule_ids = {
+                r["id"] for r in group_rules if r.get("action_type") == "title_check"
+            }
+            all_rule_ids = list(
+                dict.fromkeys(tc_rule_ids | set(pending_rule_ids))
+            )
+            if not all_rule_ids:
                 continue
 
             xlsx_rules = [
@@ -186,7 +227,7 @@ async def poll_once(rules: list[dict]):
             title_check_rules = [
                 r
                 for r in group_rules
-                if r["id"] in pending_rule_ids and r.get("action_type") == "title_check"
+                if r["id"] in all_rule_ids and r.get("action_type") == "title_check"
             ]
             pipeline_check_rules = [
                 r
@@ -206,14 +247,26 @@ async def poll_once(rules: list[dict]):
             for tc_rule in title_check_rules:
                 valid, error_msg = is_title_valid(mr_title, mr_target_branch)
                 if not valid:
-                    try:
-                        await post_merge_request_discussion(mr_iid, error_msg)
-                        total_matched += 1
-                    except Exception as e:
-                        logger.error(
-                            "Title check discussion failed for MR !%s: %s", mr_iid, e
+                    if not _is_title_check_notified(tc_rule["id"], mr_iid):
+                        assignees = mr.get("assignees") or []
+                        if not assignees:
+                            assignee = mr.get("assignee")
+                            if assignee and isinstance(assignee, dict):
+                                assignees = [assignee]
+                        mentions = " ".join(
+                            f"@{a['username']}" for a in assignees if a.get("username")
                         )
-                _mark_mr_processed(tc_rule["id"], mr_iid)
+                        comment_body = f"{mentions}\n\n{error_msg}".strip() if mentions else error_msg
+                        try:
+                            await post_merge_request_discussion(mr_iid, comment_body)
+                            total_matched += 1
+                            _log_title_check(tc_rule["id"], mr_iid, mr_title, mr_url, error_msg)
+                        except Exception as e:
+                            logger.error(
+                                "Title check discussion failed for MR !%s: %s", mr_iid, e
+                            )
+                else:
+                    _clear_title_check_log(tc_rule["id"], mr_iid)
 
             for pc_rule in pipeline_check_rules:
                 job_name = pc_rule.get("content_match", "") or "changelog:validate"
