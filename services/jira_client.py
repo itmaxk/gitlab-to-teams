@@ -138,7 +138,7 @@ async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
     """Пагинированный поиск задач по JQL."""
     issues: list[dict] = []
     start_at = 0
-    while True:
+    for _ in range(200):
         data = await _get_with_client(client, "/rest/api/2/search", {
             "jql": jql,
             "fields": "key,summary,project",
@@ -146,11 +146,15 @@ async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
             "maxResults": 100,
         })
         batch = data.get("issues", [])
+        if not batch:
+            break
         issues.extend(batch)
         total = data.get("total", 0)
         start_at += len(batch)
         if start_at >= total:
             break
+    else:
+        logger.warning("_fetch_all_issues: reached 200-page limit for JQL: %s", jql)
     return issues
 
 
@@ -158,17 +162,21 @@ async def _fetch_issue_worklogs(client: httpx.AsyncClient, issue_key: str) -> li
     """Пагинированная загрузка ворклогов задачи."""
     all_worklogs: list[dict] = []
     wl_start = 0
-    while True:
+    for _ in range(200):
         wl_data = await _get_with_client(client, f"/rest/api/2/issue/{issue_key}/worklog", {
             "startAt": wl_start,
             "maxResults": 1000,
         })
         worklogs = wl_data.get("worklogs", [])
+        if not worklogs:
+            break
         all_worklogs.extend(worklogs)
         total_wl = wl_data.get("total", 0)
         wl_start += len(worklogs)
         if wl_start >= total_wl:
             break
+    else:
+        logger.warning("_fetch_issue_worklogs: reached 200-page limit for issue: %s", issue_key)
     return all_worklogs
 
 
