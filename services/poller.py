@@ -17,7 +17,7 @@ from services.review_service import review_mr
 from services.review_comment_formatter import format_gitlab_review_comment
 from services.gitlab_notes import post_merge_request_note, post_merge_request_discussion
 from services.title_check import is_title_valid
-from services.pipeline_check import check_pipeline_job_failed
+from services.pipeline_check import PipelineCheckResult, check_pipeline_job_failed
 
 logger = logging.getLogger(__name__)
 
@@ -206,13 +206,8 @@ async def poll_once(rules: list[dict]):
             for tc_rule in title_check_rules:
                 valid, error_msg = is_title_valid(mr_title, mr_target_branch)
                 if not valid:
-                    assignees = mr.get("assignees") or []
-                    mentions = " ".join(
-                        f"@{a['username']}" for a in assignees if a.get("username")
-                    )
-                    comment_body = f"{mentions}\n\n{error_msg}".strip() if mentions else error_msg
                     try:
-                        await post_merge_request_discussion(mr_iid, comment_body)
+                        await post_merge_request_discussion(mr_iid, error_msg)
                         total_matched += 1
                     except Exception as e:
                         logger.error(
@@ -223,16 +218,16 @@ async def poll_once(rules: list[dict]):
             for pc_rule in pipeline_check_rules:
                 job_name = pc_rule.get("content_match", "") or "changelog:validate"
                 try:
-                    failed, job_url = await check_pipeline_job_failed(
+                    result = await check_pipeline_job_failed(
                         project_id, mr_iid, job_name
                     )
                 except Exception as e:
                     logger.error(
                         "Pipeline check failed for MR !%s: %s", mr_iid, e
                     )
-                    failed, job_url = False, None
+                    result = PipelineCheckResult()
 
-                if failed:
+                if result.failed:
                     assignees = mr.get("assignees") or []
                     if not assignees:
                         assignee = mr.get("assignee")
@@ -245,8 +240,8 @@ async def poll_once(rules: list[dict]):
                     if mentions:
                         body = f"{mentions} "
                     body += "Changelog не прошёл валидацию"
-                    if job_url:
-                        body += f"\n\n[Ссылка на job]({job_url})"
+                    if result.job_web_url:
+                        body += f"\n\n[Ссылка на job]({result.job_web_url})"
                     try:
                         await post_merge_request_discussion(mr_iid, body)
                         total_matched += 1
@@ -256,7 +251,9 @@ async def poll_once(rules: list[dict]):
                             mr_iid,
                             e,
                         )
-                _mark_mr_processed(pc_rule["id"], mr_iid)
+
+                if result.failed or result.completed:
+                    _mark_mr_processed(pc_rule["id"], mr_iid)
 
             rest_rule_ids = [
                 rid for rid in pending_rule_ids
