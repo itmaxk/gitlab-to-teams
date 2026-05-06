@@ -16,7 +16,7 @@ class _DummyJinja2Templates:
 fastapi.templating.Jinja2Templates = _DummyJinja2Templates
 
 import db
-from models import OvertimeDebugRequest, ReportRequest
+from models import OvertimeDebugRequest, ReportRequest, SendReportRequest
 from routers import reports
 
 
@@ -313,6 +313,88 @@ def test_overtime_report_does_not_expand_each_user_lookup_to_all_db_users(
     )
 
     assert candidates == ["project-user", "acc-project", "project.login"]
+
+
+def test_send_time_logging_uses_provided_rows_without_regenerating(monkeypatch):
+    async def fail_time_logging_report(body):
+        raise AssertionError("time logging report should not be regenerated")
+
+    sent = {}
+
+    def fake_send_email(recipients, subject, html_body):
+        sent["recipients"] = recipients
+        sent["subject"] = subject
+        sent["html_body"] = html_body
+
+    monkeypatch.setattr(reports, "time_logging_report", fail_time_logging_report)
+    monkeypatch.setattr(reports, "_send_email", fake_send_email)
+
+    result = asyncio.run(
+        reports.send_time_logging_email(
+            SendReportRequest(
+                year=2026,
+                month=3,
+                emails=["lead@example.com"],
+                project="MAIN",
+                rows=[
+                    {
+                        "display_name": "User A",
+                        "days_logged": 20,
+                        "total_workdays": 21,
+                        "project_hours": "120.0",
+                        "other_hours": "8.0",
+                        "missing_count": 1,
+                    }
+                ],
+            )
+        )
+    )
+
+    assert result == {"sent": True}
+    assert sent["recipients"] == ["lead@example.com"]
+    assert "User A" in sent["html_body"]
+
+
+def test_send_overtime_uses_provided_rows_without_regenerating(monkeypatch):
+    async def fail_overtime_report(body):
+        raise AssertionError("overtime report should not be regenerated")
+
+    sent = {}
+
+    def fake_send_email(recipients, subject, html_body):
+        sent["recipients"] = recipients
+        sent["subject"] = subject
+        sent["html_body"] = html_body
+
+    monkeypatch.setattr(reports, "overtime_report", fail_overtime_report)
+    monkeypatch.setattr(reports, "_send_email", fake_send_email)
+
+    result = asyncio.run(
+        reports.send_overtime_email(
+            SendReportRequest(
+                year=2026,
+                month=3,
+                emails=["lead@example.com"],
+                project="MAIN",
+                rows=[
+                    {
+                        "display_name": "User A",
+                        "date": "2026-03-02",
+                        "day_type": "workday",
+                        "total_hours": "10.0",
+                        "project_hours": "9.0",
+                        "other_hours": "1.0",
+                        "over_norm": "2.0",
+                        "issues": ["MAIN-1"],
+                    }
+                ],
+            )
+        )
+    )
+
+    assert result == {"sent": True}
+    assert sent["recipients"] == ["lead@example.com"]
+    assert "User A" in sent["html_body"]
 
 
 def test_build_overtime_summary_splits_workday_and_weekend_hours():

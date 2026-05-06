@@ -1204,9 +1204,11 @@ def _build_overtime_summary(rows: list[dict]) -> dict[str, dict]:
 async def send_overtime_email(body: SendReportRequest):
     project = body.project or os.getenv("JIRA_PROJECT", "")
 
-    report = await overtime_report(ReportRequest(year=body.year, month=body.month))
-    rows = report["rows"]
-    project = report["project"]
+    rows = body.rows
+    if not rows:
+        report = await overtime_report(ReportRequest(year=body.year, month=body.month))
+        rows = report["rows"]
+        project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no overtime data"}
@@ -1332,11 +1334,13 @@ async def send_overtime_email(body: SendReportRequest):
 async def send_time_logging_email(body: SendReportRequest):
     project = body.project or os.getenv("JIRA_PROJECT", "")
 
-    report = await time_logging_report(
-        ReportRequest(year=body.year, month=body.month)
-    )
-    rows = report["rows"]
-    project = report["project"]
+    rows = body.rows
+    if not rows:
+        report = await time_logging_report(
+            ReportRequest(year=body.year, month=body.month)
+        )
+        rows = report["rows"]
+        project = report["project"]
 
     if not rows:
         return {"sent": False, "reason": "no time logging data"}
