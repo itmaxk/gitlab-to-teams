@@ -15,7 +15,8 @@ from services.notification_dispatcher import dispatch_notifications
 from services.xlsx_review_service import review_xlsx_mr
 from services.review_service import review_mr
 from services.review_comment_formatter import format_gitlab_review_comment
-from services.gitlab_notes import post_merge_request_note
+from services.gitlab_notes import post_merge_request_note, post_merge_request_discussion
+from services.title_check import is_title_valid
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +146,12 @@ async def poll_once(rules: list[dict]):
 
     for (branch, state), group_rules in branch_state_rules.items():
         try:
-            mrs = await get_merge_requests(
-                project_id, state=state, target_branch=branch
-            )
+            if branch == "*":
+                mrs = await get_merge_requests(project_id, state=state)
+            else:
+                mrs = await get_merge_requests(
+                    project_id, state=state, target_branch=branch
+                )
         except Exception as e:
             logger.error(
                 "Failed to get MRs (branch=%s, state=%s): %s", branch, state, e
@@ -178,12 +182,45 @@ async def poll_once(rules: list[dict]):
                 for r in group_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "code_review"
             ]
+            title_check_rules = [
+                r
+                for r in group_rules
+                if r["id"] in pending_rule_ids and r.get("action_type") == "title_check"
+            ]
             notify_rules = [
                 r
                 for r in group_rules
                 if r["id"] in pending_rule_ids
                 and r.get("action_type", "notify") == "notify"
             ]
+
+            total_matched = 0
+            mr_target_branch = mr.get("target_branch", "") or branch
+
+            for tc_rule in title_check_rules:
+                valid, error_msg = is_title_valid(mr_title, mr_target_branch)
+                if not valid:
+                    try:
+                        await post_merge_request_discussion(mr_iid, error_msg)
+                        total_matched += 1
+                    except Exception as e:
+                        logger.error(
+                            "Title check discussion failed for MR !%s: %s", mr_iid, e
+                        )
+                _mark_mr_processed(tc_rule["id"], mr_iid)
+
+            rest_rule_ids = [
+                rid for rid in pending_rule_ids
+                if rid not in {r["id"] for r in title_check_rules}
+            ]
+            if not rest_rule_ids:
+                try:
+                    _log_polled_mr(
+                        mr, 0, len(pending_rule_ids), total_matched, True
+                    )
+                except Exception as e:
+                    logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
+                continue
 
             changed_files: list[str] = []
             source_branch = mr.get("source_branch") or ""
@@ -197,8 +234,8 @@ async def poll_once(rules: list[dict]):
                     changed_files = await get_mr_changes(project_id, mr_iid)
                 except Exception as e:
                     logger.error("Failed to get changes for MR !%s: %s", mr_iid, e)
-                    _log_polled_mr(mr, 0, len(pending_rule_ids), 0, False, str(e))
-                    for rule_id in pending_rule_ids:
+                    _log_polled_mr(mr, 0, len(pending_rule_ids), total_matched, False, str(e))
+                    for rule_id in rest_rule_ids:
                         _mark_mr_processed(rule_id, mr_iid)
                     continue
 
@@ -210,8 +247,6 @@ async def poll_once(rules: list[dict]):
                     source_branch,
                     target_branch,
                 )
-
-            total_matched = 0
 
             if notify_rules:
                 notify_ids = [r["id"] for r in notify_rules]

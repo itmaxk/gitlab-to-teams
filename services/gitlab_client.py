@@ -36,18 +36,22 @@ async def get_project_id() -> int:
 async def get_merge_requests(
     project_id: int,
     state: str = "merged",
-    target_branch: str = "master",
+    target_branch: str | None = None,
     per_page: int = 20,
 ) -> list[dict]:
-    """Return merge requests filtered by state and target branch."""
+    """Return merge requests filtered by state and target branch.
+
+    If target_branch is None, all branches are included (no branch filter).
+    """
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
-    params = {
+    params: dict[str, str | int] = {
         "state": state,
-        "target_branch": target_branch,
         "order_by": "updated_at",
         "sort": "desc",
         "per_page": per_page,
     }
+    if target_branch:
+        params["target_branch"] = target_branch
     async with httpx.AsyncClient(verify=False, timeout=30) as client:
         resp = await client.get(url, headers=_headers(), params=params)
         resp.raise_for_status()

@@ -25,3 +25,11 @@ async def post_merge_request_note(mr_iid: int, body: str) -> dict:
         resp = await client.post(url, headers=_gitlab_headers(), json={"body": body})
         resp.raise_for_status()
     return resp.json()
+
+
+async def post_merge_request_discussion(mr_iid: int, body: str) -> dict:
+    url = f"{_gitlab_base()}/api/v4/projects/{_gitlab_project_path()}/merge_requests/{mr_iid}/discussions"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.post(url, headers=_gitlab_headers(), json={"body": body})
+        resp.raise_for_status()
+    return resp.json()

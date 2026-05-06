@@ -474,6 +474,25 @@ def seed_default_rule():
         },
     )
 
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "mr_title_check",
+            "name": "Проверка заголовка MR",
+            "description": "Проверяет формат заголовка MR: JIRA-TASK: Description. Заголовок не должен содержать русские буквы. Для release-веток требует номер релиза в конце заголовка. Пропускает MR со статусом Draft.",
+            "file_pattern": "*",
+            "content_match": "",
+            "match_type": "contains",
+            "target_branch": "*",
+            "mr_state": "opened",
+            "action_type": "title_check",
+            "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
+
     conn.close()
 
 
