@@ -202,6 +202,7 @@ def init_db():
     _seed_rule_if_missing(
         conn,
         {
+            "seed_key": "mr_model_no_postgres",
             "name": "MR changed model without postgres script",
             "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
             "file_pattern": "model/*/*",
@@ -237,7 +238,7 @@ def _migrate(conn: sqlite3.Connection):
         "send_teams": "ALTER TABLE notification_rules ADD COLUMN send_teams INTEGER DEFAULT 1",
         "send_gitlab": "ALTER TABLE notification_rules ADD COLUMN send_gitlab INTEGER DEFAULT 0",
         "action_type": "ALTER TABLE notification_rules ADD COLUMN action_type TEXT DEFAULT 'notify'",
-        "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT ''",
+        "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT NULL",
         "title_exclude": "ALTER TABLE notification_rules ADD COLUMN title_exclude TEXT DEFAULT ''",
     }
 
@@ -252,12 +253,22 @@ def _migrate(conn: sqlite3.Connection):
             "Changelog должен быть breaking": "changelog_should_be_breaking",
             "MR нет инструкции breaking": "mr_no_breaking_instruction",
             "MR не найден файл": "mr_file_not_found",
+            "MR changed model without postgres script": "mr_model_no_postgres",
         }
         for name, key in seed_key_map.items():
             conn.execute(
                 "UPDATE notification_rules SET seed_key = ? WHERE name = ? AND (seed_key = '' OR seed_key IS NULL)",
                 (key, name),
             )
+
+    conn.execute(
+        "UPDATE notification_rules SET seed_key = NULL WHERE seed_key = ''"
+    )
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_rules_seed_key "
+        "ON notification_rules(seed_key)"
+    )
 
     # Миграция cherry_pick_items
     try:
@@ -415,24 +426,19 @@ def set_global_setting(key: str, value: str):
 
 def seed_default_rule():
     conn = get_db()
-    count = conn.execute("SELECT COUNT(*) FROM notification_rules").fetchone()[0]
-    if count == 0:
-        conn.execute(
-            """INSERT INTO notification_rules
-               (name, description, file_pattern, content_match, match_type, target_branch, mr_state, seed_key)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "Breaking Changes",
-                "Уведомление о breaking changes при merge MR",
-                "changelogs/unreleased/*.md",
-                "type: breaking",
-                "contains",
-                "master",
-                "merged",
-                "breaking_changes",
-            ),
-        )
-        conn.commit()
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "breaking_changes",
+            "name": "Breaking Changes",
+            "description": "Уведомление о breaking changes при merge MR",
+            "file_pattern": "changelogs/unreleased/*.md",
+            "content_match": "type: breaking",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "merged",
+        },
+    )
 
     _seed_rule_if_missing(
         conn,
@@ -568,15 +574,6 @@ def seed_default_rule():
         },
     )
 
-    for seed_key, title_exclude_val in [
-        ("mr_no_breaking_instruction", "prepare_release_candidate"),
-        ("mr_file_not_found", "prepare_release_candidate"),
-    ]:
-        conn.execute(
-            "UPDATE notification_rules SET title_exclude = ? WHERE seed_key = ? AND (title_exclude IS NULL OR title_exclude = '')",
-            (title_exclude_val, seed_key),
-        )
-
     conn.close()
 
 
@@ -632,18 +629,32 @@ def seed_review_settings():
     conn.close()
 
 
+SEED_UPDATABLE_FIELDS = (
+    "name", "description", "file_pattern", "content_match", "content_exclude",
+    "match_type", "target_branch", "mr_state", "title_exclude",
+    "file_check_enabled", "file_check_path_prefix", "file_check_mode",
+)
+
+
 def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
-    seed_key = rule.pop("seed_key", None) or rule["name"]
-    exists = conn.execute(
-        "SELECT 1 FROM notification_rules WHERE seed_key = ?", (seed_key,)
-    ).fetchone()
-    if exists:
+    seed_key = rule.pop("seed_key", None) or rule.get("name", "")
+    if not seed_key:
+        cols = ", ".join(rule.keys())
+        placeholders = ", ".join("?" for _ in rule)
+        conn.execute(
+            f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders})",
+            list(rule.values()),
+        )
+        conn.commit()
         return
     rule["seed_key"] = seed_key
     cols = ", ".join(rule.keys())
     placeholders = ", ".join("?" for _ in rule)
+    updatable = {k: v for k, v in rule.items() if k in SEED_UPDATABLE_FIELDS}
+    update_clause = ", ".join(f"{k} = excluded.{k}" for k in updatable)
     conn.execute(
-        f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders})",
+        f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders}) "
+        f"ON CONFLICT(seed_key) DO UPDATE SET {update_clause}",
         list(rule.values()),
     )
     conn.commit()
