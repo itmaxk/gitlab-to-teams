@@ -23,17 +23,24 @@ function loadGlobalExcludes() {
     .then(data => {
       textarea.value = (data.patterns || []).join('\n');
       textarea.dataset.original = textarea.value;
-      saveBtn.classList.add('hidden');
+      saveBtn.disabled = true;
+      saveBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+      saveBtn.classList.add('bg-slate-600', 'cursor-not-allowed');
     })
     .catch(() => {
-      status.textContent = 'Ошибка загрузки';
+      status.className = 'text-xs text-red-400 mt-1';
+      status.textContent = '✕ Ошибка загрузки';
     });
 
   textarea.addEventListener('input', () => {
     if (textarea.value !== textarea.dataset.original) {
-      saveBtn.classList.remove('hidden');
+      saveBtn.disabled = false;
+      saveBtn.classList.remove('bg-slate-600', 'cursor-not-allowed');
+      saveBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
     } else {
-      saveBtn.classList.add('hidden');
+      saveBtn.disabled = true;
+      saveBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+      saveBtn.classList.add('bg-slate-600', 'cursor-not-allowed');
     }
   });
 }
@@ -58,9 +65,10 @@ function saveGlobalExcludes() {
     .then(data => {
       textarea.value = (data.patterns || []).join('\n');
       textarea.dataset.original = textarea.value;
-      saveBtn.classList.add('hidden');
       saveBtn.textContent = 'Сохранить';
-      saveBtn.disabled = false;
+      saveBtn.disabled = true;
+      saveBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+      saveBtn.classList.add('bg-slate-600', 'cursor-not-allowed');
       status.className = 'text-xs text-green-400 mt-1';
       status.textContent = '✓ Сохранено';
       setTimeout(() => { status.textContent = ''; }, 3000);
