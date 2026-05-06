@@ -51,20 +51,25 @@ function saveGlobalExcludes() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ patterns }),
   })
-    .then(r => r.json())
+    .then(r => {
+      if (!r.ok) throw new Error(r.statusText);
+      return r.json();
+    })
     .then(data => {
       textarea.value = (data.patterns || []).join('\n');
       textarea.dataset.original = textarea.value;
       saveBtn.classList.add('hidden');
       saveBtn.textContent = 'Сохранить';
       saveBtn.disabled = false;
-      status.textContent = 'Сохранено';
+      status.className = 'text-xs text-green-400 mt-1';
+      status.textContent = '✓ Сохранено';
       setTimeout(() => { status.textContent = ''; }, 3000);
     })
     .catch(() => {
       saveBtn.textContent = 'Сохранить';
       saveBtn.disabled = false;
-      status.textContent = 'Ошибка сохранения';
+      status.className = 'text-xs text-red-400 mt-1';
+      status.textContent = '✕ Ошибка сохранения';
     });
 }
 
