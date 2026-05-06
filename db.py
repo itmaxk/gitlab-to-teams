@@ -439,9 +439,9 @@ def seed_default_rule():
         {
             "seed_key": "changelog_should_be_breaking",
             "name": "Changelog должен быть breaking",
-            "description": "Changelog содержит script/service/publish, но тип не breaking — нужно исправить на type: breaking",
+            "description": "Changelog содержит /etl-services/, script, скрипт, выполнит, publish, паблиш, но тип не breaking — нужно исправить на type: breaking",
             "file_pattern": "changelogs/unreleased/*.md",
-            "content_match": r"(?i)(script|service|publish|паблиш)",
+            "content_match": r"(?i)(/etl-services/|script|скрипт|выполнит|publish|паблиш)",
             "content_exclude": r"type:\s*breaking",
             "match_type": "regex",
             "target_branch": "master",
