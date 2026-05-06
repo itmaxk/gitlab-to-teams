@@ -6,6 +6,19 @@
   <a href="/rules/new" class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded-lg">+ Новое правило</a>
 </div>
 
+<div class="bg-slate-800 rounded-lg border border-slate-700 p-4 mb-6">
+  <div class="flex items-center justify-between mb-2">
+    <h2 class="font-semibold text-sm text-slate-300">Глобальные исключения по заголовку MR</h2>
+    <button onclick="saveGlobalExcludes()" id="save-global-btn"
+      class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded cursor-pointer hidden">Сохранить</button>
+  </div>
+  <p class="text-xs text-slate-500 mb-2">Если заголовок MR содержит любое из этих значений — все правила пропускаются. По одному шаблону на строку (подстрока, без учёта регистра).</p>
+  <textarea id="global-title-excludes"
+    class="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none resize-y"
+    rows="4" placeholder="Changelog for version&#10;[skip_changelog]"></textarea>
+  <p id="global-excludes-status" class="text-xs text-slate-500 mt-1"></p>
+</div>
+
 {% if rules %}
 <div class="grid gap-4">
   {% for rule in rules %}

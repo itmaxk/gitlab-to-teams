@@ -2,7 +2,7 @@ import os
 
 from fastapi import APIRouter, HTTPException
 
-from db import get_db
+from db import get_db, get_global_setting, set_global_setting
 from models import RuleCreate, RuleUpdate
 from services.teams_client import send_teams_notification
 from services.notification_dispatcher import dispatch_notifications
@@ -392,3 +392,22 @@ async def resend_notification(log_id: int):
         force=True,
     )
     return {"status": "resent"}
+
+
+@router.get("/global-title-excludes")
+def get_global_title_excludes():
+    value = get_global_setting("global_title_excludes")
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    return {"patterns": lines}
+
+
+@router.put("/global-title-excludes")
+def update_global_title_excludes(data: dict):
+    patterns = data.get("patterns", [])
+    if isinstance(patterns, list):
+        value = "\n".join(str(p).strip() for p in patterns if str(p).strip())
+    else:
+        value = str(patterns)
+    set_global_setting("global_title_excludes", value)
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    return {"patterns": lines}

@@ -12,6 +12,64 @@ function addEmail() {
   list.appendChild(row);
 }
 
+function loadGlobalExcludes() {
+  const textarea = document.getElementById('global-title-excludes');
+  const saveBtn = document.getElementById('save-global-btn');
+  const status = document.getElementById('global-excludes-status');
+  if (!textarea) return;
+
+  fetch('/api/rules/global-title-excludes')
+    .then(r => r.json())
+    .then(data => {
+      textarea.value = (data.patterns || []).join('\n');
+      textarea.dataset.original = textarea.value;
+      saveBtn.classList.add('hidden');
+    })
+    .catch(() => {
+      status.textContent = 'Ошибка загрузки';
+    });
+
+  textarea.addEventListener('input', () => {
+    if (textarea.value !== textarea.dataset.original) {
+      saveBtn.classList.remove('hidden');
+    } else {
+      saveBtn.classList.add('hidden');
+    }
+  });
+}
+
+function saveGlobalExcludes() {
+  const textarea = document.getElementById('global-title-excludes');
+  const saveBtn = document.getElementById('save-global-btn');
+  const status = document.getElementById('global-excludes-status');
+  const patterns = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+
+  saveBtn.textContent = '...';
+  saveBtn.disabled = true;
+  fetch('/api/rules/global-title-excludes', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patterns }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      textarea.value = (data.patterns || []).join('\n');
+      textarea.dataset.original = textarea.value;
+      saveBtn.classList.add('hidden');
+      saveBtn.textContent = 'Сохранить';
+      saveBtn.disabled = false;
+      status.textContent = 'Сохранено';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    })
+    .catch(() => {
+      saveBtn.textContent = 'Сохранить';
+      saveBtn.disabled = false;
+      status.textContent = 'Ошибка сохранения';
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadGlobalExcludes);
+
 async function toggleRule(id) {
   const resp = await fetch(`/api/rules/${id}/toggle`, { method: 'PATCH' });
   if (resp.ok) {

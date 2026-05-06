@@ -5,11 +5,6 @@ from typing import Any, Callable, Awaitable
 
 from db import get_db
 
-GLOBAL_TITLE_SKIP_PATTERN = re.compile(
-    r"(Changelog for version|\[skip_changelog\]|\[release_version_release\]|\[prepare_release_candidate\])",
-    re.IGNORECASE,
-)
-
 
 async def evaluate_rules_for_mr(
     rule_ids: list[int],
@@ -21,7 +16,7 @@ async def evaluate_rules_for_mr(
     Проверяет изменённые файлы на соответствие указанным правилам.
     Возвращает список совпадений: [{rule, file_path, file_content}, ...]
     """
-    if mr_title and GLOBAL_TITLE_SKIP_PATTERN.search(mr_title):
+    if mr_title and _should_skip_by_global_title(mr_title):
         return []
 
     conn = get_db()
@@ -196,3 +191,26 @@ def _extract_file_references(content: str) -> list[str]:
         "csv", "txt", "md", "html", "handlebars", "css", "java", "go", "rs", "rb",
     }
     return [m for m in matches if m.rsplit(".", 1)[-1].lower() in extensions]
+
+
+def _should_skip_by_global_title(mr_title: str) -> bool:
+    """
+    Проверяет заголовок MR на совпадение с глобальными исключениями.
+    Шаблоны хранятся в таблице global_settings (ключ global_title_excludes),
+    по одному шаблону на строку. Каждый шаблон — подстрока без учёта регистра.
+    """
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM global_settings WHERE key = 'global_title_excludes'"
+    ).fetchone()
+    conn.close()
+
+    if not row or not row["value"]:
+        return False
+
+    patterns = [p.strip() for p in row["value"].splitlines() if p.strip()]
+    title_lower = mr_title.lower()
+    for pattern in patterns:
+        if pattern.lower() in title_lower:
+            return True
+    return False

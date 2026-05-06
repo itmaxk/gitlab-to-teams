@@ -173,6 +173,12 @@ def init_db():
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS global_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT DEFAULT '',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS polled_mrs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             mr_iid INTEGER NOT NULL,
@@ -358,7 +364,53 @@ def _migrate(conn: sqlite3.Connection):
     except Exception:
         pass
 
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS global_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT DEFAULT '',
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+    except Exception:
+        pass
+
     conn.commit()
+
+
+def seed_global_settings():
+    conn = get_db()
+    exists = conn.execute(
+        "SELECT 1 FROM global_settings WHERE key = 'global_title_excludes'"
+    ).fetchone()
+    if not exists:
+        conn.execute(
+            "INSERT INTO global_settings (key, value) VALUES (?, ?)",
+            ("global_title_excludes", "Changelog for version\n[skip_changelog]\n[release_version_release]\n[prepare_release_candidate]"),
+        )
+        conn.commit()
+    conn.close()
+
+
+def get_global_setting(key: str, default: str = "") -> str:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT value FROM global_settings WHERE key = ?", (key,)
+    ).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+def set_global_setting(key: str, value: str):
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO global_settings (key, value, updated_at)
+           VALUES (?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP""",
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
 
 
 def seed_default_rule():

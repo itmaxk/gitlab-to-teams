@@ -138,18 +138,28 @@ def test_global_title_skip_skips_changelog_for_version(tmp_path, monkeypatch):
     db.init_db()
 
     conn = db.get_db()
-    row = conn.execute(
+    conn.execute(
+        "INSERT INTO global_settings (key, value) VALUES ('global_title_excludes', ?)",
+        ("Changelog for version\n[skip_changelog]\n[release_version_release]\n[prepare_release_candidate]",),
+    )
+    conn.commit()
+    conn.close()
+
+    row = conn if conn else None
+    from db import get_db as _get_db
+    conn2 = _get_db()
+    rule_row = conn2.execute(
         "SELECT id FROM notification_rules WHERE name = ?",
         ("MR changed model without postgres script",),
     ).fetchone()
-    conn.close()
+    conn2.close()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [row["id"]],
+            [rule_row["id"]],
             ["model/customer/profile.py"],
             get_content,
             mr_title="Changelog for version 2.0.1",
@@ -163,11 +173,20 @@ def test_global_title_skip_skips_release_tag(tmp_path, monkeypatch):
     db.init_db()
 
     conn = db.get_db()
-    row = conn.execute(
+    conn.execute(
+        "INSERT INTO global_settings (key, value) VALUES ('global_title_excludes', ?)",
+        ("Changelog for version\n[skip_changelog]\n[release_version_release]\n[prepare_release_candidate]",),
+    )
+    conn.commit()
+    conn.close()
+
+    from db import get_db as _get_db
+    conn2 = _get_db()
+    rule_row = conn2.execute(
         "SELECT id FROM notification_rules WHERE name = ?",
         ("MR changed model without postgres script",),
     ).fetchone()
-    conn.close()
+    conn2.close()
 
     async def get_content(_: str) -> str:
         return "content"
@@ -181,7 +200,7 @@ def test_global_title_skip_skips_release_tag(tmp_path, monkeypatch):
     ]:
         matches = asyncio.run(
             evaluate_rules_for_mr(
-                [row["id"]],
+                [rule_row["id"]],
                 ["model/customer/profile.py"],
                 get_content,
                 mr_title=title,
@@ -195,18 +214,27 @@ def test_global_title_skip_allows_normal_titles(tmp_path, monkeypatch):
     db.init_db()
 
     conn = db.get_db()
-    row = conn.execute(
+    conn.execute(
+        "INSERT INTO global_settings (key, value) VALUES ('global_title_excludes', ?)",
+        ("Changelog for version\n[skip_changelog]\n[release_version_release]\n[prepare_release_candidate]",),
+    )
+    conn.commit()
+    conn.close()
+
+    from db import get_db as _get_db
+    conn2 = _get_db()
+    rule_row = conn2.execute(
         "SELECT id FROM notification_rules WHERE name = ?",
         ("MR changed model without postgres script",),
     ).fetchone()
-    conn.close()
+    conn2.close()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [row["id"]],
+            [rule_row["id"]],
             ["model/customer/profile.py"],
             get_content,
             mr_title="Fix customer profile validation",

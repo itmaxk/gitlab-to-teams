@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from db import init_db, seed_default_rule, seed_report_settings, seed_review_settings
+from db import init_db, seed_default_rule, seed_report_settings, seed_review_settings, seed_global_settings
 from services.poller import start_polling
 from services.reports_scheduler import start_reports_scheduler
 
@@ -35,6 +35,7 @@ async def lifespan(app: FastAPI):
     seed_default_rule()
     seed_report_settings()
     seed_review_settings()
+    seed_global_settings()
     poll_task = asyncio.create_task(start_polling())
     reports_task = asyncio.create_task(start_reports_scheduler())
     yield
