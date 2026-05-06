@@ -92,8 +92,8 @@ def create_rule(data: RuleCreate) -> dict:
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data.name,
             data.description,
@@ -107,6 +107,7 @@ def create_rule(data: RuleCreate) -> dict:
             int(data.file_check_enabled),
             data.file_check_path_prefix,
             data.file_check_mode,
+            data.title_exclude,
             data.action_type,
             int(data.send_teams),
             data.teams_webhook_url,
@@ -145,7 +146,7 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
+           title_exclude=?, action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             data.name,
@@ -161,6 +162,7 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
             int(data.file_check_enabled),
             data.file_check_path_prefix,
             data.file_check_mode,
+            data.title_exclude,
             data.action_type,
             int(data.send_teams),
             data.teams_webhook_url,
@@ -228,9 +230,9 @@ def copy_rule(rule_id: int) -> dict:
         """INSERT INTO notification_rules
            (name, description, file_pattern, content_match, match_type,
             target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix,
-            action_type, teams_webhook_url, send_email, send_gitlab, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            file_check_enabled, file_check_path_prefix, file_check_mode,
+            title_exclude, action_type, teams_webhook_url, send_email, send_gitlab, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
         (
             src["name"] + " (копия)",
             src["description"],
@@ -242,6 +244,8 @@ def copy_rule(rule_id: int) -> dict:
             src["poll_interval_seconds"],
             src["file_check_enabled"],
             src["file_check_path_prefix"],
+            src.get("file_check_mode", "present"),
+            src.get("title_exclude", ""),
             src.get("action_type", "notify"),
             src["teams_webhook_url"],
             src["send_email"],

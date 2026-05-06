@@ -251,7 +251,7 @@ async def poll_once(rules: list[dict]):
             if notify_rules:
                 notify_ids = [r["id"] for r in notify_rules]
                 matches = await evaluate_rules_for_mr(
-                    notify_ids, changed_files, fetch_content
+                    notify_ids, changed_files, fetch_content, mr_title
                 )
                 if matches:
                     await dispatch_notifications(matches, mr_iid, mr_title, mr_url)

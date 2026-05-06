@@ -262,6 +262,7 @@ async def save_new_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    title_exclude: str = Form(""),
     action_type: str = Form("notify"),
     send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
@@ -277,8 +278,8 @@ async def save_new_rule(
            (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             name,
             description,
@@ -292,6 +293,7 @@ async def save_new_rule(
             1 if file_check_enabled else 0,
             file_check_path_prefix,
             file_check_mode,
+            title_exclude,
             action_type,
             1 if send_teams else 0,
             teams_webhook_url,
@@ -359,6 +361,7 @@ async def save_edit_rule(
     file_check_enabled: Optional[str] = Form(None),
     file_check_path_prefix: str = Form(""),
     file_check_mode: str = Form("present"),
+    title_exclude: str = Form(""),
     action_type: str = Form("notify"),
     send_teams: Optional[str] = Form(None),
     teams_webhook_url: str = Form(""),
@@ -375,7 +378,7 @@ async def save_edit_rule(
            name=?, description=?, enabled=?, file_pattern=?, content_match=?,
            content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
            file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
+           title_exclude=?, action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
            WHERE id=?""",
         (
             name,
@@ -391,6 +394,7 @@ async def save_edit_rule(
             1 if file_check_enabled else 0,
             file_check_path_prefix,
             file_check_mode,
+            title_exclude,
             action_type,
             1 if send_teams else 0,
             teams_webhook_url,

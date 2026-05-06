@@ -29,6 +29,7 @@ def init_db():
             file_check_enabled INTEGER DEFAULT 0,
             file_check_path_prefix TEXT DEFAULT '',
             file_check_mode TEXT DEFAULT 'present',
+            title_exclude TEXT DEFAULT '',
             action_type TEXT DEFAULT 'notify',
             send_teams INTEGER DEFAULT 1,
             teams_webhook_url TEXT DEFAULT '',
@@ -231,6 +232,7 @@ def _migrate(conn: sqlite3.Connection):
         "send_gitlab": "ALTER TABLE notification_rules ADD COLUMN send_gitlab INTEGER DEFAULT 0",
         "action_type": "ALTER TABLE notification_rules ADD COLUMN action_type TEXT DEFAULT 'notify'",
         "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT ''",
+        "title_exclude": "ALTER TABLE notification_rules ADD COLUMN title_exclude TEXT DEFAULT ''",
     }
 
     need_seed_key_backfill = "seed_key" not in columns
@@ -410,6 +412,7 @@ def seed_default_rule():
             "match_type": "contains",
             "target_branch": "master",
             "mr_state": "opened",
+            "title_exclude": "prepare_release_candidate",
             "send_teams": 1,
             "send_email": 1,
             "enabled": 0,
@@ -430,6 +433,7 @@ def seed_default_rule():
             "file_check_enabled": 1,
             "file_check_path_prefix": "database/postgres/migration",
             "file_check_mode": "absent",
+            "title_exclude": "prepare_release_candidate",
             "send_teams": 1,
             "send_email": 1,
             "enabled": 0,
@@ -492,6 +496,15 @@ def seed_default_rule():
             "enabled": 1,
         },
     )
+
+    for seed_key, title_exclude_val in [
+        ("mr_no_breaking_instruction", "prepare_release_candidate"),
+        ("mr_file_not_found", "prepare_release_candidate"),
+    ]:
+        conn.execute(
+            "UPDATE notification_rules SET title_exclude = ? WHERE seed_key = ? AND (title_exclude IS NULL OR title_exclude = '')",
+            (title_exclude_val, seed_key),
+        )
 
     conn.close()
 

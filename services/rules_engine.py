@@ -10,6 +10,7 @@ async def evaluate_rules_for_mr(
     rule_ids: list[int],
     changed_files: list[str],
     get_content: Callable[[str], Awaitable[str]],
+    mr_title: str = "",
 ) -> list[dict[str, Any]]:
     """
     Проверяет изменённые файлы на соответствие указанным правилам.
@@ -37,6 +38,13 @@ async def evaluate_rules_for_mr(
 
     for rule_row in rules:
         rule = dict(rule_row)
+        title_exclude = rule.get("title_exclude") or ""
+        if title_exclude and mr_title:
+            try:
+                if re.search(title_exclude, mr_title, re.IGNORECASE):
+                    continue
+            except re.error:
+                pass
         pattern = rule["file_pattern"]
         for file_path in changed_files:
             if not fnmatch.fnmatch(file_path, pattern):
