@@ -118,6 +118,11 @@ class ReviewFinding(BaseModel):
 class ReviewSettingsUpdate(BaseModel):
     system_prompt: str
     review_instructions: str = ""
+    review_project_root: str = ""
+    review_project_config_path: str = "configuration/@config-rgsl"
+    review_sql_target: str = "PostgreSQL 17.5+"
+    review_graph_context_enabled: bool = True
+    review_graph_context_max_files: int = Field(default=12, ge=1, le=50)
 
 
 class ReviewInstructionItemCreate(BaseModel):

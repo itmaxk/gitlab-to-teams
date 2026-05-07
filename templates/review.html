@@ -53,6 +53,10 @@
   <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
   <p class="text-slate-400 mt-2">Анализ MR... <span id="loadingTimer"></span></p>
   <p id="batchProgress" class="text-slate-500 mt-1 text-sm">Подготовка...</p>
+  <button onclick="cancelActiveReview()" id="btnCancelReview"
+          class="mt-4 hidden rounded-lg border border-red-800 px-4 py-2 text-sm font-medium text-red-300 hover:border-red-700 hover:bg-red-950/40 hover:text-red-200 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500">
+    Остановить ревью
+  </button>
 </div>
 
 <div id="errorBox" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-4 mb-4 text-red-300"></div>
@@ -82,6 +86,48 @@
   </div>
 </details>
 
+<details class="mb-6">
+  <summary class="text-slate-400 hover:text-white cursor-pointer text-sm font-medium">
+    Контекст проекта для AI-ревью
+  </summary>
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-2">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Локальный корень проекта</label>
+        <input type="text" id="reviewProjectRoot" placeholder="D:\Projects\adinsure-impl\implementation-master"
+               class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Путь конфигураций</label>
+        <input type="text" id="reviewProjectConfigPath" value="configuration/@config-rgsl"
+               class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">SQL target</label>
+        <input type="text" id="reviewSqlTarget" value="PostgreSQL 17.5+"
+               class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Максимум связанных файлов</label>
+        <input type="number" id="reviewGraphContextMaxFiles" value="12" min="1" max="50"
+               class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+    </div>
+    <label class="mt-4 inline-flex items-center gap-2 text-sm text-slate-300">
+      <input type="checkbox" id="reviewGraphContextEnabled" checked
+             class="rounded border-slate-600 bg-slate-900 text-blue-600">
+      Подтягивать связанные конфигурации конструктора
+    </label>
+    <div class="flex gap-2 mt-4">
+      <button onclick="saveProjectContextSettings()" id="btnSaveProjectContext"
+              class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
+        Сохранить контекст проекта
+      </button>
+      <span id="projectContextStatus" class="text-sm text-slate-400 self-center"></span>
+    </div>
+  </div>
+</details>
+
 <div id="historySection">
   <h2 class="text-lg font-semibold text-slate-300 mb-3">История ревью</h2>
   <div id="historyTable"></div>
@@ -99,6 +145,15 @@ let currentFindings = [];
 let activeFilter = "all";
 let currentReviewId = null;
 let reviewInstructionItems = [];
+let activeReviewJobId = null;
+let reviewSettings = {};
+
+class ReviewCanceledError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "ReviewCanceledError";
+  }
+}
 
 function startTimer() {
   const el = document.getElementById("loadingTimer");
@@ -123,6 +178,10 @@ function setBatchProgress(message) {
 }
 
 function updateProgressFromJob(data) {
+  if (["completed", "failed", "canceled"].includes(data.status) && data.message) {
+    setBatchProgress(data.message);
+    return;
+  }
   if (data.total_batches > 0) {
     if (data.current_batch > 0) {
       setBatchProgress(`Анализ батча ${data.current_batch}/${data.total_batches}`);
@@ -131,6 +190,50 @@ function updateProgressFromJob(data) {
     }
   } else {
     setBatchProgress(data.message || "Подготовка...");
+  }
+}
+
+function showCancelButton() {
+  const btn = document.getElementById("btnCancelReview");
+  btn.disabled = false;
+  btn.textContent = "Остановить ревью";
+  btn.classList.remove("hidden");
+}
+
+function hideCancelButton() {
+  const btn = document.getElementById("btnCancelReview");
+  btn.classList.add("hidden");
+  btn.disabled = false;
+  btn.textContent = "Остановить ревью";
+}
+
+function showRunStatus(message, kind) {
+  const errorBox = document.getElementById("errorBox");
+  errorBox.textContent = message;
+  if (kind === "canceled") {
+    errorBox.className = "bg-slate-800/80 border border-slate-600 rounded-lg p-4 mb-4 text-slate-300";
+  } else {
+    errorBox.className = "bg-red-900/30 border border-red-700 rounded-lg p-4 mb-4 text-red-300";
+  }
+}
+
+async function cancelActiveReview() {
+  if (!activeReviewJobId) return;
+
+  const btn = document.getElementById("btnCancelReview");
+  btn.disabled = true;
+  btn.textContent = "Остановка...";
+  setBatchProgress("Останавливаем ревью...");
+
+  try {
+    const resp = await fetch(`/api/review/cancel/${activeReviewJobId}`, { method: "POST" });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    setBatchProgress(data.message || "Ревью остановлено пользователем");
+  } catch (e) {
+    showRunStatus("Ошибка остановки ревью: " + e.message, "error");
+    btn.disabled = false;
+    btn.textContent = "Остановить ревью";
   }
 }
 
@@ -148,6 +251,10 @@ async function waitForReviewJob(jobId) {
       stream.close();
       if (data.status === "completed") {
         resolve(data.result);
+        return;
+      }
+      if (data.status === "canceled") {
+        reject(new ReviewCanceledError(data.message || "Ревью остановлено пользователем"));
         return;
       }
       reject(new Error(data.error || "Ревью завершилось с ошибкой"));
@@ -170,6 +277,10 @@ async function waitForReviewJob(jobId) {
           reject(new Error(data.error || "Ревью завершилось с ошибкой"));
           return;
         }
+        if (data.status === "canceled") {
+          reject(new ReviewCanceledError(data.message || "Ревью остановлено пользователем"));
+          return;
+        }
         reject(new Error("Соединение со стримом прогресса прервалось"));
       } catch (error) {
         reject(error);
@@ -187,14 +298,17 @@ async function runReview() {
 
   const customPrompt = document.getElementById("customPrompt").value.trim();
   const btn = document.getElementById("btnReview");
+  const xlsxBtn = document.getElementById("btnReviewXlsx");
   const loading = document.getElementById("loading");
   const errorBox = document.getElementById("errorBox");
   const publishStatus = document.getElementById("publishStatus");
   const results = document.getElementById("results");
 
   btn.disabled = true;
+  xlsxBtn.disabled = true;
   btn.textContent = "Анализ...";
   loading.classList.remove("hidden");
+  showCancelButton();
   startTimer();
   setBatchProgress("Подготовка...");
   errorBox.classList.add("hidden");
@@ -212,15 +326,22 @@ async function runReview() {
       throw new Error(startData.detail || `HTTP ${startResp.status}`);
     }
 
+    activeReviewJobId = startData.job_id;
     const data = await waitForReviewJob(startData.job_id);
     renderResults(data);
     loadHistory();
   } catch (e) {
-    errorBox.textContent = "Ошибка: " + e.message;
-    errorBox.classList.remove("hidden");
+    if (e.name === "ReviewCanceledError") {
+      showRunStatus(e.message, "canceled");
+    } else {
+      showRunStatus("Ошибка: " + e.message, "error");
+    }
   } finally {
     stopTimer();
+    activeReviewJobId = null;
+    hideCancelButton();
     btn.disabled = {{ 'true' if not llm_configured else 'false' }};
+    xlsxBtn.disabled = false;
     btn.textContent = "Запустить ревью";
     loading.classList.add("hidden");
   }
@@ -244,6 +365,7 @@ async function runXlsxReview() {
   mainBtn.disabled = true;
   btn.textContent = "Сравнение...";
   loading.classList.remove("hidden");
+  showCancelButton();
   startTimer();
   setBatchProgress(`Подготовка xlsx-сравнения с ${baseRef}...`);
   errorBox.classList.add("hidden");
@@ -261,14 +383,20 @@ async function runXlsxReview() {
       throw new Error(startData.detail || `HTTP ${startResp.status}`);
     }
 
+    activeReviewJobId = startData.job_id;
     const data = await waitForReviewJob(startData.job_id);
     renderResults(data);
     loadHistory();
   } catch (e) {
-    errorBox.textContent = "Ошибка: " + e.message;
-    errorBox.classList.remove("hidden");
+    if (e.name === "ReviewCanceledError") {
+      showRunStatus(e.message, "canceled");
+    } else {
+      showRunStatus("Ошибка: " + e.message, "error");
+    }
   } finally {
     stopTimer();
+    activeReviewJobId = null;
+    hideCancelButton();
     mainBtn.disabled = {{ 'true' if not llm_configured else 'false' }};
     btn.disabled = false;
     btn.textContent = "Запустить ревью xlsx";
@@ -320,6 +448,7 @@ function renderResults(data) {
       ? `<span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-300 border border-amber-700">&#9679; Отличия с ${escHtml(summary.master_comparison.ref)}: ${summary.master_comparison.finding_count}</span>`
       : `<span class="px-3 py-1 rounded text-sm bg-green-900/30 text-green-300 border border-green-700">&#9679; Различий с ${escHtml(summary.master_comparison.ref)} нет</span>`;
   }
+  renderProjectGraphContext(summary.project_graph_context || {});
 
   const filters = document.getElementById("filters");
   filters.innerHTML = ["all", "error", "warning", "info"].map(f => {
@@ -332,6 +461,39 @@ function renderResults(data) {
 
   renderFindings();
   document.getElementById("results").classList.remove("hidden");
+}
+
+function renderProjectGraphContext(graphContext) {
+  const existing = document.getElementById("projectGraphContext");
+  if (existing) existing.remove();
+
+  const related = graphContext.related_files || [];
+  const unresolved = graphContext.unresolved || [];
+  const notes = graphContext.notes || [];
+  if (!related.length && !unresolved.length && !notes.length) return;
+
+  const container = document.createElement("div");
+  container.id = "projectGraphContext";
+  container.className = "mb-4 rounded-lg border border-slate-700 bg-slate-800 p-4 text-sm";
+  const relatedHtml = related.length
+    ? `<div class="mt-3"><p class="mb-1 text-slate-300">Связанные файлы (${related.length})</p><ul class="space-y-1">${related.map(item => `<li class="text-slate-400"><code>${escHtml(item.path || "")}</code> <span class="text-slate-500">- ${escHtml(item.relation || "")}</span></li>`).join("")}</ul></div>`
+    : "";
+  const unresolvedHtml = unresolved.length
+    ? `<div class="mt-3"><p class="mb-1 text-amber-300">Неразрешенные связи</p><ul class="space-y-1">${unresolved.map(item => `<li class="text-amber-200/80">${escHtml(item)}</li>`).join("")}</ul></div>`
+    : "";
+  const notesHtml = notes.length
+    ? `<div class="mt-3"><p class="mb-1 text-slate-300">Graph notes</p><ul class="space-y-1">${notes.map(item => `<li class="text-slate-400">${escHtml(item)}</li>`).join("")}</ul></div>`
+    : "";
+  container.innerHTML = `
+    <div class="flex flex-wrap gap-2">
+      <span class="rounded bg-slate-900 px-2 py-1 text-slate-300">Constructor graph</span>
+      <span class="rounded bg-slate-900 px-2 py-1 text-slate-300">SQL: ${escHtml(graphContext.sql_target || "PostgreSQL 17.5+")}</span>
+    </div>
+    ${relatedHtml}
+    ${unresolvedHtml}
+    ${notesHtml}
+  `;
+  document.getElementById("results").insertBefore(container, document.getElementById("filters"));
 }
 
 function setFilter(f) {
@@ -421,10 +583,38 @@ async function loadPrompt() {
   try {
     const resp = await fetch("/api/review/settings");
     const data = await resp.json();
+    reviewSettings = data || {};
     document.getElementById("systemPrompt").value = data.system_prompt || "";
+    applyProjectContextSettings(data);
     reviewInstructionItems = data.review_instruction_items || [];
     renderInstructionList();
   } catch (e) {}
+}
+
+function collectReviewSettings(overrides = {}) {
+  return {
+    system_prompt: document.getElementById("systemPrompt")?.value || reviewSettings.system_prompt || "",
+    review_instructions: reviewSettings.review_instructions || "",
+    review_project_root: document.getElementById("reviewProjectRoot")?.value || "",
+    review_project_config_path: document.getElementById("reviewProjectConfigPath")?.value || "configuration/@config-rgsl",
+    review_sql_target: document.getElementById("reviewSqlTarget")?.value || "PostgreSQL 17.5+",
+    review_graph_context_enabled: !!document.getElementById("reviewGraphContextEnabled")?.checked,
+    review_graph_context_max_files: Number(document.getElementById("reviewGraphContextMaxFiles")?.value || 12),
+    ...overrides,
+  };
+}
+
+function applyProjectContextSettings(data) {
+  const setValue = (id, value) => {
+    const el = document.getElementById(id);
+    if (el) el.value = value;
+  };
+  setValue("reviewProjectRoot", data.review_project_root || "");
+  setValue("reviewProjectConfigPath", data.review_project_config_path || "configuration/@config-rgsl");
+  setValue("reviewSqlTarget", data.review_sql_target || "PostgreSQL 17.5+");
+  setValue("reviewGraphContextMaxFiles", data.review_graph_context_max_files || 12);
+  const enabled = document.getElementById("reviewGraphContextEnabled");
+  if (enabled) enabled.checked = data.review_graph_context_enabled !== false;
 }
 
 async function savePrompt() {
@@ -435,7 +625,7 @@ async function savePrompt() {
     const resp = await fetch("/api/review/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ system_prompt: prompt, review_instructions: reviewInstructions }),
+      body: JSON.stringify(collectReviewSettings({ system_prompt: prompt, review_instructions: reviewInstructions })),
     });
     if (!resp.ok) throw new Error("Не удалось сохранить настройки");
     status.textContent = "Сохранено";
@@ -455,7 +645,7 @@ async function saveSystemPrompt() {
     const resp = await fetch("/api/review/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ system_prompt: prompt, review_instructions: reviewInstructions }),
+      body: JSON.stringify(collectReviewSettings({ system_prompt: prompt, review_instructions: reviewInstructions })),
     });
     if (!resp.ok) throw new Error("Не удалось сохранить настройки");
     status.textContent = "Сохранено";
@@ -690,7 +880,9 @@ async function loadPrompt() {
   try {
     const resp = await fetch("/api/review/settings");
     const data = await resp.json();
+    reviewSettings = data || {};
     document.getElementById("systemPrompt").value = data.system_prompt || "";
+    applyProjectContextSettings(data);
     reviewInstructionItems = data.review_instruction_items || [];
     renderInstructionList();
   } catch (e) {}
@@ -732,9 +924,28 @@ async function saveSystemPrompt() {
     const resp = await fetch("/api/review/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ system_prompt: prompt }),
+      body: JSON.stringify(collectReviewSettings({ system_prompt: prompt })),
     });
     if (!resp.ok) throw new Error("Не удалось сохранить настройки");
+    status.textContent = "Сохранено";
+    status.className = "text-sm text-green-400 self-center";
+    setTimeout(() => { status.textContent = ""; }, 2000);
+  } catch (e) {
+    status.textContent = "Ошибка сохранения";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+async function saveProjectContextSettings() {
+  const status = document.getElementById("projectContextStatus");
+  try {
+    const resp = await fetch("/api/review/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectReviewSettings()),
+    });
+    if (!resp.ok) throw new Error("Не удалось сохранить контекст проекта");
+    reviewSettings = await resp.json().catch(() => collectReviewSettings());
     status.textContent = "Сохранено";
     status.className = "text-sm text-green-400 self-center";
     setTimeout(() => { status.textContent = ""; }, 2000);

@@ -141,6 +141,11 @@ def init_db():
             id INTEGER PRIMARY KEY CHECK (id = 1),
             system_prompt TEXT NOT NULL,
             review_instructions TEXT DEFAULT '',
+            review_project_root TEXT DEFAULT '',
+            review_project_config_path TEXT DEFAULT 'configuration/@config-rgsl',
+            review_sql_target TEXT DEFAULT 'PostgreSQL 17.5+',
+            review_graph_context_enabled INTEGER DEFAULT 1,
+            review_graph_context_max_files INTEGER DEFAULT 12,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -322,6 +327,16 @@ def _migrate(conn: sqlite3.Connection):
             conn.execute(
                 "ALTER TABLE review_settings ADD COLUMN review_instructions TEXT DEFAULT ''"
             )
+        review_setting_migrations = {
+            "review_project_root": "ALTER TABLE review_settings ADD COLUMN review_project_root TEXT DEFAULT ''",
+            "review_project_config_path": "ALTER TABLE review_settings ADD COLUMN review_project_config_path TEXT DEFAULT 'configuration/@config-rgsl'",
+            "review_sql_target": "ALTER TABLE review_settings ADD COLUMN review_sql_target TEXT DEFAULT 'PostgreSQL 17.5+'",
+            "review_graph_context_enabled": "ALTER TABLE review_settings ADD COLUMN review_graph_context_enabled INTEGER DEFAULT 1",
+            "review_graph_context_max_files": "ALTER TABLE review_settings ADD COLUMN review_graph_context_max_files INTEGER DEFAULT 12",
+        }
+        for col, sql in review_setting_migrations.items():
+            if review_columns and col not in review_columns:
+                conn.execute(sql)
     except Exception:
         pass
 

@@ -263,3 +263,89 @@ def test_review_mr_includes_full_file_context_for_imports_outside_diff(tmp_path,
     assert len(llm_calls) == 1
     assert "## Full file context after change" in llm_calls[0]
     assert "const { signatureForm } = require(" in llm_calls[0]
+
+
+def test_review_mr_includes_project_graph_context_for_adinsure_configs(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    project_root = tmp_path / "impl"
+    config_root = project_root / "configuration" / "@config-rgsl"
+    data_source_dir = config_root / "acc-base" / "dataSource" / "AllocationDataSource"
+    data_provider_dir = config_root / "acc-base" / "dataProvider" / "database" / "AllocationDataProvider"
+    data_source_dir.mkdir(parents=True)
+    data_provider_dir.mkdir(parents=True)
+    (data_source_dir / "configuration.json").write_text(
+        '{"dataProvider":{"type":"DatabaseDataProvider","codeName":"AllocationDataProvider","version":"1"}}',
+        encoding="utf-8",
+    )
+    (data_provider_dir / "configuration.json").write_text('{"version":"1"}', encoding="utf-8")
+    (data_provider_dir / "query.postgres.handlebars").write_text(
+        "select * from acc_impl.allocation where allocation_id = @allocationId",
+        encoding="utf-8",
+    )
+
+    conn = db.get_db()
+    conn.execute(
+        """
+        UPDATE review_settings
+        SET review_project_root = ?,
+            review_project_config_path = 'configuration/@config-rgsl',
+            review_sql_target = 'PostgreSQL 17.5+',
+            review_graph_context_enabled = 1,
+            review_graph_context_max_files = 10
+        WHERE id = 1
+        """,
+        (str(project_root),),
+    )
+    conn.commit()
+    conn.close()
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid):
+        return {
+            "title": "Data source MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/ds",
+            "source_ref": "head-sha",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/12",
+            "overflow": False,
+            "changes": [
+                {
+                    "old_path": "configuration/@config-rgsl/acc-base/dataSource/AllocationDataSource/configuration.json",
+                    "new_path": "configuration/@config-rgsl/acc-base/dataSource/AllocationDataSource/configuration.json",
+                    "diff": "@@ -1 +1 @@\n-{}\n+{}",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_content(project_id, file_path, ref):
+        return "// source branch file"
+
+    llm_calls = []
+
+    async def fake_call_llm(system_prompt, user_message):
+        llm_calls.append(user_message)
+        return "[]"
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(review_service, "get_file_content", fake_get_file_content)
+    monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)
+
+    result = asyncio.run(review_service.review_mr(12))
+
+    assert len(llm_calls) == 1
+    assert "## AdInsure constructor graph context" in llm_calls[0]
+    assert "## Constructor Graph Checks" in llm_calls[0]
+    assert "query.postgres.handlebars" in llm_calls[0]
+    assert result["summary"]["project_graph_context"]["sql_target"] == "PostgreSQL 17.5+"
+    assert result["summary"]["project_graph_context"]["related_files"]

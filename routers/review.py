@@ -137,6 +137,23 @@ def _serialize_job(job: dict) -> dict:
     }
 
 
+def _cancel_review_job(job_id: str) -> dict:
+    job = REVIEW_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Задача ревью не найдена")
+
+    if job.get("status") in {"completed", "failed", "canceled"}:
+        return _serialize_job(job)
+
+    job["status"] = "canceled"
+    job["message"] = "Ревью остановлено пользователем"
+    job["error"] = None
+    task = job.get("task")
+    if task and not task.done():
+        task.cancel()
+    return _serialize_job(job)
+
+
 def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -157,10 +174,16 @@ async def _run_review_job(job_id: str, mr_iid: int, custom_prompt: str) -> None:
 
     try:
         result = await review_mr(mr_iid, custom_prompt, progress_callback=progress_callback)
+        if job.get("status") == "canceled":
+            return
         job["status"] = "completed"
         job["result"] = result
         job["message"] = "Ревью завершено"
         job["current_batch"] = job.get("total_batches", 0)
+    except asyncio.CancelledError:
+        job["status"] = "canceled"
+        job["message"] = "Ревью остановлено пользователем"
+        job["error"] = None
     except LLMRateLimitError as exc:
         logger.warning("Review rate-limited for MR !%s: %s", mr_iid, exc)
         job["status"] = "failed"
@@ -191,10 +214,16 @@ async def _run_xlsx_review_job(job_id: str, mr_iid: int, base_ref: str) -> None:
 
     try:
         result = await review_xlsx_mr(mr_iid, base_ref, progress_callback=progress_callback)
+        if job.get("status") == "canceled":
+            return
         job["status"] = "completed"
         job["result"] = result
         job["message"] = "XLSX-ревью завершено"
         job["current_batch"] = job.get("total_batches", 0)
+    except asyncio.CancelledError:
+        job["status"] = "canceled"
+        job["message"] = "XLSX-ревью остановлено пользователем"
+        job["error"] = None
     except Exception as exc:
         logger.exception("XLSX review failed for MR !%s", mr_iid)
         job["status"] = "failed"
@@ -235,7 +264,9 @@ async def start_review(req: ReviewRequest):
         "result": None,
         "error": None,
     }
-    asyncio.create_task(_run_review_job(job_id, mr_iid, req.custom_prompt))
+    REVIEW_JOBS[job_id]["task"] = asyncio.create_task(
+        _run_review_job(job_id, mr_iid, req.custom_prompt)
+    )
     return {"job_id": job_id}
 
 
@@ -269,8 +300,15 @@ async def start_xlsx_review(req: XlsxReviewRequest):
         "result": None,
         "error": None,
     }
-    asyncio.create_task(_run_xlsx_review_job(job_id, mr_iid, req.base_ref or ""))
+    REVIEW_JOBS[job_id]["task"] = asyncio.create_task(
+        _run_xlsx_review_job(job_id, mr_iid, req.base_ref or "")
+    )
     return {"job_id": job_id}
+
+
+@router.post("/cancel/{job_id}")
+def cancel_review(job_id: str):
+    return _cancel_review_job(job_id)
 
 
 @router.get("/stream/{job_id}")
@@ -296,7 +334,7 @@ async def stream_review_status(job_id: str, request: Request):
                 yield _sse_event("progress", payload)
                 last_payload = serialized
 
-            if payload["status"] in {"completed", "failed"}:
+            if payload["status"] in {"completed", "failed", "canceled"}:
                 yield _sse_event("done", payload)
                 break
 
@@ -344,7 +382,14 @@ def get_history():
 def get_settings():
     conn = get_db()
     row = conn.execute(
-        "SELECT system_prompt, review_instructions, updated_at FROM review_settings WHERE id = 1"
+        """
+        SELECT system_prompt, review_instructions, review_project_root,
+               review_project_config_path, review_sql_target,
+               review_graph_context_enabled, review_graph_context_max_files,
+               updated_at
+        FROM review_settings
+        WHERE id = 1
+        """
     ).fetchone()
     items = _load_review_instruction_items(conn)
     conn.close()
@@ -354,11 +399,17 @@ def get_settings():
             "system_prompt": "",
             "review_instructions": legacy_text,
             "review_instruction_items": items,
+            "review_project_root": "",
+            "review_project_config_path": "configuration/@config-rgsl",
+            "review_sql_target": "PostgreSQL 17.5+",
+            "review_graph_context_enabled": True,
+            "review_graph_context_max_files": 12,
             "updated_at": "",
         }
     data = dict(row)
     data["review_instruction_items"] = items
     data["review_instructions"] = legacy_text or data.get("review_instructions", "")
+    data["review_graph_context_enabled"] = bool(data.get("review_graph_context_enabled", 1))
     return data
 
 
@@ -368,10 +419,25 @@ def update_settings(req: ReviewSettingsUpdate):
     conn.execute(
         """
         UPDATE review_settings
-        SET system_prompt = ?, review_instructions = ?, updated_at = CURRENT_TIMESTAMP
+        SET system_prompt = ?,
+            review_instructions = ?,
+            review_project_root = ?,
+            review_project_config_path = ?,
+            review_sql_target = ?,
+            review_graph_context_enabled = ?,
+            review_graph_context_max_files = ?,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
         """,
-        (req.system_prompt, req.review_instructions),
+        (
+            req.system_prompt,
+            req.review_instructions,
+            req.review_project_root.strip(),
+            req.review_project_config_path.strip() or "configuration/@config-rgsl",
+            req.review_sql_target.strip() or "PostgreSQL 17.5+",
+            1 if req.review_graph_context_enabled else 0,
+            req.review_graph_context_max_files,
+        ),
     )
     conn.commit()
     conn.close()

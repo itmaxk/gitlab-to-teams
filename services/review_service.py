@@ -12,6 +12,7 @@ import httpx
 
 from db import get_db
 from services.gitlab_client import get_file_content, get_mr_diff, get_project_id
+from services.review_project_context import build_project_graph_context, get_review_project_settings
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,7 @@ def _build_batch_message(
     saved_instructions: str,
     custom_prompt: str,
     file_context_text: str = "",
+    project_graph_context_text: str = "",
 ) -> str:
     user_message = f"""## Merge Request
 - Title: {mr_data['title']}
@@ -306,6 +308,16 @@ def _build_batch_message(
 ## Full file context after change
 Use this section to validate symbols, imports, requires, module-scope constants, and surrounding code that may be outside the diff.
 {file_context_text.strip()}"""
+
+    if project_graph_context_text.strip():
+        user_message += f"""
+
+{project_graph_context_text.strip()}
+
+## Constructor Graph Checks
+- Check broken configuration references, missing sink/source mappings, missing dataProvider/dataSource links, and invalid document state/transition links.
+- For SQL review use the configured SQL target from the graph context. Do not require multi-db compatibility unless explicitly requested.
+- Cross-check schemas, mappings, UI/export fields, postgres query parameters, printout source mappings, notification templates, and JS package imports when related files are provided."""
 
     user_message += """
 
@@ -447,6 +459,7 @@ def _compute_summary(
     files_analyzed: int,
     truncated: bool,
     skipped_files: int = 0,
+    project_graph_context: dict | None = None,
 ) -> dict:
     errors = sum(1 for finding in findings if finding["severity"] == "error")
     warnings = sum(1 for finding in findings if finding["severity"] == "warning")
@@ -460,6 +473,7 @@ def _compute_summary(
         "files_analyzed": files_analyzed,
         "files_skipped": max(0, skipped_files),
         "truncated": truncated,
+        "project_graph_context": project_graph_context or {},
     }
 
 
@@ -489,6 +503,14 @@ async def review_mr(
     diff_batches = _build_diff_batches(non_empty)
     total_batches = max(1, len(diff_batches))
     file_contexts = await _load_review_file_contexts(project_id, mr_data, non_empty)
+    project_settings = get_review_project_settings()
+    changed_paths = [
+        change.get("new_path") or change.get("old_path") or ""
+        for change in non_empty
+    ]
+    project_graph_context = build_project_graph_context(changed_paths, project_settings)
+    project_graph_context_text = project_graph_context.to_prompt_text()
+    project_graph_context_summary = project_graph_context.to_summary()
 
     system_prompt = _get_system_prompt()
     saved_instructions = _build_saved_instructions_text()
@@ -499,7 +521,14 @@ async def review_mr(
     truncated = bool(mr_data.get("overflow")) or skipped_files > 0
 
     if not diff_batches:
-        summary = _compute_summary(findings, len(changes), 0, truncated, skipped_files)
+        summary = _compute_summary(
+            findings,
+            len(changes),
+            0,
+            truncated,
+            skipped_files,
+            project_graph_context_summary,
+        )
     else:
         for batch_index, diff_text in enumerate(diff_batches, start=1):
             file_context_text = _build_file_context_text(file_contexts, diff_text)
@@ -512,12 +541,20 @@ async def review_mr(
                 saved_instructions=saved_instructions,
                 custom_prompt=custom_prompt,
                 file_context_text=file_context_text,
+                project_graph_context_text=project_graph_context_text,
             )
             llm_response = await _call_llm(system_prompt, user_message)
             findings.extend(_parse_findings(llm_response))
             await _report_progress(progress_callback, batch_index, total_batches)
 
-        summary = _compute_summary(findings, len(changes), len(non_empty), truncated, skipped_files)
+        summary = _compute_summary(
+            findings,
+            len(changes),
+            len(non_empty),
+            truncated,
+            skipped_files,
+            project_graph_context_summary,
+        )
 
     model_used = os.getenv("REVIEW_MODEL", "gpt-4o")
 
