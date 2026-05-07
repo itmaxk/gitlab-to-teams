@@ -93,3 +93,100 @@ def test_poll_once_marks_mr_processed_even_when_audit_log_fails(tmp_path, monkey
     conn.close()
 
     assert processed is not None
+
+
+def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    conn.execute(
+        "INSERT INTO global_settings (key, value) VALUES (?, ?)",
+        ("global_title_excludes", "[skip_changelog]"),
+    )
+    action_types = [
+        "notify",
+        "title_check",
+        "pipeline_check",
+        "xlsx_review",
+        "code_review",
+    ]
+    rule_ids = []
+    for action_type in action_types:
+        cur = conn.execute(
+            """
+            INSERT INTO notification_rules
+              (name, description, enabled, file_pattern, content_match, match_type,
+               target_branch, mr_state, action_type, send_email)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"{action_type} rule",
+                "Rule used to prove global title excludes short-circuit all actions",
+                1,
+                "*.md",
+                "",
+                "contains",
+                "master",
+                "opened",
+                action_type,
+                0,
+            ),
+        )
+        rule_ids.append(cur.lastrowid)
+    conn.commit()
+    conn.close()
+
+    poller._project_id = None
+    calls = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch):
+        return [
+            {
+                "iid": 124,
+                "title": "Merge [skip_changelog] into master",
+                "web_url": "https://example.test/mr/124",
+                "state": state,
+                "source_branch": "feature/branch",
+                "target_branch": target_branch,
+                "author": {"name": "Dev"},
+                "created_at": "2026-04-29T00:00:00Z",
+            }
+        ]
+
+    async def forbidden_async_call(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("global title skip should stop before rule action")
+
+    def forbidden_sync_call(*args, **kwargs):
+        calls.append(args)
+        raise AssertionError("global title skip should stop before rule action")
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(poller, "get_mr_changes", forbidden_async_call)
+    monkeypatch.setattr(poller, "dispatch_notifications", forbidden_async_call)
+    monkeypatch.setattr(poller, "post_merge_request_discussion", forbidden_async_call)
+    monkeypatch.setattr(poller, "check_pipeline_job_failed", forbidden_async_call)
+    monkeypatch.setattr(poller, "review_xlsx_mr", forbidden_async_call)
+    monkeypatch.setattr(poller, "review_mr", forbidden_async_call)
+    monkeypatch.setattr(poller, "is_title_valid", forbidden_sync_call)
+
+    asyncio.run(
+        poller.poll_once(
+            [
+                {
+                    "id": rule_id,
+                    "target_branch": "master",
+                    "mr_state": "opened",
+                    "action_type": action_type,
+                }
+                for rule_id, action_type in zip(rule_ids, action_types)
+            ]
+        )
+    )
+
+    assert calls == []

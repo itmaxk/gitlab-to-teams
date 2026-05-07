@@ -247,16 +247,17 @@ def copy_rule(rule_id: int) -> dict:
     src = dict(row)
     cur = conn.execute(
         """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, match_type,
+           (name, description, file_pattern, content_match, content_exclude, match_type,
             target_branch, mr_state, poll_interval_seconds,
             file_check_enabled, file_check_path_prefix, file_check_mode,
-            title_exclude, action_type, teams_webhook_url, send_email, send_gitlab, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab, enabled)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
         (
             src["name"] + " (копия)",
             src["description"],
             src["file_pattern"],
             src["content_match"],
+            src.get("content_exclude", ""),
             src["match_type"],
             src["target_branch"],
             src["mr_state"],
@@ -266,6 +267,7 @@ def copy_rule(rule_id: int) -> dict:
             src.get("file_check_mode", "present"),
             src.get("title_exclude", ""),
             src.get("action_type", "notify"),
+            src.get("send_teams", 1),
             src["teams_webhook_url"],
             src["send_email"],
             src.get("send_gitlab", 0),
