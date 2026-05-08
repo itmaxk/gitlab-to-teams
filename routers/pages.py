@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from db import get_db
+from services.poller import _get_merged_mr_poll_cursors
 from services.review_config import is_review_llm_configured
 
 router = APIRouter(tags=["pages"])
@@ -107,6 +108,7 @@ def polled_mrs(
         "SELECT COUNT(*) FROM polled_mrs WHERE success = 1"
     ).fetchone()[0]
     conn.close()
+    merged_cursors = _get_merged_mr_poll_cursors()
 
     return templates.TemplateResponse(
         request,
@@ -117,6 +119,10 @@ def polled_mrs(
                 "total": total,
                 "success": success_count,
                 "errors": total - success_count,
+                "merged_cursors": [
+                    {"branch": branch, "merged_at": merged_at}
+                    for branch, merged_at in sorted(merged_cursors.items())
+                ],
             },
             "filters": {
                 "mr_state": mr_state,

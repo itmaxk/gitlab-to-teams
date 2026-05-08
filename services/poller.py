@@ -1,9 +1,10 @@
 import asyncio
+import json
 import logging
 import os
 from datetime import datetime
 
-from db import get_db
+from db import get_db, get_global_setting, set_global_setting
 from services.gitlab_client import (
     get_project_id,
     get_merge_requests,
@@ -31,6 +32,7 @@ from services.pipeline_check import (
 logger = logging.getLogger(__name__)
 
 _project_id: int | None = None
+MERGED_MR_POLL_CURSORS_KEY = "merged_mr_poll_cursors"
 
 
 async def _resolve_project_id() -> int:
@@ -84,6 +86,53 @@ def _mark_mr_processed(rule_id: int, mr_iid: int):
     )
     conn.commit()
     conn.close()
+
+
+def _get_merged_mr_poll_cursors() -> dict[str, str]:
+    raw = get_global_setting(MERGED_MR_POLL_CURSORS_KEY, "{}")
+    try:
+        data = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        str(branch): str(value)
+        for branch, value in data.items()
+        if str(branch) and str(value)
+    }
+
+
+def _get_merged_mr_poll_cursor(branch: str) -> str:
+    return _get_merged_mr_poll_cursors().get(branch, "")
+
+
+def _set_merged_mr_poll_cursor(branch: str, merged_at: str):
+    if not branch or not merged_at:
+        return
+    cursors = _get_merged_mr_poll_cursors()
+    current = cursors.get(branch, "")
+    if current and current >= merged_at:
+        return
+    cursors[branch] = merged_at
+    set_global_setting(
+        MERGED_MR_POLL_CURSORS_KEY,
+        json.dumps(cursors, sort_keys=True),
+    )
+
+
+def _latest_merged_at(mrs: list[dict]) -> str:
+    return max((mr.get("merged_at") or "" for mr in mrs), default="")
+
+
+def _filter_mrs_after_merged_cursor(mrs: list[dict], cursor: str) -> list[dict]:
+    if not cursor:
+        return mrs
+    return [
+        mr
+        for mr in mrs
+        if (mr.get("merged_at") or "") > cursor
+    ]
 
 
 def _is_title_check_notified(rule_id: int, mr_iid: int, mr_title: str) -> bool:
@@ -222,18 +271,45 @@ async def poll_once(rules: list[dict]):
         branch_state_rules.setdefault(key, []).append(rule)
 
     for (branch, state), group_rules in branch_state_rules.items():
+        merged_cursor = _get_merged_mr_poll_cursor(branch) if state == "merged" else ""
         try:
+            request_kwargs = {}
+            if state == "merged":
+                request_kwargs = {
+                    "updated_after": merged_cursor,
+                    "order_by": "merged_at",
+                }
             if branch == "*":
-                mrs = await get_merge_requests(project_id, state=state)
+                mrs = await get_merge_requests(
+                    project_id,
+                    state=state,
+                    **request_kwargs,
+                )
             else:
                 mrs = await get_merge_requests(
-                    project_id, state=state, target_branch=branch
+                    project_id,
+                    state=state,
+                    target_branch=branch,
+                    **request_kwargs,
                 )
         except Exception as e:
             logger.error(
                 "Failed to get MRs (branch=%s, state=%s): %s", branch, state, e
             )
             continue
+
+        latest_merged_at = _latest_merged_at(mrs) if state == "merged" else ""
+        if state == "merged" and not merged_cursor:
+            _set_merged_mr_poll_cursor(branch, latest_merged_at)
+            if latest_merged_at:
+                logger.info(
+                    "Initialized merged MR poll cursor for branch=%s at %s",
+                    branch,
+                    latest_merged_at,
+                )
+            continue
+        if state == "merged":
+            mrs = _filter_mrs_after_merged_cursor(mrs, merged_cursor)
 
         for mr in mrs:
             mr_iid = mr["iid"]
@@ -535,6 +611,9 @@ async def poll_once(rules: list[dict]):
                 )
             except Exception as e:
                 logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
+
+        if state == "merged":
+            _set_merged_mr_poll_cursor(branch, latest_merged_at)
 
 
 async def _run_dynamic_polling():

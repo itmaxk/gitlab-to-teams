@@ -38,6 +38,8 @@ async def get_merge_requests(
     state: str = "merged",
     target_branch: str | None = None,
     per_page: int = 100,
+    updated_after: str = "",
+    order_by: str = "updated_at",
 ) -> list[dict]:
     """Return merge requests filtered by state and target branch.
 
@@ -46,13 +48,15 @@ async def get_merge_requests(
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
     params: dict[str, str | int] = {
         "state": state,
-        "order_by": "updated_at",
+        "order_by": order_by,
         "sort": "desc",
         "per_page": per_page,
         "page": 1,
     }
     if target_branch:
         params["target_branch"] = target_branch
+    if updated_after:
+        params["updated_after"] = updated_after
     result = []
     async with httpx.AsyncClient(verify=False, timeout=30) as client:
         while True:

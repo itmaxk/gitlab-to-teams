@@ -13,6 +13,18 @@
     <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
       Ошибки: <span class="font-bold text-red-400">{{ stats.errors }}</span>
     </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Последний merged MR:
+      {% if stats.merged_cursors %}
+        <span class="font-bold text-purple-300">
+          {% for cursor in stats.merged_cursors %}
+            {{ cursor.branch }}: {{ cursor.merged_at[:19] }}{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </span>
+      {% else %}
+        <span class="font-bold text-slate-500">—</span>
+      {% endif %}
+    </div>
   </div>
 </div>
 

@@ -23,7 +23,7 @@ starlette.templating.Jinja2Templates = FakeTemplates
 from routers import pages
 
 
-def _rendered_polled_rows(monkeypatch, **filters):
+def _rendered_polled_context(monkeypatch, **filters):
     captured = {}
 
     def fake_template_response(request, template_name, context):
@@ -36,7 +36,11 @@ def _rendered_polled_rows(monkeypatch, **filters):
     pages.polled_mrs(object(), **filters)
 
     assert captured["template_name"] == "polled.html"
-    return captured["context"]["rows"]
+    return captured["context"]
+
+
+def _rendered_polled_rows(monkeypatch, **filters):
+    return _rendered_polled_context(monkeypatch, **filters)["rows"]
 
 
 def _insert_polled_mr(conn, *, mr_iid, mr_state, rules_matched, polled_at):
@@ -119,3 +123,18 @@ def test_polled_combines_status_and_matches_filters(tmp_path, monkeypatch):
     rows = _rendered_polled_rows(monkeypatch, mr_state="opened", has_matches=1)
 
     assert [row["mr_iid"] for row in rows] == [1]
+
+
+def test_polled_shows_merged_mr_poll_cursor(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    from services import poller
+
+    poller._set_merged_mr_poll_cursor("master", "2026-05-08T13:55:27Z")
+
+    context = _rendered_polled_context(monkeypatch)
+
+    assert context["stats"]["merged_cursors"] == [
+        {"branch": "master", "merged_at": "2026-05-08T13:55:27Z"}
+    ]

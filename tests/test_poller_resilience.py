@@ -96,9 +96,107 @@ def test_poll_once_marks_mr_processed_even_when_audit_log_fails(tmp_path, monkey
     assert processed is not None
 
 
-def test_poll_once_marks_merged_notify_mr_processed_after_check(tmp_path, monkeypatch):
+def test_poll_once_initializes_merged_cursor_without_processing_history(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
+
+    conn = db.get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, description, enabled, file_pattern, content_match, match_type,
+           target_branch, mr_state, action_type, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "Merged changelog rule",
+            "Merged rules should run once per MR and then be remembered",
+            1,
+            "changelogs/unreleased/*.md",
+            "type: breaking",
+            "contains",
+            "master",
+            "merged",
+            "notify",
+            0,
+        ),
+    )
+    rule_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    poller._project_id = None
+    change_calls = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(
+        project_id,
+        state,
+        target_branch,
+        updated_after="",
+        order_by="updated_at",
+    ):
+        assert updated_after == ""
+        assert order_by == "merged_at"
+        return [
+            {
+                "iid": 5636,
+                "title": "ADIRGSLSUPP-968: test-idsrv-config",
+                "web_url": "https://example.test/mr/5636",
+                "state": state,
+                "source_branch": "feature/ADIRGSLSUPP-968-test-idsrv-config",
+                "target_branch": target_branch,
+                "author": {"name": "Dev"},
+                "created_at": "2023-12-04T00:00:00Z",
+                "merged_at": "2023-12-04T13:55:27Z",
+            }
+        ]
+
+    async def fake_get_mr_changes(project_id, mr_iid):
+        change_calls.append((project_id, mr_iid))
+        return ["README.md", "configuration/service.json"]
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(poller, "get_mr_changes", fake_get_mr_changes)
+
+    rule = {
+        "id": rule_id,
+        "target_branch": "master",
+        "mr_state": "merged",
+        "action_type": "notify",
+    }
+    asyncio.run(poller.poll_once([rule]))
+
+    assert change_calls == []
+
+    conn = db.get_db()
+    cursor_row = conn.execute(
+        "SELECT value FROM global_settings WHERE key = ?",
+        (poller.MERGED_MR_POLL_CURSORS_KEY,),
+    ).fetchone()
+    processed = conn.execute(
+        "SELECT 1 FROM processed_mrs WHERE rule_id = ? AND mr_iid = ?",
+        (rule_id, 5636),
+    ).fetchone()
+    polled_rows = conn.execute(
+        "SELECT 1 FROM polled_mrs WHERE mr_iid = ?",
+        (5636,),
+    ).fetchall()
+    conn.close()
+
+    assert cursor_row is not None
+    assert '"master": "2023-12-04T13:55:27Z"' in cursor_row["value"]
+    assert processed is None
+    assert polled_rows == []
+
+
+def test_poll_once_marks_new_merged_notify_mr_processed_after_cursor(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    poller._set_merged_mr_poll_cursor("master", "2023-12-04T13:55:27Z")
 
     conn = db.get_db()
     cur = conn.execute(
@@ -132,7 +230,15 @@ def test_poll_once_marks_merged_notify_mr_processed_after_check(tmp_path, monkey
     async def fake_get_project_id():
         return 26
 
-    async def fake_get_merge_requests(project_id, state, target_branch):
+    async def fake_get_merge_requests(
+        project_id,
+        state,
+        target_branch,
+        updated_after="",
+        order_by="updated_at",
+    ):
+        assert updated_after == "2023-12-04T13:55:27Z"
+        assert order_by == "merged_at"
         return [
             {
                 "iid": 5636,
@@ -143,7 +249,19 @@ def test_poll_once_marks_merged_notify_mr_processed_after_check(tmp_path, monkey
                 "target_branch": target_branch,
                 "author": {"name": "Dev"},
                 "created_at": "2023-12-04T00:00:00Z",
-            }
+                "merged_at": "2023-12-04T13:55:27Z",
+            },
+            {
+                "iid": 5637,
+                "title": "ADIRGSLSUPP-969: next merged MR",
+                "web_url": "https://example.test/mr/5637",
+                "state": state,
+                "source_branch": "feature/ADIRGSLSUPP-969-next",
+                "target_branch": target_branch,
+                "author": {"name": "Dev"},
+                "created_at": "2026-05-08T00:00:00Z",
+                "merged_at": "2026-05-08T13:55:27Z",
+            },
         ]
 
     async def fake_get_mr_changes(project_id, mr_iid):
@@ -165,26 +283,29 @@ def test_poll_once_marks_merged_notify_mr_processed_after_check(tmp_path, monkey
         "action_type": "notify",
     }
     asyncio.run(poller.poll_once([rule]))
-    asyncio.run(poller.poll_once([rule]))
 
-    assert change_calls == [(26, 5636)]
+    assert change_calls == [(26, 5637)]
     assert notification_calls == []
 
     conn = db.get_db()
     processed = conn.execute(
         "SELECT 1 FROM processed_mrs WHERE rule_id = ? AND mr_iid = ?",
-        (rule_id, 5636),
+        (rule_id, 5637),
     ).fetchone()
     polled_rows = conn.execute(
-        "SELECT rules_checked, rules_matched, mr_state FROM polled_mrs WHERE mr_iid = ?",
-        (5636,),
+        "SELECT mr_iid, rules_checked, rules_matched, mr_state FROM polled_mrs ORDER BY mr_iid",
     ).fetchall()
+    cursor_row = conn.execute(
+        "SELECT value FROM global_settings WHERE key = ?",
+        (poller.MERGED_MR_POLL_CURSORS_KEY,),
+    ).fetchone()
     conn.close()
 
     assert processed is not None
     assert [dict(row) for row in polled_rows] == [
-        {"rules_checked": 1, "rules_matched": 0, "mr_state": "merged"}
+        {"mr_iid": 5637, "rules_checked": 1, "rules_matched": 0, "mr_state": "merged"}
     ]
+    assert '"master": "2026-05-08T13:55:27Z"' in cursor_row["value"]
 
 
 def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypatch):
