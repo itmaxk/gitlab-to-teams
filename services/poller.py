@@ -15,7 +15,11 @@ from services.notification_dispatcher import dispatch_notifications
 from services.xlsx_review_service import review_xlsx_mr
 from services.review_service import review_mr
 from services.review_comment_formatter import format_gitlab_review_comment
-from services.gitlab_notes import post_merge_request_note, post_merge_request_discussion
+from services.gitlab_notes import (
+    post_merge_request_note,
+    post_merge_request_discussion,
+    resolve_merge_request_discussion,
+)
 from services.title_check import is_title_valid
 from services.pipeline_check import PipelineCheckResult, check_pipeline_job_failed
 
@@ -90,17 +94,48 @@ def _is_title_check_notified(rule_id: int, mr_iid: int, mr_title: str) -> bool:
     return row is not None
 
 
-def _log_title_check(rule_id: int, mr_iid: int, mr_title: str, mr_url: str, error_msg: str):
+def _log_title_check(
+    rule_id: int,
+    mr_iid: int,
+    mr_title: str,
+    mr_url: str,
+    error_msg: str,
+    discussion_id: str = "",
+):
     conn = get_db()
     conn.execute(
         """INSERT INTO notification_log
            (rule_id, mr_iid, mr_title, mr_url, file_path, file_content,
-            teams_sent, email_sent, gitlab_sent, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (rule_id, mr_iid, mr_title, mr_url, "title_check", error_msg, 0, 0, 1, ""),
+            teams_sent, email_sent, gitlab_sent, gitlab_discussion_id, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rule_id,
+            mr_iid,
+            mr_title,
+            mr_url,
+            "title_check",
+            error_msg,
+            0,
+            0,
+            1,
+            discussion_id,
+            "",
+        ),
     )
     conn.commit()
     conn.close()
+
+
+def _get_title_check_discussion_ids(rule_id: int, mr_iid: int) -> list[str]:
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT gitlab_discussion_id FROM notification_log
+           WHERE rule_id = ? AND mr_iid = ? AND file_path = ?
+             AND gitlab_discussion_id != ''""",
+        (rule_id, mr_iid, "title_check"),
+    ).fetchall()
+    conn.close()
+    return [row["gitlab_discussion_id"] for row in rows]
 
 
 def _clear_title_check_log(rule_id: int, mr_iid: int):
@@ -262,14 +297,32 @@ async def poll_once(rules: list[dict]):
                         )
                         comment_body = f"{mentions}\n\n{error_msg}".strip() if mentions else error_msg
                         try:
-                            await post_merge_request_discussion(mr_iid, comment_body)
+                            discussion = await post_merge_request_discussion(mr_iid, comment_body)
+                            discussion_id = str((discussion or {}).get("id") or "")
                             total_matched += 1
-                            _log_title_check(tc_rule["id"], mr_iid, mr_title, mr_url, error_msg)
+                            _log_title_check(
+                                tc_rule["id"],
+                                mr_iid,
+                                mr_title,
+                                mr_url,
+                                error_msg,
+                                discussion_id,
+                            )
                         except Exception as e:
                             logger.error(
                                 "Title check discussion failed for MR !%s: %s", mr_iid, e
                             )
                 else:
+                    for discussion_id in _get_title_check_discussion_ids(tc_rule["id"], mr_iid):
+                        try:
+                            await resolve_merge_request_discussion(mr_iid, discussion_id)
+                        except Exception as e:
+                            logger.error(
+                                "Title check discussion resolve failed for MR !%s discussion %s: %s",
+                                mr_iid,
+                                discussion_id,
+                                e,
+                            )
                     _clear_title_check_log(tc_rule["id"], mr_iid)
 
             for pc_rule in pipeline_check_rules:

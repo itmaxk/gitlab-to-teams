@@ -288,3 +288,106 @@ def test_poll_once_title_check_reports_changed_invalid_open_title(tmp_path, monk
     assert len(discussions) == 1
     assert discussions[0][0] == 125
     assert "JIRA-TASK: Description with some text" in discussions[0][1]
+
+
+def test_poll_once_title_check_resolves_thread_when_title_fixed(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, description, enabled, file_pattern, content_match, match_type,
+           target_branch, mr_state, action_type, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "MR title check",
+            "Reports bad MR title format",
+            1,
+            "*",
+            "",
+            "contains",
+            "master",
+            "opened",
+            "title_check",
+            0,
+        ),
+    )
+    rule_id = cur.lastrowid
+    conn.execute(
+        """INSERT INTO notification_log
+           (rule_id, mr_iid, mr_title, mr_url, file_path, file_content,
+            teams_sent, email_sent, gitlab_sent, gitlab_discussion_id, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rule_id,
+            126,
+            "ADIRGSLSUPP-6752 : Economic parameters",
+            "https://example.test/mr/126",
+            "title_check",
+            "old title error",
+            0,
+            0,
+            1,
+            "discussion-1",
+            "",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    poller._project_id = None
+    resolved = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch):
+        return [
+            {
+                "iid": 126,
+                "title": "ADIRGSLSUPP-6752: Economic parameters",
+                "web_url": "https://example.test/mr/126",
+                "state": state,
+                "source_branch": "feature/branch",
+                "target_branch": target_branch,
+                "author": {"name": "Dev"},
+                "created_at": "2026-04-29T00:00:00Z",
+            }
+        ]
+
+    async def fake_resolve_merge_request_discussion(mr_iid, discussion_id):
+        resolved.append((mr_iid, discussion_id))
+        return {"id": discussion_id, "resolved": True}
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(
+        poller,
+        "resolve_merge_request_discussion",
+        fake_resolve_merge_request_discussion,
+    )
+
+    asyncio.run(
+        poller.poll_once(
+            [
+                {
+                    "id": rule_id,
+                    "target_branch": "master",
+                    "mr_state": "opened",
+                    "action_type": "title_check",
+                }
+            ]
+        )
+    )
+
+    assert resolved == [(126, "discussion-1")]
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT 1 FROM notification_log WHERE rule_id = ? AND mr_iid = ?",
+        (rule_id, 126),
+    ).fetchone()
+    conn.close()
+    assert row is None

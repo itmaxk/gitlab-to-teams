@@ -59,6 +59,7 @@ def init_db():
             teams_sent INTEGER DEFAULT 0,
             email_sent INTEGER DEFAULT 0,
             gitlab_sent INTEGER DEFAULT 0,
+            gitlab_discussion_id TEXT DEFAULT '',
             error TEXT DEFAULT '',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE
@@ -438,6 +439,10 @@ def _migrate(conn: sqlite3.Connection):
         if nl_columns and "gitlab_sent" not in nl_columns:
             conn.execute(
                 "ALTER TABLE notification_log ADD COLUMN gitlab_sent INTEGER DEFAULT 0"
+            )
+        if nl_columns and "gitlab_discussion_id" not in nl_columns:
+            conn.execute(
+                "ALTER TABLE notification_log ADD COLUMN gitlab_discussion_id TEXT DEFAULT ''"
             )
     except Exception:
         pass
