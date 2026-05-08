@@ -77,13 +77,14 @@ def _mark_mr_processed(rule_id: int, mr_iid: int):
     conn.close()
 
 
-def _is_title_check_notified(rule_id: int, mr_iid: int) -> bool:
+def _is_title_check_notified(rule_id: int, mr_iid: int, mr_title: str) -> bool:
     conn = get_db()
     row = conn.execute(
         """SELECT 1 FROM notification_log
            WHERE rule_id = ? AND mr_iid = ? AND file_path = ?
+             AND mr_title = ?
              AND gitlab_sent = 1""",
-        (rule_id, mr_iid, "title_check"),
+        (rule_id, mr_iid, "title_check", mr_title),
     ).fetchone()
     conn.close()
     return row is not None
@@ -250,7 +251,7 @@ async def poll_once(rules: list[dict]):
             for tc_rule in title_check_rules:
                 valid, error_msg = is_title_valid(mr_title, mr_target_branch)
                 if not valid:
-                    if not _is_title_check_notified(tc_rule["id"], mr_iid):
+                    if not _is_title_check_notified(tc_rule["id"], mr_iid, mr_title):
                         assignees = mr.get("assignees") or []
                         if not assignees:
                             assignee = mr.get("assignee")

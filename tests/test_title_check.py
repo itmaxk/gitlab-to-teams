@@ -1,3 +1,8 @@
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from services.title_check import is_title_valid
 
 ERROR_MSG = "MR Title должен иметь формат JIRA-TASK: Description with some text"
@@ -65,6 +70,24 @@ def test_cyrillic_single_letter_rejected():
 
 def test_missing_colon_rejected():
     valid, msg = is_title_valid("ADIRGSLSUPP-6752 Economic parameters", "master")
+    assert valid is False
+    assert ERROR_MSG in msg
+
+
+def test_space_before_colon_rejected():
+    valid, msg = is_title_valid("ADIRGSLSUPP-6752 : Economic parameters", "master")
+    assert valid is False
+    assert ERROR_MSG in msg
+
+
+def test_missing_space_after_colon_rejected():
+    valid, msg = is_title_valid("ADIRGSLSUPP-6752:Economic parameters", "master")
+    assert valid is False
+    assert ERROR_MSG in msg
+
+
+def test_multiple_spaces_after_colon_rejected():
+    valid, msg = is_title_valid("ADIRGSLSUPP-6752:  Economic parameters", "master")
     assert valid is False
     assert ERROR_MSG in msg
 

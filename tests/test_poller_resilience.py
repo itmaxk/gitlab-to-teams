@@ -190,3 +190,101 @@ def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypat
     )
 
     assert calls == []
+
+
+def test_poll_once_title_check_reports_changed_invalid_open_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, description, enabled, file_pattern, content_match, match_type,
+           target_branch, mr_state, action_type, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "MR title check",
+            "Reports bad MR title format",
+            1,
+            "*",
+            "",
+            "contains",
+            "master",
+            "opened",
+            "title_check",
+            0,
+        ),
+    )
+    rule_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO processed_mrs (rule_id, mr_iid) VALUES (?, ?)",
+        (rule_id, 125),
+    )
+    conn.execute(
+        """INSERT INTO notification_log
+           (rule_id, mr_iid, mr_title, mr_url, file_path, file_content,
+            teams_sent, email_sent, gitlab_sent, error)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            rule_id,
+            125,
+            "ADIRGSLSUPP-6752 Economic parameters",
+            "https://example.test/mr/125",
+            "title_check",
+            "old title error",
+            0,
+            0,
+            1,
+            "",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    poller._project_id = None
+    discussions = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch):
+        return [
+            {
+                "iid": 125,
+                "title": "ADIRGSLSUPP-6752 : Economic parameters",
+                "web_url": "https://example.test/mr/125",
+                "state": state,
+                "source_branch": "feature/branch",
+                "target_branch": target_branch,
+                "author": {"name": "Dev"},
+                "created_at": "2026-04-29T00:00:00Z",
+            }
+        ]
+
+    async def fake_post_merge_request_discussion(mr_iid, comment_body):
+        discussions.append((mr_iid, comment_body))
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(
+        poller, "post_merge_request_discussion", fake_post_merge_request_discussion
+    )
+
+    asyncio.run(
+        poller.poll_once(
+            [
+                {
+                    "id": rule_id,
+                    "target_branch": "master",
+                    "mr_state": "opened",
+                    "action_type": "title_check",
+                }
+            ]
+        )
+    )
+
+    assert len(discussions) == 1
+    assert discussions[0][0] == 125
+    assert "JIRA-TASK: Description with some text" in discussions[0][1]
