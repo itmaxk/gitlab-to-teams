@@ -228,6 +228,7 @@ def init_db():
             source_branch TEXT DEFAULT '',
             target_branch TEXT DEFAULT '',
             mr_created_at TEXT DEFAULT '',
+            mr_merged_at TEXT DEFAULT '',
             changed_files_count INTEGER DEFAULT 0,
             rules_checked INTEGER DEFAULT 0,
             rules_matched INTEGER DEFAULT 0,
@@ -457,6 +458,16 @@ def _migrate(conn: sqlite3.Connection):
         if nl_columns and "gitlab_discussion_id" not in nl_columns:
             conn.execute(
                 "ALTER TABLE notification_log ADD COLUMN gitlab_discussion_id TEXT DEFAULT ''"
+            )
+    except Exception:
+        pass
+
+    try:
+        cursor_pm = conn.execute("PRAGMA table_info(polled_mrs)")
+        pm_columns = {row[1] for row in cursor_pm.fetchall()}
+        if pm_columns and "mr_merged_at" not in pm_columns:
+            conn.execute(
+                "ALTER TABLE polled_mrs ADD COLUMN mr_merged_at TEXT DEFAULT ''"
             )
     except Exception:
         pass

@@ -3,6 +3,7 @@ import os
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -82,11 +83,24 @@ def polled_mrs(
     success: int = -1,
     has_matches: int = -1,
     target_branch: str = "",
+    show_all: int = 0,
 ):
     conn = get_db()
 
     query = "SELECT * FROM polled_mrs WHERE 1=1"
     params: list = []
+    recent_merged_from = (
+        datetime.now(timezone.utc) - timedelta(days=30)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not show_all:
+        query += """ AND (
+            mr_state IN ('open', 'opened')
+            OR (
+                mr_state = 'merged'
+                AND COALESCE(NULLIF(mr_merged_at, ''), NULLIF(mr_created_at, ''), '') >= ?
+            )
+        )"""
+        params.append(recent_merged_from)
     if mr_state:
         query += " AND mr_state = ?"
         params.append(mr_state)
@@ -129,6 +143,8 @@ def polled_mrs(
                 "success": success,
                 "has_matches": has_matches,
                 "target_branch": target_branch,
+                "show_all": show_all,
+                "recent_merged_from": recent_merged_from,
             },
         },
     )

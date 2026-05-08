@@ -214,10 +214,10 @@ def _log_polled_mr(
     conn.execute(
         """INSERT INTO polled_mrs
            (mr_iid, mr_title, mr_url, mr_state, mr_author,
-            source_branch, target_branch, mr_created_at,
+            source_branch, target_branch, mr_created_at, mr_merged_at,
             changed_files_count, rules_checked, rules_matched,
             success, error)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             mr["iid"],
             mr.get("title", ""),
@@ -229,6 +229,7 @@ def _log_polled_mr(
             mr.get("source_branch", ""),
             mr.get("target_branch", ""),
             mr.get("created_at", ""),
+            mr.get("merged_at", ""),
             changed_files_count,
             rules_checked,
             rules_matched,
