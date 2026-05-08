@@ -99,7 +99,7 @@ def polled_mrs(
     if target_branch:
         query += " AND target_branch = ?"
         params.append(target_branch)
-    query += " ORDER BY polled_at DESC LIMIT 500"
+    query += " ORDER BY polled_at DESC"
 
     rows = conn.execute(query, params).fetchall()
     total = conn.execute("SELECT COUNT(*) FROM polled_mrs").fetchone()[0]
