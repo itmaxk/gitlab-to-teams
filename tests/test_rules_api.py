@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
+import asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
-from routers.rules import copy_rule
+from routers.rules import copy_rule, test_rule as run_rule_test
 
 
 def test_copy_rule_preserves_content_exclude_and_teams_flag(tmp_path, monkeypatch):
@@ -44,3 +45,64 @@ def test_copy_rule_preserves_content_exclude_and_teams_flag(tmp_path, monkeypatc
     assert copied["content_exclude"] == "type:\\s*internal"
     assert copied["send_teams"] is False
     assert copied["send_email"] is True
+
+
+def test_pipeline_job_retry_test_runs_rule_immediately(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_retry_fresh_packages",),
+    ).fetchone()["id"]
+    conn.close()
+
+    from services import poller
+
+    poller._project_id = None
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch=None):
+        return [
+            {
+                "iid": 501,
+                "title": "ADIRGSLSUPP-501: Config validate retry",
+                "web_url": "https://example.test/mr/501",
+                "state": state,
+                "source_branch": "feature/config-retry",
+                "target_branch": "master",
+                "author": {"name": "Dev"},
+                "created_at": "2026-05-08T00:00:00Z",
+            }
+        ]
+
+    async def fake_retry_failed_config_jobs(project_id, mr_iid, job_names, rule_id):
+        class Result:
+            retried = [{"job_id": 9001}]
+
+        return Result()
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(poller, "retry_failed_config_jobs", fake_retry_failed_config_jobs)
+
+    result = asyncio.run(run_rule_test(rule_id))
+
+    assert result == {"status": "checked", "action": "pipeline_job_retry"}
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT * FROM polled_mrs WHERE mr_iid = ?",
+        (501,),
+    ).fetchone()
+    conn.close()
+
+    assert row is not None
+    assert row["mr_state"] == "opened"
+    assert row["rules_checked"] == 1
+    assert row["rules_matched"] == 1
+    assert row["success"] == 1

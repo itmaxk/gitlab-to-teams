@@ -308,6 +308,15 @@ async def test_rule(rule_id: int):
     ).fetchall()
     conn.close()
 
+    if row.get("action_type") == "pipeline_job_retry":
+        from services.poller import poll_once
+
+        await poll_once([row])
+        return {
+            "status": "checked",
+            "action": "pipeline_job_retry",
+        }
+
     send_teams = bool(row.get("send_teams", 1))
     send_email = bool(row.get("send_email", 0))
     send_gitlab = bool(row.get("send_gitlab", 0))

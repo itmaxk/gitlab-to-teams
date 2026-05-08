@@ -147,7 +147,8 @@ async function testRule(id) {
   try {
     const resp = await fetch(`/api/rules/${id}/test`, { method: 'POST' });
     if (resp.ok) {
-      btn.textContent = '✓ Отправлено';
+      const data = await resp.json();
+      btn.textContent = data.status === 'checked' ? '✓ Проверено' : '✓ Отправлено';
       setTimeout(() => { btn.textContent = 'Тест'; btn.disabled = false; }, 2000);
     } else {
       const data = await resp.json();
