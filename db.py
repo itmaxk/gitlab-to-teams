@@ -74,6 +74,20 @@ def init_db():
             UNIQUE(rule_id, mr_iid)
         );
 
+        CREATE TABLE IF NOT EXISTS pipeline_job_retry_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id INTEGER NOT NULL,
+            mr_iid INTEGER NOT NULL,
+            pipeline_id INTEGER NOT NULL,
+            job_id INTEGER NOT NULL,
+            retried_job_id INTEGER DEFAULT 0,
+            job_name TEXT DEFAULT '',
+            job_web_url TEXT DEFAULT '',
+            retried_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE,
+            UNIQUE(rule_id, job_id)
+        );
+
         CREATE TABLE IF NOT EXISTS cherry_pick_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT DEFAULT '',
@@ -458,6 +472,25 @@ def _migrate(conn: sqlite3.Connection):
     except Exception:
         pass
 
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS pipeline_job_retry_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_id INTEGER NOT NULL,
+                mr_iid INTEGER NOT NULL,
+                pipeline_id INTEGER NOT NULL,
+                job_id INTEGER NOT NULL,
+                retried_job_id INTEGER DEFAULT 0,
+                job_name TEXT DEFAULT '',
+                job_web_url TEXT DEFAULT '',
+                retried_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (rule_id) REFERENCES notification_rules(id) ON DELETE CASCADE,
+                UNIQUE(rule_id, job_id)
+            )"""
+        )
+    except Exception:
+        pass
+
     conn.commit()
 
 
@@ -640,6 +673,26 @@ def seed_default_rule():
             "mr_state": "opened",
             "action_type": "pipeline_check",
             "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
+
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "pipeline_config_retry_fresh_packages",
+            "name": "Retry config jobs after fresh packages stall",
+            "description": "Retries failed config:check-uncommitted and config:validate jobs when their trace stops after [5/5] Building fresh packages...",
+            "file_pattern": "*",
+            "content_match": "config:check-uncommitted,config:validate",
+            "match_type": "contains",
+            "target_branch": "*",
+            "mr_state": "opened",
+            "poll_interval_seconds": 600,
+            "action_type": "pipeline_job_retry",
+            "send_gitlab": 0,
             "send_teams": 0,
             "send_email": 0,
             "enabled": 1,

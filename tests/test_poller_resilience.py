@@ -11,6 +11,7 @@ from services import poller
 def test_poll_once_marks_mr_processed_even_when_audit_log_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
+    db.seed_default_rule()
 
     conn = db.get_db()
     conn.execute(
@@ -98,6 +99,7 @@ def test_poll_once_marks_mr_processed_even_when_audit_log_fails(tmp_path, monkey
 def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
+    db.seed_default_rule()
 
     conn = db.get_db()
     conn.execute(
@@ -108,6 +110,7 @@ def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypat
         "notify",
         "title_check",
         "pipeline_check",
+        "pipeline_job_retry",
         "xlsx_review",
         "code_review",
     ]
@@ -171,6 +174,7 @@ def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypat
     monkeypatch.setattr(poller, "dispatch_notifications", forbidden_async_call)
     monkeypatch.setattr(poller, "post_merge_request_discussion", forbidden_async_call)
     monkeypatch.setattr(poller, "check_pipeline_job_failed", forbidden_async_call)
+    monkeypatch.setattr(poller, "retry_failed_config_jobs", forbidden_async_call)
     monkeypatch.setattr(poller, "review_xlsx_mr", forbidden_async_call)
     monkeypatch.setattr(poller, "review_mr", forbidden_async_call)
     monkeypatch.setattr(poller, "is_title_valid", forbidden_sync_call)
@@ -391,3 +395,80 @@ def test_poll_once_title_check_resolves_thread_when_title_fixed(tmp_path, monkey
     ).fetchone()
     conn.close()
     assert row is None
+
+
+def test_poll_once_pipeline_job_retry_is_not_mr_processed(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_retry_fresh_packages",),
+    ).fetchone()["id"]
+    conn.close()
+
+    poller._project_id = None
+    retry_calls = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch=None):
+        return [
+            {
+                "iid": 127,
+                "title": "ADIRGSLSUPP-6752: Economic parameters",
+                "web_url": "https://example.test/mr/127",
+                "state": state,
+                "source_branch": "feature/branch",
+                "target_branch": "master",
+                "author": {"name": "Dev"},
+                "created_at": "2026-04-29T00:00:00Z",
+            }
+        ]
+
+    async def fake_retry_failed_config_jobs(project_id, mr_iid, job_names, rule_id):
+        retry_calls.append((project_id, mr_iid, job_names, rule_id))
+
+        class Result:
+            retried = [{"job_id": 101}]
+
+        return Result()
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(
+        poller, "retry_failed_config_jobs", fake_retry_failed_config_jobs
+    )
+
+    asyncio.run(
+        poller.poll_once(
+            [
+                {
+                    "id": rule_id,
+                    "target_branch": "*",
+                    "mr_state": "opened",
+                    "action_type": "pipeline_job_retry",
+                    "content_match": "config:check-uncommitted,config:validate",
+                }
+            ]
+        )
+    )
+
+    assert retry_calls == [
+        (
+            26,
+            127,
+            ["config:check-uncommitted", "config:validate"],
+            rule_id,
+        )
+    ]
+    conn = db.get_db()
+    processed = conn.execute(
+        "SELECT 1 FROM processed_mrs WHERE rule_id = ? AND mr_iid = ?",
+        (rule_id, 127),
+    ).fetchone()
+    conn.close()
+    assert processed is None

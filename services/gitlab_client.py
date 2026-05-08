@@ -489,8 +489,41 @@ async def get_pipeline_jobs(
 ) -> list[dict]:
     """Return jobs for a pipeline."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/pipelines/{pipeline_id}/jobs"
+    params: dict[str, str | int] = {
+        "per_page": 100,
+        "page": 1,
+        "include_retried": "true",
+    }
+    result = []
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        while True:
+            resp = await client.get(url, headers=_headers(), params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            if not data:
+                break
+            result.extend(data)
+            next_page = resp.headers.get("x-next-page", "")
+            if not next_page:
+                break
+            params["page"] = int(next_page)
+    return result
+
+
+async def get_job_trace(project_id: int, job_id: int) -> str:
+    """Return a CI job trace as text."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/jobs/{job_id}/trace"
     async with httpx.AsyncClient(verify=False, timeout=30) as client:
         resp = await client.get(url, headers=_headers())
+        resp.raise_for_status()
+    return resp.text
+
+
+async def retry_job(project_id: int, job_id: int) -> dict:
+    """Retry a CI job and return the new job payload."""
+    url = f"{_base_url()}/api/v4/projects/{project_id}/jobs/{job_id}/retry"
+    async with httpx.AsyncClient(verify=False, timeout=30) as client:
+        resp = await client.post(url, headers=_headers())
         resp.raise_for_status()
     return resp.json()
 

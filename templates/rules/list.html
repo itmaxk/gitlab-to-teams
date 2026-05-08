@@ -55,6 +55,10 @@
           <span class="text-xs px-2 py-0.5 rounded-full border bg-amber-900/30 text-amber-400 border-amber-800">
             Code Review
           </span>
+          {% elif rule.action_type == 'pipeline_job_retry' %}
+          <span class="text-xs px-2 py-0.5 rounded-full border bg-cyan-900/30 text-cyan-400 border-cyan-800">
+            Job Retry
+          </span>
           {% endif %}
         </div>
         {% if rule.description %}

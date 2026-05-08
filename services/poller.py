@@ -21,7 +21,12 @@ from services.gitlab_notes import (
     resolve_merge_request_discussion,
 )
 from services.title_check import is_title_valid
-from services.pipeline_check import PipelineCheckResult, check_pipeline_job_failed
+from services.pipeline_check import (
+    PipelineCheckResult,
+    check_pipeline_job_failed,
+    parse_retry_job_names,
+    retry_failed_config_jobs,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +203,7 @@ def _get_rules_grouped_by_schedule() -> dict[int, list[dict]]:
 
     groups: dict[int, list[dict]] = {}
     for row in rows:
-        interval = row["poll_interval_seconds"] or default_interval
+        interval = max(1, row["poll_interval_seconds"] or default_interval)
         groups.setdefault(interval, []).append(dict(row))
     return groups
 
@@ -247,8 +252,13 @@ async def poll_once(rules: list[dict]):
             tc_rule_ids = {
                 r["id"] for r in group_rules if r.get("action_type") == "title_check"
             }
+            pipeline_retry_rule_ids = {
+                r["id"]
+                for r in group_rules
+                if r.get("action_type") == "pipeline_job_retry"
+            }
             all_rule_ids = list(
-                dict.fromkeys(tc_rule_ids | set(pending_rule_ids))
+                dict.fromkeys(tc_rule_ids | pipeline_retry_rule_ids | set(pending_rule_ids))
             )
             if not all_rule_ids:
                 continue
@@ -272,6 +282,11 @@ async def poll_once(rules: list[dict]):
                 r
                 for r in group_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "pipeline_check"
+            ]
+            pipeline_retry_rules = [
+                r
+                for r in group_rules
+                if r["id"] in all_rule_ids and r.get("action_type") == "pipeline_job_retry"
             ]
             notify_rules = [
                 r
@@ -365,10 +380,26 @@ async def poll_once(rules: list[dict]):
                 if result.failed or result.completed:
                     _mark_mr_processed(pc_rule["id"], mr_iid)
 
+            for retry_rule in pipeline_retry_rules:
+                job_names = parse_retry_job_names(retry_rule.get("content_match", ""))
+                try:
+                    retry_result = await retry_failed_config_jobs(
+                        project_id,
+                        mr_iid,
+                        job_names,
+                        retry_rule["id"],
+                    )
+                    total_matched += len(retry_result.retried)
+                except Exception as e:
+                    logger.error(
+                        "Pipeline job retry check failed for MR !%s: %s", mr_iid, e
+                    )
+
             rest_rule_ids = [
                 rid for rid in pending_rule_ids
                 if rid not in {r["id"] for r in title_check_rules}
                 and rid not in {r["id"] for r in pipeline_check_rules}
+                and rid not in {r["id"] for r in pipeline_retry_rules}
             ]
             if not rest_rule_ids:
                 try:
@@ -474,16 +505,34 @@ async def poll_once(rules: list[dict]):
                 logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
 
 
-async def _run_poll_loop(interval: int, rule_getter):
-    """Цикл опроса с заданным интервалом."""
+async def _run_dynamic_polling():
+    """Run poll groups from the current DB schedule so interval edits take effect."""
+    last_run: dict[int, float] = {}
+    loop = asyncio.get_running_loop()
+
     while True:
-        # Перечитываем .env перед каждым циклом
         from env_reload import reload_dotenv
 
         reload_dotenv()
+        default_interval = max(1, int(os.getenv("POLL_INTERVAL_SECONDS", "300")))
+        groups = _get_rules_grouped_by_schedule()
+        now = loop.time()
 
-        rules = rule_getter(interval)
-        if rules:
+        if not groups:
+            await asyncio.sleep(default_interval)
+            continue
+
+        due_intervals = [
+            interval
+            for interval in groups
+            if interval not in last_run or now - last_run[interval] >= interval
+        ]
+
+        for interval in sorted(due_intervals):
+            rules = groups.get(interval, [])
+            if not rules:
+                last_run[interval] = now
+                continue
             logger.info(
                 "[%s] Polling %d rule(s), interval=%ds",
                 datetime.now().strftime("%H:%M:%S"),
@@ -491,42 +540,22 @@ async def _run_poll_loop(interval: int, rule_getter):
                 interval,
             )
             await poll_once(rules)
-        await asyncio.sleep(interval)
+            last_run[interval] = loop.time()
+
+        active_intervals = set(groups)
+        for interval in list(last_run):
+            if interval not in active_intervals:
+                last_run.pop(interval, None)
+
+        now = loop.time()
+        sleep_for = min(
+            max(1.0, interval - (now - last_run.get(interval, 0)))
+            for interval in groups
+        )
+        await asyncio.sleep(sleep_for)
 
 
 async def start_polling():
     """Запускает фоновые задачи опроса для каждого уникального интервала."""
     logger.info("Starting GitLab MR poller...")
-
-    default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
-
-    # Начальный опрос — сразу
-    groups = _get_rules_grouped_by_schedule()
-    if not groups:
-        logger.info("No enabled rules found, will poll with default interval")
-        groups = {default_interval: []}
-
-    tasks = []
-    seen_intervals = set()
-
-    def get_rules_for_interval(interval: int) -> list[dict]:
-        current_groups = _get_rules_grouped_by_schedule()
-        return current_groups.get(interval, [])
-
-    for interval in groups:
-        if interval not in seen_intervals:
-            seen_intervals.add(interval)
-            tasks.append(
-                asyncio.create_task(_run_poll_loop(interval, get_rules_for_interval))
-            )
-
-    # Запускаем дефолтный интервал если нет других
-    if default_interval not in seen_intervals:
-        tasks.append(
-            asyncio.create_task(
-                _run_poll_loop(default_interval, get_rules_for_interval)
-            )
-        )
-
-    # Ждём все таски (бесконечно)
-    await asyncio.gather(*tasks)
+    await _run_dynamic_polling()
