@@ -41,7 +41,7 @@ class _FakeAsyncClient:
     async def __aexit__(self, exc_type, exc, tb):
         return False
 
-    async def get(self, url, headers=None, params=None):
+    async def get(self, url, headers=None, params=None, **kwargs):
         if not self._responses:
             raise AssertionError(f"Unexpected GET {url}")
         response = self._responses.pop(0)
@@ -92,11 +92,9 @@ index 1111111..2222222 100644
         _FakeResponse(text=raw_diff_text),
     ]
 
-    monkeypatch.setattr(
-        gitlab_client.httpx,
-        "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient(responses),
-    )
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    # Clear cache to ensure fresh fetch
+    gitlab_client.clear_mr_diff_cache()
 
     result = asyncio.run(gitlab_client.get_mr_diff(1, 12))
 
@@ -119,11 +117,7 @@ def test_get_merge_requests_follows_pagination(monkeypatch):
 
     monkeypatch.setattr(gitlab_client, "_base_url", lambda: "https://gitlab.example.test")
     monkeypatch.setattr(gitlab_client, "_headers", lambda: {})
-    monkeypatch.setattr(
-        gitlab_client.httpx,
-        "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient(responses),
-    )
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
 
     result = asyncio.run(gitlab_client.get_merge_requests(1, state="opened"))
 
@@ -176,11 +170,8 @@ def test_get_mr_diff_builds_synthetic_diff_when_gitlab_returns_nothing(monkeypat
         _FakeResponse(content=b"before = 2\n"),
     ]
 
-    monkeypatch.setattr(
-        gitlab_client.httpx,
-        "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient(responses),
-    )
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
 
     result = asyncio.run(gitlab_client.get_mr_diff(1, 13))
 
@@ -219,11 +210,8 @@ def test_get_mr_diff_synthetic_fallback_uses_diff_refs_instead_of_branch_names(m
         _FakeResponse(content=b"new\n"),
     ]
 
-    monkeypatch.setattr(
-        gitlab_client.httpx,
-        "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient(responses),
-    )
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
 
     result = asyncio.run(gitlab_client.get_mr_diff(1, 14))
 
@@ -269,14 +257,65 @@ def test_get_mr_diff_synthetic_fallback_skips_missing_side_for_added_and_deleted
         _FakeResponse(content=b"old file\n"),
     ]
 
-    monkeypatch.setattr(
-        gitlab_client.httpx,
-        "AsyncClient",
-        lambda **kwargs: _FakeAsyncClient(responses),
-    )
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
 
     result = asyncio.run(gitlab_client.get_mr_diff(1, 15))
 
     assert len(result["changes"]) == 2
     assert responses[2].params == {"ref": "head-sha"}
     assert responses[3].params == {"ref": "base-sha"}
+
+
+def test_clear_mr_diff_cache_invalidates_cached_diff(monkeypatch):
+    first_payload = {
+        "title": "Cached title",
+        "source_branch": "feature/cache",
+        "target_branch": "master",
+        "changes": [
+            {
+                "old_path": "cache.txt",
+                "new_path": "cache.txt",
+                "diff": "@@ -1 +1 @@\n-old\n+new",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    refreshed_payload = {
+        "title": "Refreshed title",
+        "source_branch": "feature/cache",
+        "target_branch": "master",
+        "changes": [
+            {
+                "old_path": "cache.txt",
+                "new_path": "cache.txt",
+                "diff": "@@ -1 +1 @@\n-old\n+newer",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+
+    responses = [
+        _FakeResponse(json_data=first_payload),
+        _FakeResponse(json_data=refreshed_payload),
+    ]
+
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
+
+    first = asyncio.run(gitlab_client.get_mr_diff(1, 16))
+    cached = asyncio.run(gitlab_client.get_mr_diff(1, 16))
+
+    assert first["title"] == "Cached title"
+    assert cached["title"] == "Cached title"
+    assert gitlab_client.get_mr_diff_cache_info()["valid"] == 1
+
+    gitlab_client.clear_mr_diff_cache()
+    refreshed = asyncio.run(gitlab_client.get_mr_diff(1, 16))
+
+    assert refreshed["title"] == "Refreshed title"
+    gitlab_client.clear_mr_diff_cache()

@@ -17,6 +17,8 @@ from services.gitlab_client import (
     get_mr_by_iid,
     get_mr_diff,
     search_merge_requests,
+    clear_mr_diff_cache,
+    get_mr_diff_cache_info,
 )
 
 logger = logging.getLogger(__name__)
@@ -156,7 +158,7 @@ async def _attach_change_stats(jira_map: dict, no_jira: list, project_id: int) -
     for mr_info in _iter_mr_infos(jira_map, no_jira):
         by_iid.setdefault(mr_info["mr_iid"], []).append(mr_info)
 
-    semaphore = asyncio.Semaphore(8)
+    semaphore = asyncio.Semaphore(16)
 
     async def load_one(mr_iid: int):
         async with semaphore:
@@ -372,6 +374,20 @@ def _annotate_similar_diff_links(branch_data: dict[str, list[dict]]) -> None:
                 })
             mr["similar_pick_matches"] = matches
         group += 1
+
+
+@router.post("/clear-cache")
+async def clear_cache():
+    """Очищает кэш diff-данных MR. Используйте для принудительного обновления."""
+    clear_mr_diff_cache()
+    return {"status": "ok", "message": "Кэш очищен"}
+
+
+@router.get("/cache-info")
+async def cache_info():
+    """Возвращает информацию о состоянии кэша diff-данных."""
+    info = get_mr_diff_cache_info()
+    return {"status": "ok", "cache": info}
 
 
 @router.get("/default-branches")

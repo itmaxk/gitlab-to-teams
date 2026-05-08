@@ -2,11 +2,33 @@ import difflib
 import logging
 import os
 import re
+import time
+from functools import wraps
 from urllib.parse import quote
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Connection pool for GitLab API requests
+_limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return shared AsyncClient with connection pooling."""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(verify=False, limits=_limits)
+    return _client
+
+
+async def close_client() -> None:
+    """Close the shared HTTP client. Call on application shutdown."""
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
 
 
 def _base_url() -> str:
@@ -24,12 +46,100 @@ def _project_path() -> str:
     return quote(os.getenv("GITLAB_PROJECT", ""), safe="")
 
 
+_MR_DIFF_CACHE_TTL_SECONDS = 600  # 10 minutes
+_MR_DIFF_CACHE_MAX_SIZE = 100
+
+
+def _ttl_cache(ttl_seconds: int, max_size: int):
+    """Decorator for TTL-based caching with LRU eviction."""
+    def decorator(func):
+        cache: dict[tuple, tuple] = {}
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            # Create cache key from positional args (project_id, mr_iid)
+            key = tuple(args[:2]) if len(args) >= 2 else tuple(args)
+
+            # Check cache
+            now = time.time()
+            if key in cache:
+                result, timestamp = cache[key]
+                if now - timestamp < ttl_seconds:
+                    logger.debug("Cache hit for %s", key)
+                    return result
+                # Expired, remove
+                del cache[key]
+
+            # Call function
+            result = await func(*args, **kwargs)
+
+            # Store in cache
+            cache[key] = (result, now)
+
+            # LRU eviction if cache too large
+            if len(cache) > max_size:
+                # Remove oldest entry
+                oldest_key = min(cache.keys(), key=lambda k: cache[k][1])
+                del cache[oldest_key]
+
+            return result
+
+        # Attach cache management functions
+        wrapper._cache = cache
+        wrapper._cache_ttl = ttl_seconds
+
+        def clear_cache():
+            """Clear all cached entries."""
+            cache.clear()
+            logger.info("Cleared MR diff cache")
+
+        wrapper.clear_cache = clear_cache
+
+        def cache_info():
+            """Return cache statistics."""
+            now = time.time()
+            valid = sum(1 for _, ts in cache.values() if now - ts < ttl_seconds)
+            return {
+                "size": len(cache),
+                "valid": valid,
+                "expired": len(cache) - valid,
+                "max_size": max_size,
+                "ttl_seconds": ttl_seconds,
+            }
+
+        wrapper.cache_info = cache_info
+
+        return wrapper
+    return decorator
+
+
+def clear_mr_diff_cache() -> None:
+    """Clear the MR diff cache. Can be called externally."""
+    clear_cache = getattr(get_mr_diff, "clear_cache", None)
+    if clear_cache is not None:
+        clear_cache()
+
+
+def get_mr_diff_cache_info() -> dict:
+    """Return MR diff cache statistics."""
+    cache_info = getattr(get_mr_diff, "cache_info", None)
+    if cache_info is None:
+        return {
+            "size": 0,
+            "valid": 0,
+            "expired": 0,
+            "max_size": _MR_DIFF_CACHE_MAX_SIZE,
+            "ttl_seconds": _MR_DIFF_CACHE_TTL_SECONDS,
+        }
+    return cache_info()
+
+
 async def get_project_id() -> int:
     """Return the numeric project ID for GITLAB_PROJECT."""
     url = f"{_base_url()}/api/v4/projects/{_project_path()}"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
     return resp.json()["id"]
 
 
@@ -58,74 +168,79 @@ async def get_merge_requests(
     if updated_after:
         params["updated_after"] = updated_after
     result = []
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        while True:
-            resp = await client.get(url, headers=_headers(), params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            if not data:
-                break
-            result.extend(data)
-            next_page = resp.headers.get("x-next-page", "")
-            if not next_page:
-                break
-            params["page"] = int(next_page)
+    client = _get_client()
+    while True:
+        resp = await client.get(url, headers=_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            break
+        result.extend(data)
+        next_page = resp.headers.get("x-next-page", "")
+        if not next_page:
+            break
+        params["page"] = int(next_page)
     return result
 
 
 async def get_mr_changes(project_id: int, mr_iid: int) -> list[str]:
     """Return changed file paths for a merge request."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
-        data = resp.json()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
     return [change["new_path"] for change in data.get("changes", []) if change.get("new_path")]
 
 
 async def get_mr_by_iid(project_id: int, mr_iid: int) -> dict:
     """Return a single merge request by IID."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
     return resp.json()
 
 
 async def create_branch(project_id: int, branch_name: str, ref: str) -> dict:
     """Create a repository branch from ref."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/branches"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.post(url, headers=_headers(), json={
-            "branch": branch_name,
-            "ref": ref,
-        })
-        if resp.status_code >= 400:
-            body = resp.text
-            logger.error("create_branch %s from %s -> %s %s", branch_name, ref, resp.status_code, body)
-            try:
-                msg = resp.json().get("message", body)
-            except Exception:
-                msg = body
-            raise RuntimeError(f"{resp.status_code}: {msg}")
+    client = _get_client()
+    resp = await client.post(
+        url,
+        headers=_headers(),
+        json={"branch": branch_name, "ref": ref},
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        body = resp.text
+        logger.error("create_branch %s from %s -> %s %s", branch_name, ref, resp.status_code, body)
+        try:
+            msg = resp.json().get("message", body)
+        except Exception:
+            msg = body
+        raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
 async def cherry_pick_commit(project_id: int, sha: str, target_branch: str) -> dict:
     """Cherry-pick a commit into the target branch."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/commits/{sha}/cherry_pick"
-    async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        resp = await client.post(url, headers=_headers(), json={
-            "branch": target_branch,
-        })
-        if resp.status_code >= 400:
-            body = resp.text
-            logger.error("cherry_pick %s -> %s: %s %s", sha, target_branch, resp.status_code, body)
-            try:
-                msg = resp.json().get("message", body)
-            except Exception:
-                msg = body
-            raise RuntimeError(f"{resp.status_code}: {msg}")
+    client = _get_client()
+    resp = await client.post(
+        url,
+        headers=_headers(),
+        json={"branch": target_branch},
+        timeout=60,
+    )
+    if resp.status_code >= 400:
+        body = resp.text
+        logger.error("cherry_pick %s -> %s: %s %s", sha, target_branch, resp.status_code, body)
+        try:
+            msg = resp.json().get("message", body)
+        except Exception:
+            msg = body
+        raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
@@ -142,36 +257,41 @@ async def create_merge_request(
 ) -> dict:
     """Create a merge request through the GitLab API."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.post(url, headers=_headers(), json={
+    client = _get_client()
+    resp = await client.post(
+        url,
+        headers=_headers(),
+        json={
             "source_branch": source_branch,
             "target_branch": target_branch,
             "title": title,
-        })
-        if resp.status_code >= 400:
-            body = resp.text
-            logger.error("create_mr %s -> %s: %s %s", source_branch, target_branch, resp.status_code, body)
-            try:
-                msg = resp.json().get("message", body)
-            except Exception:
-                msg = body
-            raise RuntimeError(f"{resp.status_code}: {msg}")
+        },
+        timeout=30,
+    )
+    if resp.status_code >= 400:
+        body = resp.text
+        logger.error("create_mr %s -> %s: %s %s", source_branch, target_branch, resp.status_code, body)
+        try:
+            msg = resp.json().get("message", body)
+        except Exception:
+            msg = body
+        raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
 async def approve_merge_request(project_id: int, mr_iid: int) -> dict:
     """Approve a merge request through the GitLab API."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/approve"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.post(url, headers=_headers())
-        if resp.status_code >= 400:
-            body = resp.text
-            logger.error("approve_mr !%s: %s %s", mr_iid, resp.status_code, body)
-            try:
-                msg = resp.json().get("message", body)
-            except Exception:
-                msg = body
-            raise RuntimeError(f"{resp.status_code}: {msg}")
+    client = _get_client()
+    resp = await client.post(url, headers=_headers(), timeout=30)
+    if resp.status_code >= 400:
+        body = resp.text
+        logger.error("approve_mr !%s: %s %s", mr_iid, resp.status_code, body)
+        try:
+            msg = resp.json().get("message", body)
+        except Exception:
+            msg = body
+        raise RuntimeError(f"{resp.status_code}: {msg}")
     return resp.json()
 
 
@@ -182,22 +302,22 @@ async def merge_merge_request(
     import asyncio
 
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/merge"
-    async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        for attempt in range(retries):
-            resp = await client.put(url, headers=_headers())
-            if resp.status_code < 400:
-                return resp.json()
-            if resp.status_code == 405 and attempt < retries - 1:
-                logger.info("merge_mr !%s: 405 not ready, retry %d/%d in %.0fs", mr_iid, attempt + 1, retries, delay)
-                await asyncio.sleep(delay)
-                continue
-            body = resp.text
-            logger.error("merge_mr !%s: %s %s", mr_iid, resp.status_code, body)
-            try:
-                msg = resp.json().get("message", body)
-            except Exception:
-                msg = body
-            raise RuntimeError(f"{resp.status_code}: {msg}")
+    client = _get_client()
+    for attempt in range(retries):
+        resp = await client.put(url, headers=_headers(), timeout=60)
+        if resp.status_code < 400:
+            return resp.json()
+        if resp.status_code == 405 and attempt < retries - 1:
+            logger.info("merge_mr !%s: 405 not ready, retry %d/%d in %.0fs", mr_iid, attempt + 1, retries, delay)
+            await asyncio.sleep(delay)
+            continue
+        body = resp.text
+        logger.error("merge_mr !%s: %s %s", mr_iid, resp.status_code, body)
+        try:
+            msg = resp.json().get("message", body)
+        except Exception:
+            msg = body
+        raise RuntimeError(f"{resp.status_code}: {msg}")
     return {}
 
 
@@ -207,16 +327,18 @@ async def find_mrs_by_source_branches(
     """Find merge requests by source branch across any state."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
     result = []
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        for branch in source_branches:
-            resp = await client.get(url, headers=_headers(), params={
-                "source_branch": branch,
-                "per_page": 1,
-            })
-            if resp.status_code == 200:
-                mrs = resp.json()
-                if mrs:
-                    result.append(mrs[0])
+    client = _get_client()
+    for branch in source_branches:
+        resp = await client.get(
+            url,
+            headers=_headers(),
+            params={"source_branch": branch, "per_page": 1},
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            mrs = resp.json()
+            if mrs:
+                result.append(mrs[0])
     return result
 
 
@@ -228,16 +350,21 @@ async def find_merged_mrs_by_branches(
     """Return source branches that already have a merged MR into target_branch."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests"
     found = set()
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        for branch in source_branches:
-            resp = await client.get(url, headers=_headers(), params={
+    client = _get_client()
+    for branch in source_branches:
+        resp = await client.get(
+            url,
+            headers=_headers(),
+            params={
                 "source_branch": branch,
                 "target_branch": target_branch,
                 "state": "merged",
                 "per_page": 1,
-            })
-            if resp.status_code == 200 and resp.json():
-                found.add(branch)
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200 and resp.json():
+            found.add(branch)
     return found
 
 
@@ -256,9 +383,9 @@ async def search_merge_requests(
         "order_by": "updated_at",
         "sort": "desc",
     }
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers(), params=params)
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), params=params, timeout=30)
+    resp.raise_for_status()
     return resp.json()
 
 
@@ -282,18 +409,18 @@ async def get_all_merged_mrs(
         "page": 1,
     }
     result = []
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        while True:
-            resp = await client.get(url, headers=_headers(), params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            if not data:
-                break
-            result.extend(data)
-            next_page = resp.headers.get("x-next-page", "")
-            if not next_page:
-                break
-            params["page"] = int(next_page)
+    client = _get_client()
+    while True:
+        resp = await client.get(url, headers=_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            break
+        result.extend(data)
+        next_page = resp.headers.get("x-next-page", "")
+        if not next_page:
+            break
+        params["page"] = int(next_page)
     return result
 
 
@@ -305,9 +432,9 @@ async def get_branches(
     params = {"per_page": per_page, "page": page}
     if search:
         params["search"] = search
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers(), params=params)
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), params=params, timeout=30)
+    resp.raise_for_status()
     return resp.json()
 
 
@@ -362,7 +489,7 @@ async def _get_file_bytes_or_none(
         return None
     encoded_path = quote(file_path, safe="")
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
-    resp = await client.get(url, headers=_headers(), params={"ref": ref})
+    resp = await client.get(url, headers=_headers(), params={"ref": ref}, timeout=30)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -425,59 +552,63 @@ def _diff_fallback_refs(data: dict) -> tuple[str, str]:
     return old_ref, new_ref
 
 
+@_ttl_cache(ttl_seconds=_MR_DIFF_CACHE_TTL_SECONDS, max_size=_MR_DIFF_CACHE_MAX_SIZE)
 async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
     """Return MR metadata plus per-file diffs.
 
     We first ask GitLab for `changes` with `access_raw_diffs=true` so collapsed
     files are less likely to come back empty. If GitLab still returns empty diffs
     or marks the response as overflowed, we fetch `raw_diffs` and fill the gaps.
+
+    Results are cached for 10 minutes to improve performance.
     """
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/changes"
-    async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        resp = await client.get(
-            url,
-            headers=_headers(),
-            params={"access_raw_diffs": "true", "unidiff": "true"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        changes = [
-            {
-                "old_path": c.get("old_path", ""),
-                "new_path": c.get("new_path", ""),
-                "diff": c.get("diff", ""),
-                "new_file": c.get("new_file", False),
-                "deleted_file": c.get("deleted_file", False),
-                "renamed_file": c.get("renamed_file", False),
-            }
-            for c in data.get("changes", [])
-        ]
+    client = _get_client()
+    resp = await client.get(
+        url,
+        headers=_headers(),
+        params={"access_raw_diffs": "true", "unidiff": "true"},
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    changes = [
+        {
+            "old_path": c.get("old_path", ""),
+            "new_path": c.get("new_path", ""),
+            "diff": c.get("diff", ""),
+            "new_file": c.get("new_file", False),
+            "deleted_file": c.get("deleted_file", False),
+            "renamed_file": c.get("renamed_file", False),
+        }
+        for c in data.get("changes", [])
+    ]
 
-        if data.get("overflow") or any(not change["diff"] for change in changes):
-            raw_url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/raw_diffs"
-            raw_resp = await client.get(raw_url, headers=_headers())
-            raw_resp.raise_for_status()
-            raw_diffs = _parse_raw_diffs(raw_resp.text)
-            for change in changes:
-                if change["diff"]:
-                    continue
-                raw_diff = raw_diffs.get(_change_key(change.get("old_path", ""), change.get("new_path", "")))
-                if raw_diff:
-                    change["diff"] = raw_diff
-
+    if data.get("overflow") or any(not change["diff"] for change in changes):
+        raw_url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/raw_diffs"
+        raw_resp = await client.get(raw_url, headers=_headers(), timeout=60)
+        raw_resp.raise_for_status()
+        raw_diffs = _parse_raw_diffs(raw_resp.text)
         for change in changes:
             if change["diff"]:
                 continue
-            old_path = change.get("old_path", "")
-            new_path = change.get("new_path", "")
-            old_ref, new_ref = _diff_fallback_refs(data)
-            old_bytes = None
-            new_bytes = None
-            if not change.get("new_file"):
-                old_bytes = await _get_file_bytes_or_none(client, project_id, old_path, old_ref)
-            if not change.get("deleted_file"):
-                new_bytes = await _get_file_bytes_or_none(client, project_id, new_path, new_ref)
-            change["diff"] = _build_synthetic_diff(old_path, new_path, old_bytes, new_bytes)
+            raw_diff = raw_diffs.get(_change_key(change.get("old_path", ""), change.get("new_path", "")))
+            if raw_diff:
+                change["diff"] = raw_diff
+
+    for change in changes:
+        if change["diff"]:
+            continue
+        old_path = change.get("old_path", "")
+        new_path = change.get("new_path", "")
+        old_ref, new_ref = _diff_fallback_refs(data)
+        old_bytes = None
+        new_bytes = None
+        if not change.get("new_file"):
+            old_bytes = await _get_file_bytes_or_none(client, project_id, old_path, old_ref)
+        if not change.get("deleted_file"):
+            new_bytes = await _get_file_bytes_or_none(client, project_id, new_path, new_ref)
+        change["diff"] = _build_synthetic_diff(old_path, new_path, old_bytes, new_bytes)
 
     return {
         "title": data.get("title", ""),
@@ -500,9 +631,9 @@ async def get_file_content(project_id: int, file_path: str, ref: str) -> str:
     """Return repository file content as text."""
     encoded_path = quote(file_path, safe="")
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers(), params={"ref": ref})
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), params={"ref": ref}, timeout=30)
+    resp.raise_for_status()
     return resp.text
 
 
@@ -512,9 +643,9 @@ async def get_mr_pipelines(
 ) -> list[dict]:
     """Return pipelines for a merge request, most recent first."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/pipelines"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
     return resp.json()
 
 
@@ -530,36 +661,36 @@ async def get_pipeline_jobs(
         "include_retried": "true",
     }
     result = []
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        while True:
-            resp = await client.get(url, headers=_headers(), params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            if not data:
-                break
-            result.extend(data)
-            next_page = resp.headers.get("x-next-page", "")
-            if not next_page:
-                break
-            params["page"] = int(next_page)
+    client = _get_client()
+    while True:
+        resp = await client.get(url, headers=_headers(), params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            break
+        result.extend(data)
+        next_page = resp.headers.get("x-next-page", "")
+        if not next_page:
+            break
+        params["page"] = int(next_page)
     return result
 
 
 async def get_job_trace(project_id: int, job_id: int) -> str:
     """Return a CI job trace as text."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/jobs/{job_id}/trace"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers())
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
     return resp.text
 
 
 async def retry_job(project_id: int, job_id: int) -> dict:
     """Retry a CI job and return the new job payload."""
     url = f"{_base_url()}/api/v4/projects/{project_id}/jobs/{job_id}/retry"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.post(url, headers=_headers())
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.post(url, headers=_headers(), timeout=30)
+    resp.raise_for_status()
     return resp.json()
 
 
@@ -567,7 +698,7 @@ async def get_file_bytes(project_id: int, file_path: str, ref: str) -> bytes:
     """Return repository file content as raw bytes."""
     encoded_path = quote(file_path, safe="")
     url = f"{_base_url()}/api/v4/projects/{project_id}/repository/files/{encoded_path}/raw"
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.get(url, headers=_headers(), params={"ref": ref})
-        resp.raise_for_status()
+    client = _get_client()
+    resp = await client.get(url, headers=_headers(), params={"ref": ref}, timeout=30)
+    resp.raise_for_status()
     return resp.content

@@ -44,6 +44,14 @@
              class="h-4 w-4 rounded border-slate-600 bg-slate-900 text-blue-600 focus:ring-blue-500">
       <span>Загружать diff-статистику</span>
     </label>
+    <button onclick="clearCacheAndCompare()" id="btnRefresh"
+            class="inline-flex items-center gap-1.5 text-sm text-slate-400 hover:text-white px-3 py-2 rounded-lg hover:bg-slate-700 transition-colors"
+            title="Очистить кэш и обновить данные">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+      </svg>
+      Обновить
+    </button>
   </div>
 </div>
 
@@ -120,6 +128,26 @@ function parseMrInput(raw) {
     const n = parseInt(s.replace(/[^0-9]/g, ''), 10);
     return isNaN(n) || n <= 0 ? null : n;
   }).filter(n => n !== null);
+}
+
+async function clearCacheAndCompare() {
+  const btnRefresh = document.getElementById("btnRefresh");
+  const originalText = btnRefresh.innerHTML;
+  btnRefresh.disabled = true;
+  btnRefresh.innerHTML = `<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Очистка...`;
+
+  try {
+    const resp = await fetch("/api/compare/clear-cache", { method: "POST" });
+    if (!resp.ok) throw new Error("Failed to clear cache");
+  } catch (e) {
+    console.warn("Failed to clear cache:", e);
+  } finally {
+    btnRefresh.disabled = false;
+    btnRefresh.innerHTML = originalText;
+  }
+
+  // Run compare after clearing cache
+  await runCompare();
 }
 
 async function runCompare() {
