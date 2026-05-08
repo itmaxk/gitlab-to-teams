@@ -8,12 +8,20 @@ from services import gitlab_client
 
 
 class _FakeResponse:
-    def __init__(self, *, json_data=None, text="", content=b"", status_code=200):
+    def __init__(
+        self,
+        *,
+        json_data=None,
+        text="",
+        content=b"",
+        status_code=200,
+        headers=None,
+    ):
         self._json_data = json_data
         self.text = text
         self.content = content
         self.status_code = status_code
-        self.headers = {}
+        self.headers = headers or {}
 
     def json(self):
         return self._json_data
@@ -95,6 +103,31 @@ index 1111111..2222222 100644
     assert len(result["changes"]) == 2
     assert result["changes"][0]["diff"]
     assert result["changes"][1]["diff"] == "@@ -1 +1 @@\n-before\n+after"
+
+
+def test_get_merge_requests_follows_pagination(monkeypatch):
+    responses = [
+        _FakeResponse(
+            json_data=[{"iid": 1}],
+            headers={"x-next-page": "2"},
+        ),
+        _FakeResponse(
+            json_data=[{"iid": 2}],
+            headers={"x-next-page": ""},
+        ),
+    ]
+
+    monkeypatch.setattr(gitlab_client, "_base_url", lambda: "https://gitlab.example.test")
+    monkeypatch.setattr(gitlab_client, "_headers", lambda: {})
+    monkeypatch.setattr(
+        gitlab_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: _FakeAsyncClient(responses),
+    )
+
+    result = asyncio.run(gitlab_client.get_merge_requests(1, state="opened"))
+
+    assert [mr["iid"] for mr in result] == [1, 2]
 
 
 def test_parse_raw_diffs_extracts_body_by_file_pair():

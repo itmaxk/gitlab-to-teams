@@ -38,6 +38,16 @@ def test_should_retry_trace_when_error_follows_marker():
     assert should_retry_config_job_trace(trace) is True
 
 
+def test_should_retry_trace_when_tls_socket_disconnect_error_present():
+    trace = (
+        "yarn install\n"
+        "error Error: Client network socket disconnected before secure TLS "
+        "connection was established\n"
+        "ERROR: Job failed: exit code 1\n"
+    )
+    assert should_retry_config_job_trace(trace) is True
+
+
 def test_should_not_retry_trace_when_other_output_follows_marker():
     trace = "[5/5] Building fresh packages...\nDone in 3.2s\nERROR: Job failed"
     assert should_retry_config_job_trace(trace) is False

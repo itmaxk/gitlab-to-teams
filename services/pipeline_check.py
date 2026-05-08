@@ -7,6 +7,10 @@ from services.gitlab_client import get_job_trace, get_mr_pipelines, get_pipeline
 logger = logging.getLogger(__name__)
 
 CONFIG_BUILD_MARKER = "[5/5] Building fresh packages..."
+TLS_SOCKET_DISCONNECT_ERROR = (
+    "error Error: Client network socket disconnected before secure TLS connection "
+    "was established"
+)
 DEFAULT_RETRY_JOB_NAMES = ("config:check-uncommitted", "config:validate")
 _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
@@ -70,6 +74,9 @@ def _normalize_trace(trace: str) -> str:
 def should_retry_config_job_trace(trace: str) -> bool:
     """Return True when the trace stops at the fresh packages marker."""
     normalized = _normalize_trace(trace)
+    if TLS_SOCKET_DISCONNECT_ERROR in normalized:
+        return True
+
     marker_index = normalized.rfind(CONFIG_BUILD_MARKER)
     if marker_index < 0:
         return False

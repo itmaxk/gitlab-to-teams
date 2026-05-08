@@ -296,6 +296,7 @@ async def poll_once(rules: list[dict]):
             ]
 
             total_matched = 0
+            poll_notes: list[str] = []
             mr_target_branch = mr.get("target_branch", "") or branch
 
             for tc_rule in title_check_rules:
@@ -390,10 +391,31 @@ async def poll_once(rules: list[dict]):
                         retry_rule["id"],
                     )
                     total_matched += len(retry_result.retried)
+                    if retry_result.retried:
+                        retried_jobs = ", ".join(
+                            str(item.get("job_name") or item.get("job_id"))
+                            for item in retry_result.retried
+                        )
+                        poll_notes.append(f"retried jobs: {retried_jobs}")
+                    if retry_result.skipped:
+                        skipped_jobs = ", ".join(
+                            f"{item.get('job_name')}:{item.get('reason')}"
+                            for item in retry_result.skipped
+                        )
+                        poll_notes.append(f"skipped jobs: {skipped_jobs}")
+                    if retry_result.checked == 0:
+                        poll_notes.append(
+                            f"no failed target jobs: {', '.join(job_names)}"
+                        )
+                    if retry_result.errors:
+                        poll_notes.append(
+                            f"retry errors: {', '.join(retry_result.errors)}"
+                        )
                 except Exception as e:
                     logger.error(
                         "Pipeline job retry check failed for MR !%s: %s", mr_iid, e
                     )
+                    poll_notes.append(f"pipeline job retry error: {e}")
 
             rest_rule_ids = [
                 rid for rid in pending_rule_ids
@@ -404,7 +426,12 @@ async def poll_once(rules: list[dict]):
             if not rest_rule_ids:
                 try:
                     _log_polled_mr(
-                        mr, 0, len(pending_rule_ids), total_matched, True
+                        mr,
+                        0,
+                        len(all_rule_ids),
+                        total_matched,
+                        True,
+                        "; ".join(poll_notes),
                     )
                 except Exception as e:
                     logger.error("Failed to log polled MR !%s: %s", mr_iid, e)
@@ -499,7 +526,12 @@ async def poll_once(rules: list[dict]):
 
             try:
                 _log_polled_mr(
-                    mr, len(changed_files), len(pending_rule_ids), total_matched, True
+                    mr,
+                    len(changed_files),
+                    len(all_rule_ids),
+                    total_matched,
+                    True,
+                    "; ".join(poll_notes),
                 )
             except Exception as e:
                 logger.error("Failed to log polled MR !%s: %s", mr_iid, e)

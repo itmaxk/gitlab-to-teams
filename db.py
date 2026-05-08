@@ -684,7 +684,7 @@ def seed_default_rule():
         {
             "seed_key": "pipeline_config_retry_fresh_packages",
             "name": "Retry config jobs after fresh packages stall",
-            "description": "Retries failed config:check-uncommitted and config:validate jobs when their trace stops after [5/5] Building fresh packages...",
+            "description": "Retries failed config:check-uncommitted and config:validate jobs when their trace stops after [5/5] Building fresh packages... or has a TLS socket disconnect error.",
             "file_pattern": "*",
             "content_match": "config:check-uncommitted,config:validate",
             "match_type": "contains",
