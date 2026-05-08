@@ -188,3 +188,95 @@ def test_get_mr_diff_builds_synthetic_diff_when_gitlab_returns_nothing(monkeypat
     assert "@@ -1 +1 @@" in result["changes"][0]["diff"]
     assert "-before = 1" in result["changes"][0]["diff"]
     assert "+before = 2" in result["changes"][0]["diff"]
+
+
+def test_get_mr_diff_synthetic_fallback_uses_diff_refs_instead_of_branch_names(monkeypatch):
+    changes_payload = {
+        "title": "Merged MR with deleted source branch",
+        "source_branch": "feature/deleted-after-merge",
+        "target_branch": "master",
+        "sha": "sha-from-mr",
+        "diff_refs": {
+            "base_sha": "base-sha",
+            "head_sha": "head-sha",
+        },
+        "changes": [
+            {
+                "old_path": "config.json",
+                "new_path": "config.json",
+                "diff": "",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+
+    responses = [
+        _FakeResponse(json_data=changes_payload),
+        _FakeResponse(text=""),
+        _FakeResponse(content=b"old\n"),
+        _FakeResponse(content=b"new\n"),
+    ]
+
+    monkeypatch.setattr(
+        gitlab_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: _FakeAsyncClient(responses),
+    )
+
+    result = asyncio.run(gitlab_client.get_mr_diff(1, 14))
+
+    assert result["source_ref"] == "head-sha"
+    assert result["changes"][0]["diff"]
+    assert responses[2].params == {"ref": "base-sha"}
+    assert responses[3].params == {"ref": "head-sha"}
+
+
+def test_get_mr_diff_synthetic_fallback_skips_missing_side_for_added_and_deleted_files(monkeypatch):
+    changes_payload = {
+        "title": "Added and deleted files",
+        "source_branch": "feature/change-files",
+        "target_branch": "master",
+        "diff_refs": {
+            "base_sha": "base-sha",
+            "head_sha": "head-sha",
+        },
+        "changes": [
+            {
+                "old_path": "new.json",
+                "new_path": "new.json",
+                "diff": "",
+                "new_file": True,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+            {
+                "old_path": "old.json",
+                "new_path": "old.json",
+                "diff": "",
+                "new_file": False,
+                "deleted_file": True,
+                "renamed_file": False,
+            },
+        ],
+    }
+
+    responses = [
+        _FakeResponse(json_data=changes_payload),
+        _FakeResponse(text=""),
+        _FakeResponse(content=b"new file\n"),
+        _FakeResponse(content=b"old file\n"),
+    ]
+
+    monkeypatch.setattr(
+        gitlab_client.httpx,
+        "AsyncClient",
+        lambda **kwargs: _FakeAsyncClient(responses),
+    )
+
+    result = asyncio.run(gitlab_client.get_mr_diff(1, 15))
+
+    assert len(result["changes"]) == 2
+    assert responses[2].params == {"ref": "head-sha"}
+    assert responses[3].params == {"ref": "base-sha"}

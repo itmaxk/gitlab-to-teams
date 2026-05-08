@@ -410,6 +410,21 @@ def _build_synthetic_diff(
     return "@@ -0,0 +0,0 @@\n # Synthetic fallback: file changed but GitLab did not provide a diff"
 
 
+def _diff_fallback_refs(data: dict) -> tuple[str, str]:
+    diff_refs = data.get("diff_refs") or {}
+    old_ref = (
+        diff_refs.get("base_sha")
+        or diff_refs.get("start_sha")
+        or data.get("target_branch", "")
+    )
+    new_ref = (
+        diff_refs.get("head_sha")
+        or data.get("sha")
+        or data.get("source_branch", "")
+    )
+    return old_ref, new_ref
+
+
 async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
     """Return MR metadata plus per-file diffs.
 
@@ -455,8 +470,13 @@ async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
                 continue
             old_path = change.get("old_path", "")
             new_path = change.get("new_path", "")
-            old_bytes = await _get_file_bytes_or_none(client, project_id, old_path, data.get("target_branch", ""))
-            new_bytes = await _get_file_bytes_or_none(client, project_id, new_path, data.get("source_branch", ""))
+            old_ref, new_ref = _diff_fallback_refs(data)
+            old_bytes = None
+            new_bytes = None
+            if not change.get("new_file"):
+                old_bytes = await _get_file_bytes_or_none(client, project_id, old_path, old_ref)
+            if not change.get("deleted_file"):
+                new_bytes = await _get_file_bytes_or_none(client, project_id, new_path, new_ref)
             change["diff"] = _build_synthetic_diff(old_path, new_path, old_bytes, new_bytes)
 
     return {
