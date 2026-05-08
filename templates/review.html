@@ -944,6 +944,7 @@ async function loadPrompt() {
     applyProjectContextSettings(data);
     reviewInstructionItems = data.review_instruction_items || [];
     renderInstructionList();
+    await loadProjectProfiles();
   } catch (e) {}
 }
 
