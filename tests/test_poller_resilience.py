@@ -287,7 +287,7 @@ def test_poll_once_title_check_reports_changed_invalid_open_title(tmp_path, monk
 
     assert len(discussions) == 1
     assert discussions[0][0] == 125
-    assert "JIRA-TASK: Description with some text" in discussions[0][1]
+    assert "JIRA-TASK: Short description" in discussions[0][1]
 
 
 def test_poll_once_title_check_resolves_thread_when_title_fixed(tmp_path, monkeypatch):

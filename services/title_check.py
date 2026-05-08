@@ -1,6 +1,6 @@
 import re
 
-_TITLE_ERROR_MSG = "MR Title должен иметь формат JIRA-TASK: Description with some text"
+_TITLE_ERROR_MSG = "MR Title должен иметь формат JIRA-TASK: Short description"
 _JIRA_TASK_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+: \S.*")
 _CYRILLIC_RE = re.compile(r"[\u0400-\u04FF]")
 _RELEASE_NUM_RE = re.compile(r"(\d+)")

@@ -613,7 +613,7 @@ def seed_default_rule():
         {
             "seed_key": "mr_title_check",
             "name": "Проверка заголовка MR",
-            "description": "Проверяет формат заголовка MR: JIRA-TASK: Description. Заголовок не должен содержать русские буквы. Для release-веток требует номер релиза в конце заголовка. Пропускает MR со статусом Draft.",
+            "description": "Проверяет формат заголовка MR: JIRA-TASK: Short description. Заголовок не должен содержать русские буквы. Для release-веток требует номер релиза в конце заголовка. Пропускает MR со статусом Draft.",
             "file_pattern": "*",
             "content_match": "",
             "match_type": "contains",

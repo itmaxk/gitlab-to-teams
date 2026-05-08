@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from services.title_check import is_title_valid
 
-ERROR_MSG = "MR Title должен иметь формат JIRA-TASK: Description with some text"
+ERROR_MSG = "MR Title должен иметь формат JIRA-TASK: Short description"
 
 
 def test_valid_jira_task_title():
