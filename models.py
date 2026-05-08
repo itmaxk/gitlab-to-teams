@@ -118,11 +118,29 @@ class ReviewFinding(BaseModel):
 class ReviewSettingsUpdate(BaseModel):
     system_prompt: str
     review_instructions: str = ""
+    active_project_profile_id: int | None = None
     review_project_root: str = ""
     review_project_config_path: str = "configuration/@config-rgsl"
     review_sql_target: str = "PostgreSQL 17.5+"
     review_graph_context_enabled: bool = True
     review_graph_context_max_files: int = Field(default=12, ge=1, le=50)
+
+
+class ReviewProjectProfileRequest(BaseModel):
+    name: str
+    description: str = ""
+    enabled: bool = True
+    is_default: bool = False
+    project_root: str = ""
+    config_path: str = "configuration/@config-rgsl"
+    sql_target: str = "PostgreSQL 17.5+"
+    graph_context_enabled: bool = True
+    graph_context_max_files: int = Field(default=12, ge=1, le=50)
+    profile_json: dict
+
+
+class ReviewProjectProfilePreviewRequest(BaseModel):
+    changed_paths: list[str]
 
 
 class ReviewInstructionItemCreate(BaseModel):

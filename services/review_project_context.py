@@ -15,6 +15,139 @@ DEFAULT_CONFIG_PATH = "configuration/@config-rgsl"
 DEFAULT_SQL_TARGET = "PostgreSQL 17.5+"
 DEFAULT_MAX_RELATED_FILES = 12
 RELATED_FILE_MAX_CHARS = 12000
+ADINSURE_PROFILE_SEED_KEY = "adinsure_implementation"
+
+
+def default_adinsure_profile_json() -> dict:
+    return {
+        "version": 1,
+        "prompt_title": "AdInsure constructor graph context",
+        "prompt_intro": [
+            "Treat this project as a configuration constructor: changed files can break linked configuration nodes.",
+            "Validate links between dataSource, dataProvider, etlService, route, integrationService, sinkGroup, document, component, view, printoutRelation, notification, and JS package imports.",
+        ],
+        "constructor_checks": [
+            "Check broken configuration references, missing sink/source mappings, missing dataProvider/dataSource links, and invalid document state/transition links.",
+            "For SQL review use the configured SQL target from the graph context. Do not require multi-db compatibility unless explicitly requested.",
+            "Cross-check schemas, mappings, UI/export fields, postgres query parameters, printout source mappings, notification templates, and JS package imports when related files are provided.",
+        ],
+        "index": {
+            "config_glob": "**/configuration.json",
+            "kind_segment": 1,
+            "code_segment": 2,
+            "code_segment_by_kind": {
+                "dataProvider": 3,
+                "route": 3,
+            },
+        },
+        "preferred_files": [
+            "configuration.json",
+            "inputSchema.json",
+            "resultSchema.json",
+            "outputSchema.json",
+            "dataSchema.json",
+            "inputMapping.js",
+            "resultMapping.js",
+            "mapping.js",
+            "apply.js",
+            "Rule.js",
+            "Premium.js",
+            "query.postgres.handlebars",
+            "UI/configuration.json",
+            "UI/UiSchema.json",
+            "UI/ActionsContent.json",
+            "UI/ResultsContent.json",
+            "UI/FiltersContent.json",
+            "translation/translation.csv",
+        ],
+        "text_extensions": [".json", ".js", ".handlebars", ".csv", ".html", ".txt", ".md"],
+        "js_import": {
+            "enabled": True,
+            "regex": r"@config-(?:rgsl|system)/[A-Za-z0-9_-]+/[A-Za-z0-9_./-]+",
+            "path_prefix": "configuration",
+            "extension": ".js",
+        },
+        "rules": [
+            {
+                "type": "json_field_link",
+                "source_kinds": ["dataSource"],
+                "field": "dataProvider.codeName",
+                "target_kind": "dataProvider",
+                "relation": "dataProvider for {code_name}",
+                "required": True,
+            },
+            {
+                "type": "reverse_json_field_link",
+                "source_kinds": ["dataProvider"],
+                "target_kinds": ["dataSource"],
+                "field": "dataProvider.codeName",
+                "relation": "dataSource using {code_name}",
+            },
+            {
+                "type": "json_field_link",
+                "source_kinds": ["view", "dataExport"],
+                "field": "dataSource",
+                "target_kind": "dataSource",
+                "relation": "{kind}/{code_name} dataSource",
+                "required": True,
+            },
+            {
+                "type": "json_field_link",
+                "source_kinds": ["view", "dataExport", "printoutRelation"],
+                "field": "additionalDataSources",
+                "target_kind": "dataSource",
+                "relation": "{kind}/{code_name} additionalDataSource",
+            },
+            {
+                "type": "sink_flow",
+                "source_kinds": ["etlService", "route", "integrationService", "sinkGroup"],
+                "main_data_source_field": "mainDataSource",
+                "source_mapping_dir": "sourceMappings",
+                "sink_sections": ["sinks", "completionSinks", "errorSinks"],
+                "sink_mapping_dir": "sinkMappings",
+            },
+            {
+                "type": "component_links",
+                "source_kinds": ["document", "masterEntity", "view", "component"],
+                "field": "components",
+            },
+            {
+                "type": "component_owners",
+                "source_kinds": ["component"],
+                "owner_kinds": ["document", "masterEntity", "view"],
+                "field": "components",
+            },
+            {
+                "type": "json_field_link",
+                "source_kinds": ["printoutRelation"],
+                "field": "targetPrintout",
+                "target_kind": "printout",
+                "relation": "targetPrintout for {code_name}",
+                "required": True,
+            },
+            {
+                "type": "json_field_link_any",
+                "source_kinds": ["printoutRelation"],
+                "field": "sourceConfigurationName",
+                "target_kinds": ["document", "masterEntity"],
+                "relation": "source configuration for {code_name}",
+                "required": True,
+            },
+            {
+                "type": "named_directory_link",
+                "source_kinds": ["printoutRelation"],
+                "field": "additionalDataSources",
+                "directory": "sourceMappings",
+                "relation": "printout sourceMapping {name} for {code_name}",
+            },
+            {
+                "type": "template_files",
+                "source_kinds": ["notification"],
+                "field": "channel.templates",
+                "relation": "notification template for {code_name}",
+            },
+        ],
+    }
 
 
 @dataclass(frozen=True)
@@ -24,6 +157,9 @@ class ReviewProjectSettings:
     sql_target: str = DEFAULT_SQL_TARGET
     graph_context_enabled: bool = True
     graph_context_max_files: int = DEFAULT_MAX_RELATED_FILES
+    profile_id: int | None = None
+    profile_name: str = ""
+    profile_json: dict | None = None
 
 
 @dataclass
@@ -56,11 +192,16 @@ class ProjectGraphContext:
             return ""
 
         parts = [
-            "## AdInsure constructor graph context",
+            f"## {self.settings.profile_json.get('prompt_title') if self.settings.profile_json else 'Project graph context'}",
             f"- SQL target: {self.settings.sql_target}",
-            "- Treat this project as a configuration constructor: changed files can break linked configuration nodes.",
-            "- Validate links between dataSource, dataProvider, etlService, route, integrationService, sinkGroup, document, component, view, printoutRelation, notification, and JS package imports.",
         ]
+        if self.settings.profile_name:
+            parts.append(f"- Profile: {self.settings.profile_name}")
+        profile = self.settings.profile_json or {}
+        parts.extend(f"- {line}" for line in profile.get("prompt_intro", []))
+        if profile.get("constructor_checks"):
+            parts.append("\n### Profile review rules")
+            parts.extend(f"- {line}" for line in profile.get("constructor_checks", []))
         if self.notes:
             parts.append("\n### Graph notes")
             parts.extend(f"- {note}" for note in self.notes[:20])
@@ -81,6 +222,8 @@ class ProjectGraphContext:
             "project_root": self.settings.project_root,
             "config_path": self.settings.config_path,
             "sql_target": self.settings.sql_target,
+            "profile_id": self.settings.profile_id,
+            "profile_name": self.settings.profile_name,
             "related_files": [
                 {"path": item.path, "relation": item.relation}
                 for item in self.related_files
@@ -134,11 +277,27 @@ def get_review_project_settings() -> ReviewProjectSettings:
     row = conn.execute(
         """
         SELECT review_project_root, review_project_config_path, review_sql_target,
-               review_graph_context_enabled, review_graph_context_max_files
+               review_graph_context_enabled, review_graph_context_max_files,
+               active_project_profile_id
         FROM review_settings
         WHERE id = 1
         """
     ).fetchone()
+    profile_row = None
+    if row and row["active_project_profile_id"]:
+        profile_row = conn.execute(
+            "SELECT * FROM review_project_profiles WHERE id = ?",
+            (row["active_project_profile_id"],),
+        ).fetchone()
+    if not profile_row:
+        profile_row = conn.execute(
+            """
+            SELECT * FROM review_project_profiles
+            WHERE enabled = 1
+            ORDER BY is_default DESC, id ASC
+            LIMIT 1
+            """
+        ).fetchone()
     conn.close()
     if not row:
         return ReviewProjectSettings()
@@ -149,13 +308,87 @@ def get_review_project_settings() -> ReviewProjectSettings:
     except (TypeError, ValueError):
         max_files = DEFAULT_MAX_RELATED_FILES
 
+    profile_json = _parse_profile_json(profile_row["profile_json"]) if profile_row else default_adinsure_profile_json()
     return ReviewProjectSettings(
-        project_root=(row["review_project_root"] or "").strip(),
-        config_path=(row["review_project_config_path"] or DEFAULT_CONFIG_PATH).strip(),
-        sql_target=(row["review_sql_target"] or DEFAULT_SQL_TARGET).strip(),
-        graph_context_enabled=bool(row["review_graph_context_enabled"]),
-        graph_context_max_files=max_files,
+        project_root=((profile_row["project_root"] if profile_row else "") or row["review_project_root"] or "").strip(),
+        config_path=((profile_row["config_path"] if profile_row else "") or row["review_project_config_path"] or DEFAULT_CONFIG_PATH).strip(),
+        sql_target=((profile_row["sql_target"] if profile_row else "") or row["review_sql_target"] or DEFAULT_SQL_TARGET).strip(),
+        graph_context_enabled=bool(profile_row["graph_context_enabled"] if profile_row else row["review_graph_context_enabled"]),
+        graph_context_max_files=int(profile_row["graph_context_max_files"] if profile_row else max_files),
+        profile_id=profile_row["id"] if profile_row else None,
+        profile_name=profile_row["name"] if profile_row else "",
+        profile_json=profile_json,
     )
+
+
+def validate_profile_json(profile_json: dict) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(profile_json, dict):
+        return ["profile_json must be a JSON object"]
+    if not isinstance(profile_json.get("index"), dict):
+        errors.append("index object is required")
+    if not isinstance(profile_json.get("preferred_files", []), list):
+        errors.append("preferred_files must be an array")
+    if not isinstance(profile_json.get("rules", []), list):
+        errors.append("rules must be an array")
+    allowed_rule_types = {
+        "json_field_link",
+        "json_field_link_any",
+        "reverse_json_field_link",
+        "sink_flow",
+        "component_links",
+        "component_owners",
+        "named_directory_link",
+        "template_files",
+    }
+    for index, rule in enumerate(profile_json.get("rules", [])):
+        if not isinstance(rule, dict):
+            errors.append(f"rules[{index}] must be an object")
+            continue
+        rule_type = rule.get("type")
+        if rule_type not in allowed_rule_types:
+            errors.append(f"rules[{index}].type is unknown: {rule_type}")
+        if "source_kinds" in rule and not isinstance(rule.get("source_kinds"), list):
+            errors.append(f"rules[{index}].source_kinds must be an array")
+    return errors
+
+
+def preview_project_graph_context(profile_id: int, changed_paths: Iterable[str]) -> ProjectGraphContext:
+    settings = get_review_project_settings_by_profile(profile_id)
+    return build_project_graph_context(changed_paths, settings)
+
+
+def get_review_project_settings_by_profile(profile_id: int) -> ReviewProjectSettings:
+    conn = get_db()
+    row = conn.execute("SELECT * FROM review_project_profiles WHERE id = ?", (profile_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise ValueError("Project profile not found")
+    profile_json = _parse_profile_json(row["profile_json"])
+    return ReviewProjectSettings(
+        project_root=(row["project_root"] or "").strip(),
+        config_path=(row["config_path"] or DEFAULT_CONFIG_PATH).strip(),
+        sql_target=(row["sql_target"] or DEFAULT_SQL_TARGET).strip(),
+        graph_context_enabled=bool(row["graph_context_enabled"]),
+        graph_context_max_files=max(1, min(50, int(row["graph_context_max_files"] or DEFAULT_MAX_RELATED_FILES))),
+        profile_id=row["id"],
+        profile_name=row["name"] or "",
+        profile_json=profile_json,
+    )
+
+
+def _parse_profile_json(raw: str | dict | None) -> dict:
+    if isinstance(raw, dict):
+        profile_json = raw
+    else:
+        try:
+            profile_json = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            logger.warning("Invalid review project profile JSON, using AdInsure defaults")
+            profile_json = {}
+    if validate_profile_json(profile_json):
+        return default_adinsure_profile_json()
+    return profile_json
 
 
 def build_project_graph_context(
@@ -184,7 +417,8 @@ def build_project_graph_context(
             [],
         )
 
-    index = _build_config_index(root, config_root)
+    profile = settings.profile_json or default_adinsure_profile_json()
+    index = _build_config_index(root, config_root, profile)
     related: dict[str, RelatedFile] = {}
     unresolved: list[str] = []
     notes: list[str] = []
@@ -194,9 +428,9 @@ def build_project_graph_context(
         node = index.find_owner(rel_path)
         if node:
             notes.append(f"{rel_path} belongs to {node.kind}/{node.code_name}")
-            _add_node_context(index, node, related, unresolved, f"owner of changed file {rel_path}")
-            _add_constructor_links(index, node, related, unresolved)
-        _add_js_import_context(root, rel_path, related, unresolved)
+            _add_node_context(index, node, related, unresolved, f"owner of changed file {rel_path}", profile)
+            _add_constructor_links(index, node, related, unresolved, profile)
+        _add_js_import_context(root, rel_path, related, unresolved, profile)
 
     return ProjectGraphContext(
         settings=settings,
@@ -206,16 +440,22 @@ def build_project_graph_context(
     )
 
 
-def _build_config_index(root: Path, config_root: Path) -> ConfigIndex:
+def _build_config_index(root: Path, config_root: Path, profile: dict | None = None) -> ConfigIndex:
+    profile = profile or default_adinsure_profile_json()
+    index_config = profile.get("index", {})
+    config_glob = index_config.get("config_glob", "**/configuration.json")
+    kind_segment = int(index_config.get("kind_segment", 1))
+    default_code_segment = int(index_config.get("code_segment", 2))
+    code_segment_by_kind = index_config.get("code_segment_by_kind", {})
     index = ConfigIndex(root, config_root)
-    for config_path in config_root.rglob("configuration.json"):
+    for config_path in config_root.glob(config_glob):
         rel_to_config = config_path.relative_to(config_root).as_posix()
         parts = rel_to_config.split("/")
-        if len(parts) < 3:
+        if len(parts) <= max(kind_segment, default_code_segment):
             continue
         package = parts[0]
-        kind = parts[1]
-        code_index = 3 if kind in {"dataProvider", "route"} and len(parts) >= 4 else 2
+        kind = parts[kind_segment]
+        code_index = int(code_segment_by_kind.get(kind, default_code_segment))
         if len(parts) <= code_index:
             continue
         code_name = parts[code_index]
@@ -245,173 +485,60 @@ def _add_constructor_links(
     node: ConfigNode,
     related: dict[str, RelatedFile],
     unresolved: list[str],
+    profile: dict | None = None,
 ) -> None:
+    profile = profile or default_adinsure_profile_json()
     config = node.config if isinstance(node.config, dict) else {}
-
-    if node.kind == "dataSource":
-        provider = config.get("dataProvider") or {}
-        provider_name = provider.get("codeName")
-        provider_node = index.find("dataProvider", provider_name)
-        if provider_node:
-            _add_node_context(index, provider_node, related, unresolved, f"dataProvider for {node.code_name}")
-        elif provider_name:
-            unresolved.append(f"{node.rel_path}: dataProvider {provider_name} not found")
-
-    if node.kind == "dataProvider":
-        for data_source in index.nodes:
-            if data_source.kind != "dataSource":
-                continue
-            provider = data_source.config.get("dataProvider") if isinstance(data_source.config, dict) else None
-            if isinstance(provider, dict) and provider.get("codeName") == node.code_name:
-                _add_node_context(index, data_source, related, unresolved, f"dataSource using {node.code_name}")
-
-    if node.kind in {"view", "dataExport"}:
-        _add_linked_node(
-            index,
-            related,
-            unresolved,
-            "dataSource",
-            config.get("dataSource"),
-            f"{node.kind}/{node.code_name} dataSource",
-            node.rel_path,
-        )
-        for data_source_name in _extract_names(config.get("additionalDataSources")):
-            _add_linked_node(
-                index,
-                related,
-                unresolved,
-                "dataSource",
-                data_source_name,
-                f"{node.kind}/{node.code_name} additionalDataSource",
-                node.rel_path,
-            )
-
-    if node.kind in {"etlService", "route", "integrationService", "sinkGroup"}:
-        _add_linked_node(
-            index,
-            related,
-            unresolved,
-            "dataSource",
-            config.get("mainDataSource"),
-            f"{node.kind}/{node.code_name} mainDataSource",
-            node.rel_path,
-        )
-        if config.get("mainDataSource"):
-            _add_existing_dir(
-                index.root,
-                node.abs_dir / "sourceMappings" / str(config.get("mainDataSource")),
-                related,
-                f"sourceMapping for {node.code_name}",
-            )
-        for sink in _iter_sinks(config):
-            sink_name = sink.get("name")
-            if sink_name:
-                mapping_dir = node.abs_dir / "sinkMappings" / str(sink_name)
-                if mapping_dir.exists():
-                    _add_existing_dir(index.root, mapping_dir, related, f"sinkMapping {sink_name} for {node.code_name}")
-                else:
-                    unresolved.append(f"{node.rel_path}: sinkMapping {sink_name} not found")
-            _add_linked_node(
-                index,
-                related,
-                unresolved,
-                "sinkGroup",
-                sink.get("ref"),
-                f"ref sinkGroup for {node.code_name}",
-                node.rel_path,
-            )
-            fetch = sink.get("fetch") if isinstance(sink.get("fetch"), dict) else {}
-            fetch_config = fetch.get("configuration") if isinstance(fetch.get("configuration"), dict) else {}
-            _add_linked_node(
-                index,
-                related,
-                unresolved,
-                "dataSource",
-                fetch_config.get("name"),
-                f"fetch dataSource for {node.code_name}",
-                node.rel_path,
-            )
-            for key, kinds in (
-                ("document", ("document",)),
-                ("masterEntity", ("masterEntity",)),
-                ("notification", ("notification",)),
-            ):
-                target = sink.get(key) if isinstance(sink.get(key), dict) else {}
-                target_config = target.get("configuration") if isinstance(target.get("configuration"), dict) else {}
-                target_name = target_config.get("name") or target.get("name")
-                target_node = index.find_any(target_name, kinds)
-                if target_node:
-                    _add_node_context(index, target_node, related, unresolved, f"{key} sink target for {node.code_name}")
-            transition = sink.get("documentTransition") if isinstance(sink.get("documentTransition"), dict) else {}
-            transition_config = transition.get("transition") if isinstance(transition.get("transition"), dict) else {}
-            transition_document = transition_config.get("configurationName")
-            transition_node = index.find_any(transition_document, ("document", "masterEntity"))
-            if transition_node:
-                _add_node_context(index, transition_node, related, unresolved, f"documentTransition target for {node.code_name}")
-
-    if node.kind in {"document", "masterEntity", "view", "component"}:
-        for component_name in _extract_names(config.get("components")):
-            _add_linked_node(
-                index,
-                related,
-                unresolved,
-                "component",
-                component_name,
-                f"{node.kind}/{node.code_name} component",
-                node.rel_path,
-            )
-
-    if node.kind == "component":
-        for owner in index.nodes:
-            if owner.kind not in {"document", "masterEntity", "view"}:
-                continue
-            if node.code_name in _extract_names(owner.config.get("components")):
-                _add_node_context(index, owner, related, unresolved, f"owner using component {node.code_name}")
-
-    if node.kind == "printoutRelation":
-        _add_linked_node(
-            index,
-            related,
-            unresolved,
-            "printout",
-            config.get("targetPrintout"),
-            f"targetPrintout for {node.code_name}",
-            node.rel_path,
-        )
-        source_node = index.find_any(config.get("sourceConfigurationName"), ("document", "masterEntity"))
-        if source_node:
-            _add_node_context(index, source_node, related, unresolved, f"source configuration for {node.code_name}")
-        elif config.get("sourceConfigurationName"):
-            unresolved.append(f"{node.rel_path}: sourceConfigurationName {config.get('sourceConfigurationName')} not found")
-        for data_source_name in _extract_names(config.get("additionalDataSources")):
-            _add_linked_node(
-                index,
-                related,
-                unresolved,
-                "dataSource",
-                data_source_name,
-                f"printoutRelation additionalDataSource for {node.code_name}",
-                node.rel_path,
-            )
-            _add_existing_dir(
-                index.root,
-                node.abs_dir / "sourceMappings" / data_source_name,
-                related,
-                f"printout sourceMapping {data_source_name} for {node.code_name}",
-            )
-
-    if node.kind == "notification":
-        channel = config.get("channel") if isinstance(config.get("channel"), dict) else {}
-        templates = channel.get("templates") if isinstance(channel.get("templates"), dict) else {}
-        for template_path in templates.values():
-            if isinstance(template_path, str):
-                _add_existing_file(
-                    index.root,
-                    node.abs_dir / template_path,
+    for rule in profile.get("rules", []):
+        if not _rule_applies(rule, node):
+            continue
+        rule_type = rule.get("type")
+        if rule_type == "json_field_link":
+            for target_name in _extract_names(_get_path_value(config, rule.get("field", ""))):
+                _add_linked_node(
+                    index,
                     related,
-                    f"notification template for {node.code_name}",
+                    unresolved,
+                    str(rule.get("target_kind", "")),
+                    target_name,
+                    _format_relation(rule.get("relation", "{kind}/{code_name} link"), node, target_name),
+                    node.rel_path,
+                    profile,
+                    required=bool(rule.get("required")),
                 )
-
+        elif rule_type == "json_field_link_any":
+            for target_name in _extract_names(_get_path_value(config, rule.get("field", ""))):
+                target_node = index.find_any(target_name, [str(kind) for kind in rule.get("target_kinds", [])])
+                if target_node:
+                    _add_node_context(index, target_node, related, unresolved, _format_relation(rule.get("relation", "{kind}/{code_name} link"), node, target_name), profile)
+                elif rule.get("required"):
+                    unresolved.append(f"{node.rel_path}: {rule.get('field')} {target_name} not found")
+        elif rule_type == "reverse_json_field_link":
+            for target in index.nodes:
+                if target.kind not in rule.get("target_kinds", []):
+                    continue
+                if node.code_name in _extract_names(_get_path_value(target.config, rule.get("field", ""))):
+                    _add_node_context(index, target, related, unresolved, _format_relation(rule.get("relation", "reverse link for {code_name}"), node), profile)
+        elif rule_type == "sink_flow":
+            _add_sink_flow_context(index, node, related, unresolved, rule, profile)
+        elif rule_type == "component_links":
+            for component_name in _extract_names(_get_path_value(config, rule.get("field", "components"))):
+                _add_linked_node(index, related, unresolved, "component", component_name, f"{node.kind}/{node.code_name} component", node.rel_path, profile)
+        elif rule_type == "component_owners":
+            for owner in index.nodes:
+                if owner.kind not in rule.get("owner_kinds", []):
+                    continue
+                if node.code_name in _extract_names(_get_path_value(owner.config, rule.get("field", "components"))):
+                    _add_node_context(index, owner, related, unresolved, f"owner using component {node.code_name}", profile)
+        elif rule_type == "named_directory_link":
+            for name in _extract_names(_get_path_value(config, rule.get("field", ""))):
+                _add_existing_dir(index.root, node.abs_dir / str(rule.get("directory", "")) / name, related, _format_relation(rule.get("relation", "{name} directory for {code_name}"), node, name), profile)
+        elif rule_type == "template_files":
+            templates = _get_path_value(config, rule.get("field", ""))
+            if isinstance(templates, dict):
+                for template_path in templates.values():
+                    if isinstance(template_path, str):
+                        _add_existing_file(index.root, node.abs_dir / template_path, related, _format_relation(rule.get("relation", "template for {code_name}"), node, template_path), profile)
 
 def _add_linked_node(
     index: ConfigIndex,
@@ -421,13 +548,15 @@ def _add_linked_node(
     code_name: str | None,
     relation: str,
     source_path: str,
+    profile: dict | None = None,
+    required: bool = True,
 ) -> None:
     if not code_name:
         return
     linked = index.find(kind, str(code_name))
     if linked:
-        _add_node_context(index, linked, related, unresolved, relation)
-    else:
+        _add_node_context(index, linked, related, unresolved, relation, profile)
+    elif required:
         unresolved.append(f"{source_path}: {kind} {code_name} not found")
 
 
@@ -437,29 +566,12 @@ def _add_node_context(
     related: dict[str, RelatedFile],
     unresolved: list[str],
     relation: str,
+    profile: dict | None = None,
 ) -> None:
-    preferred_names = [
-        "configuration.json",
-        "inputSchema.json",
-        "resultSchema.json",
-        "outputSchema.json",
-        "dataSchema.json",
-        "inputMapping.js",
-        "resultMapping.js",
-        "mapping.js",
-        "apply.js",
-        "Rule.js",
-        "Premium.js",
-        "query.postgres.handlebars",
-        "UI/configuration.json",
-        "UI/UiSchema.json",
-        "UI/ActionsContent.json",
-        "UI/ResultsContent.json",
-        "UI/FiltersContent.json",
-        "translation/translation.csv",
-    ]
+    profile = profile or default_adinsure_profile_json()
+    preferred_names = profile.get("preferred_files", [])
     for name in preferred_names:
-        _add_existing_file(index.root, node.abs_dir / name, related, relation)
+        _add_existing_file(index.root, node.abs_dir / name, related, relation, profile)
 
 
 def _add_existing_dir(
@@ -467,12 +579,13 @@ def _add_existing_dir(
     directory: Path,
     related: dict[str, RelatedFile],
     relation: str,
+    profile: dict | None = None,
 ) -> None:
     if not directory.exists() or not directory.is_dir():
         return
     for path in sorted(directory.rglob("*")):
-        if path.is_file() and _is_text_context_file(path):
-            _add_existing_file(root, path, related, relation)
+        if path.is_file() and _is_text_context_file(path, profile):
+            _add_existing_file(root, path, related, relation, profile)
 
 
 def _add_existing_file(
@@ -480,8 +593,9 @@ def _add_existing_file(
     path: Path,
     related: dict[str, RelatedFile],
     relation: str,
+    profile: dict | None = None,
 ) -> None:
-    if not path.exists() or not path.is_file() or not _is_text_context_file(path):
+    if not path.exists() or not path.is_file() or not _is_text_context_file(path, profile):
         return
     rel_path = path.relative_to(root).as_posix()
     if rel_path in related:
@@ -505,7 +619,12 @@ def _add_js_import_context(
     rel_path: str,
     related: dict[str, RelatedFile],
     unresolved: list[str],
+    profile: dict | None = None,
 ) -> None:
+    profile = profile or default_adinsure_profile_json()
+    js_import = profile.get("js_import", {})
+    if not js_import.get("enabled", True):
+        return
     if not rel_path.endswith(".js"):
         return
     source_path = root / rel_path
@@ -515,10 +634,13 @@ def _add_js_import_context(
         content = source_path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeDecodeError):
         return
-    for import_path in re.findall(r"@config-(?:rgsl|system)/[A-Za-z0-9_-]+/[A-Za-z0-9_./-]+", content):
-        candidate = root / "configuration" / (import_path + ".js")
+    regex = js_import.get("regex", r"@config-(?:rgsl|system)/[A-Za-z0-9_-]+/[A-Za-z0-9_./-]+")
+    path_prefix = js_import.get("path_prefix", "configuration")
+    extension = js_import.get("extension", ".js")
+    for import_path in re.findall(regex, content):
+        candidate = root / path_prefix / (import_path + extension)
         if candidate.exists():
-            _add_existing_file(root, candidate, related, f"JS import used by {rel_path}")
+            _add_existing_file(root, candidate, related, f"JS import used by {rel_path}", profile)
         else:
             unresolved.append(f"{rel_path}: import {import_path} not found in local project")
 
@@ -528,6 +650,78 @@ def _iter_sinks(config: dict) -> Iterable[dict]:
         for item in config.get(section) or []:
             if isinstance(item, dict):
                 yield item
+
+
+def _add_sink_flow_context(
+    index: ConfigIndex,
+    node: ConfigNode,
+    related: dict[str, RelatedFile],
+    unresolved: list[str],
+    rule: dict,
+    profile: dict,
+) -> None:
+    config = node.config if isinstance(node.config, dict) else {}
+    main_data_source = _get_path_value(config, rule.get("main_data_source_field", "mainDataSource"))
+    _add_linked_node(index, related, unresolved, "dataSource", main_data_source, f"{node.kind}/{node.code_name} mainDataSource", node.rel_path, profile, required=False)
+    if main_data_source:
+        _add_existing_dir(index.root, node.abs_dir / str(rule.get("source_mapping_dir", "sourceMappings")) / str(main_data_source), related, f"sourceMapping for {node.code_name}", profile)
+
+    for section in rule.get("sink_sections", ["sinks", "completionSinks", "errorSinks"]):
+        for sink in config.get(section) or []:
+            if not isinstance(sink, dict):
+                continue
+            sink_name = sink.get("name")
+            if sink_name:
+                mapping_dir = node.abs_dir / str(rule.get("sink_mapping_dir", "sinkMappings")) / str(sink_name)
+                if mapping_dir.exists():
+                    _add_existing_dir(index.root, mapping_dir, related, f"sinkMapping {sink_name} for {node.code_name}", profile)
+                else:
+                    unresolved.append(f"{node.rel_path}: sinkMapping {sink_name} not found")
+            _add_linked_node(index, related, unresolved, "sinkGroup", sink.get("ref"), f"ref sinkGroup for {node.code_name}", node.rel_path, profile, required=False)
+            fetch_config = _get_path_value(sink, "fetch.configuration")
+            if isinstance(fetch_config, dict):
+                _add_linked_node(index, related, unresolved, "dataSource", fetch_config.get("name"), f"fetch dataSource for {node.code_name}", node.rel_path, profile, required=False)
+            for key, kinds in (
+                ("document", ("document",)),
+                ("masterEntity", ("masterEntity",)),
+                ("notification", ("notification",)),
+            ):
+                target = sink.get(key) if isinstance(sink.get(key), dict) else {}
+                target_config = target.get("configuration") if isinstance(target.get("configuration"), dict) else {}
+                target_name = target_config.get("name") or target.get("name")
+                target_node = index.find_any(target_name, kinds)
+                if target_node:
+                    _add_node_context(index, target_node, related, unresolved, f"{key} sink target for {node.code_name}", profile)
+            transition_name = _get_path_value(sink, "documentTransition.transition.configurationName")
+            transition_node = index.find_any(transition_name, ("document", "masterEntity"))
+            if transition_node:
+                _add_node_context(index, transition_node, related, unresolved, f"documentTransition target for {node.code_name}", profile)
+
+
+def _rule_applies(rule: dict, node: ConfigNode) -> bool:
+    source_kinds = rule.get("source_kinds") or []
+    return not source_kinds or node.kind in source_kinds
+
+
+def _get_path_value(data, path: str):
+    current = data
+    for part in (path or "").split("."):
+        if not part:
+            continue
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _format_relation(template: str, node: ConfigNode, name: str | None = None) -> str:
+    return str(template or "{kind}/{code_name} link").format(
+        package=node.package,
+        kind=node.kind,
+        code_name=node.code_name,
+        name=name or "",
+    )
 
 
 def _extract_names(value) -> list[str]:
@@ -559,16 +753,9 @@ def _normalize_rel_path(path: str) -> str:
     return path.strip("/")
 
 
-def _is_text_context_file(path: Path) -> bool:
-    return path.suffix.lower() in {
-        ".json",
-        ".js",
-        ".handlebars",
-        ".csv",
-        ".html",
-        ".txt",
-        ".md",
-    }
+def _is_text_context_file(path: Path, profile: dict | None = None) -> bool:
+    profile = profile or default_adinsure_profile_json()
+    return path.suffix.lower() in set(profile.get("text_extensions", [".json", ".js", ".handlebars", ".csv", ".html", ".txt", ".md"]))
 
 
 def _dedupe(items: Iterable[str]) -> list[str]:

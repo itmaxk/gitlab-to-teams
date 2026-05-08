@@ -91,6 +91,11 @@
     Контекст проекта для AI-ревью
   </summary>
   <div class="bg-slate-800 border border-slate-700 rounded-lg p-4 mt-2">
+    <div class="mb-4">
+      <label class="block text-sm text-slate-400 mb-1">Активный профиль</label>
+      <select id="reviewProjectProfile"
+              class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm"></select>
+    </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
       <div>
         <label class="block text-sm text-slate-400 mb-1">Локальный корень проекта</label>
@@ -121,10 +126,29 @@
     <div class="flex gap-2 mt-4">
       <button onclick="saveProjectContextSettings()" id="btnSaveProjectContext"
               class="bg-green-600 hover:bg-green-700 text-white text-sm px-4 py-1.5 rounded font-medium">
-        Сохранить контекст проекта
+        Сохранить профиль
+      </button>
+      <button onclick="validateProjectProfile()" type="button"
+              class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-1.5 rounded font-medium">
+        Проверить JSON
       </button>
       <span id="projectContextStatus" class="text-sm text-slate-400 self-center"></span>
     </div>
+    <div class="mt-4">
+      <label class="block text-sm text-slate-400 mb-1">Правила профиля JSON</label>
+      <textarea id="reviewProfileJson" rows="14"
+                class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-2 text-slate-100 text-xs font-mono focus:border-blue-500 focus:outline-none"></textarea>
+    </div>
+    <div class="mt-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2">
+      <input type="text" id="reviewProfilePreviewPath"
+             placeholder="configuration/@config-rgsl/acc-base/dataSource/Example/configuration.json"
+             class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      <button onclick="previewProjectProfileContext()" type="button"
+              class="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-2 rounded font-medium">
+        Тест контекста
+      </button>
+    </div>
+    <pre id="projectContextPreview" class="hidden mt-3 max-h-72 overflow-auto rounded border border-slate-700 bg-slate-950 p-3 text-xs text-slate-300"></pre>
   </div>
 </details>
 
@@ -147,6 +171,7 @@ let currentReviewId = null;
 let reviewInstructionItems = [];
 let activeReviewJobId = null;
 let reviewSettings = {};
+let reviewProjectProfiles = [];
 
 class ReviewCanceledError extends Error {
   constructor(message) {
@@ -588,6 +613,7 @@ async function loadPrompt() {
     applyProjectContextSettings(data);
     reviewInstructionItems = data.review_instruction_items || [];
     renderInstructionList();
+    await loadProjectProfiles();
   } catch (e) {}
 }
 
@@ -595,6 +621,7 @@ function collectReviewSettings(overrides = {}) {
   return {
     system_prompt: document.getElementById("systemPrompt")?.value || reviewSettings.system_prompt || "",
     review_instructions: reviewSettings.review_instructions || "",
+    active_project_profile_id: Number(document.getElementById("reviewProjectProfile")?.value || reviewSettings.active_project_profile_id || 0) || null,
     review_project_root: document.getElementById("reviewProjectRoot")?.value || "",
     review_project_config_path: document.getElementById("reviewProjectConfigPath")?.value || "configuration/@config-rgsl",
     review_sql_target: document.getElementById("reviewSqlTarget")?.value || "PostgreSQL 17.5+",
@@ -615,6 +642,38 @@ function applyProjectContextSettings(data) {
   setValue("reviewGraphContextMaxFiles", data.review_graph_context_max_files || 12);
   const enabled = document.getElementById("reviewGraphContextEnabled");
   if (enabled) enabled.checked = data.review_graph_context_enabled !== false;
+  const profileSelect = document.getElementById("reviewProjectProfile");
+  if (profileSelect && data.active_project_profile_id) {
+    profileSelect.value = String(data.active_project_profile_id);
+  }
+}
+
+function selectedReviewProjectProfile() {
+  const id = Number(document.getElementById("reviewProjectProfile")?.value || 0);
+  return reviewProjectProfiles.find((profile) => profile.id === id) || null;
+}
+
+function applyProfileToProjectContext(profile) {
+  if (!profile) return;
+  document.getElementById("reviewProjectRoot").value = profile.project_root || "";
+  document.getElementById("reviewProjectConfigPath").value = profile.config_path || "configuration/@config-rgsl";
+  document.getElementById("reviewSqlTarget").value = profile.sql_target || "PostgreSQL 17.5+";
+  document.getElementById("reviewGraphContextMaxFiles").value = profile.graph_context_max_files || 12;
+  document.getElementById("reviewGraphContextEnabled").checked = profile.graph_context_enabled !== false;
+  document.getElementById("reviewProfileJson").value = JSON.stringify(profile.profile_json || {}, null, 2);
+}
+
+async function loadProjectProfiles() {
+  const resp = await fetch("/api/review/project-profiles");
+  if (!resp.ok) return;
+  reviewProjectProfiles = await resp.json();
+  const select = document.getElementById("reviewProjectProfile");
+  if (!select) return;
+  select.innerHTML = reviewProjectProfiles.map((profile) => `<option value="${profile.id}">${escHtml(profile.name || ("Profile " + profile.id))}</option>`).join("");
+  const activeId = reviewSettings.active_project_profile_id || reviewProjectProfiles.find((profile) => profile.is_default)?.id || reviewProjectProfiles[0]?.id;
+  if (activeId) select.value = String(activeId);
+  applyProfileToProjectContext(selectedReviewProjectProfile());
+  select.onchange = () => applyProfileToProjectContext(selectedReviewProjectProfile());
 }
 
 async function savePrompt() {
@@ -938,14 +997,47 @@ async function saveSystemPrompt() {
 
 async function saveProjectContextSettings() {
   const status = document.getElementById("projectContextStatus");
+  const profile = selectedReviewProjectProfile();
+  if (!profile) {
+    status.textContent = "Профиль не выбран";
+    status.className = "text-sm text-red-400 self-center";
+    return;
+  }
+  let profileJson = {};
   try {
+    profileJson = JSON.parse(document.getElementById("reviewProfileJson").value || "{}");
+  } catch (e) {
+    status.textContent = "JSON профиля некорректен";
+    status.className = "text-sm text-red-400 self-center";
+    return;
+  }
+  try {
+    const profileResp = await fetch(`/api/review/project-profiles/${profile.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: profile.name,
+        description: profile.description || "",
+        enabled: true,
+        is_default: !!profile.is_default,
+        project_root: document.getElementById("reviewProjectRoot").value || "",
+        config_path: document.getElementById("reviewProjectConfigPath").value || "configuration/@config-rgsl",
+        sql_target: document.getElementById("reviewSqlTarget").value || "PostgreSQL 17.5+",
+        graph_context_enabled: !!document.getElementById("reviewGraphContextEnabled").checked,
+        graph_context_max_files: Number(document.getElementById("reviewGraphContextMaxFiles").value || 12),
+        profile_json: profileJson,
+      }),
+    });
+    const savedProfile = await profileResp.json().catch(() => ({}));
+    if (!profileResp.ok) throw new Error(savedProfile.detail?.errors?.join("; ") || savedProfile.detail || "Не удалось сохранить профиль");
     const resp = await fetch("/api/review/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(collectReviewSettings()),
     });
     if (!resp.ok) throw new Error("Не удалось сохранить контекст проекта");
-    reviewSettings = await resp.json().catch(() => collectReviewSettings());
+    await fetch(`/api/review/settings/active-profile/${profile.id}`, { method: "PUT" });
+    await loadProjectProfiles();
     status.textContent = "Сохранено";
     status.className = "text-sm text-green-400 self-center";
     setTimeout(() => { status.textContent = ""; }, 2000);
@@ -953,6 +1045,49 @@ async function saveProjectContextSettings() {
     status.textContent = "Ошибка сохранения";
     status.className = "text-sm text-red-400 self-center";
   }
+}
+
+async function validateProjectProfile() {
+  const status = document.getElementById("projectContextStatus");
+  const profile = selectedReviewProjectProfile();
+  if (!profile) return;
+  try {
+    const profileJson = JSON.parse(document.getElementById("reviewProfileJson").value || "{}");
+    const resp = await fetch(`/api/review/project-profiles/${profile.id}/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...profile,
+        project_root: document.getElementById("reviewProjectRoot").value || "",
+        config_path: document.getElementById("reviewProjectConfigPath").value || "configuration/@config-rgsl",
+        sql_target: document.getElementById("reviewSqlTarget").value || "PostgreSQL 17.5+",
+        graph_context_enabled: !!document.getElementById("reviewGraphContextEnabled").checked,
+        graph_context_max_files: Number(document.getElementById("reviewGraphContextMaxFiles").value || 12),
+        profile_json: profileJson,
+      }),
+    });
+    const data = await resp.json();
+    status.textContent = data.ok ? "JSON корректен" : "Ошибки: " + (data.errors || []).join("; ");
+    status.className = data.ok ? "text-sm text-green-400 self-center" : "text-sm text-red-400 self-center";
+  } catch (e) {
+    status.textContent = "JSON профиля некорректен";
+    status.className = "text-sm text-red-400 self-center";
+  }
+}
+
+async function previewProjectProfileContext() {
+  const profile = selectedReviewProjectProfile();
+  const path = document.getElementById("reviewProfilePreviewPath").value.trim();
+  const preview = document.getElementById("projectContextPreview");
+  if (!profile || !path) return;
+  const resp = await fetch(`/api/review/project-profiles/${profile.id}/preview-context`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ changed_paths: [path] }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  preview.textContent = JSON.stringify(data, null, 2);
+  preview.classList.remove("hidden");
 }
 
 async function editInstruction(id) {

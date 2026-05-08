@@ -11,6 +11,8 @@ from db import get_db
 from models import (
     ReviewInstructionItemCreate,
     ReviewInstructionItemUpdate,
+    ReviewProjectProfilePreviewRequest,
+    ReviewProjectProfileRequest,
     ReviewPublishRequest,
     ReviewRequest,
     ReviewSettingsUpdate,
@@ -19,6 +21,10 @@ from models import (
 from services.gitlab_notes import post_merge_request_note
 from services.review_comment_formatter import format_gitlab_review_comment
 from services.review_service import LLMRateLimitError, review_mr
+from services.review_project_context import (
+    preview_project_graph_context,
+    validate_profile_json,
+)
 from services.xlsx_review_service import review_xlsx_mr
 
 logger = logging.getLogger(__name__)
@@ -109,6 +115,64 @@ def _load_review_record(review_id: int) -> dict:
     except (json.JSONDecodeError, KeyError):
         review["summary"] = {}
     return review
+
+
+def _serialize_profile(row) -> dict:
+    data = dict(row)
+    for key in ("enabled", "is_default", "graph_context_enabled"):
+        data[key] = bool(data.get(key))
+    try:
+        data["profile_json"] = json.loads(data.get("profile_json") or "{}")
+    except json.JSONDecodeError:
+        data["profile_json"] = {}
+    return data
+
+
+def _save_profile_payload(conn, req: ReviewProjectProfileRequest, profile_id: int | None = None) -> int:
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Название профиля не должно быть пустым")
+    errors = validate_profile_json(req.profile_json)
+    if errors:
+        raise HTTPException(status_code=400, detail={"errors": errors})
+    if req.is_default:
+        conn.execute("UPDATE review_project_profiles SET is_default = 0")
+    payload = (
+        name,
+        req.description.strip(),
+        1 if req.enabled else 0,
+        1 if req.is_default else 0,
+        req.project_root.strip(),
+        req.config_path.strip() or "configuration/@config-rgsl",
+        req.sql_target.strip() or "PostgreSQL 17.5+",
+        1 if req.graph_context_enabled else 0,
+        req.graph_context_max_files,
+        json.dumps(req.profile_json, ensure_ascii=False),
+    )
+    if profile_id is None:
+        cur = conn.execute(
+            """
+            INSERT INTO review_project_profiles (
+                name, description, enabled, is_default, project_root, config_path,
+                sql_target, graph_context_enabled, graph_context_max_files, profile_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            payload,
+        )
+        return int(cur.lastrowid)
+    conn.execute(
+        """
+        UPDATE review_project_profiles
+        SET name = ?, description = ?, enabled = ?, is_default = ?,
+            project_root = ?, config_path = ?, sql_target = ?,
+            graph_context_enabled = ?, graph_context_max_files = ?,
+            profile_json = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        """,
+        (*payload, profile_id),
+    )
+    return profile_id
 
 
 def _translate_review_error(exc: Exception) -> str:
@@ -378,6 +442,84 @@ def get_history():
     return result
 
 
+@router.get("/project-profiles")
+def list_project_profiles():
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM review_project_profiles ORDER BY is_default DESC, name ASC"
+    ).fetchall()
+    conn.close()
+    return [_serialize_profile(row) for row in rows]
+
+
+@router.post("/project-profiles")
+def create_project_profile(req: ReviewProjectProfileRequest):
+    conn = get_db()
+    profile_id = _save_profile_payload(conn, req)
+    conn.commit()
+    row = conn.execute("SELECT * FROM review_project_profiles WHERE id = ?", (profile_id,)).fetchone()
+    conn.close()
+    return _serialize_profile(row)
+
+
+@router.get("/project-profiles/{profile_id}")
+def get_project_profile(profile_id: int):
+    conn = get_db()
+    row = conn.execute("SELECT * FROM review_project_profiles WHERE id = ?", (profile_id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Профиль проекта не найден")
+    return _serialize_profile(row)
+
+
+@router.put("/project-profiles/{profile_id}")
+def update_project_profile(profile_id: int, req: ReviewProjectProfileRequest):
+    conn = get_db()
+    exists = conn.execute("SELECT 1 FROM review_project_profiles WHERE id = ?", (profile_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Профиль проекта не найден")
+    _save_profile_payload(conn, req, profile_id)
+    conn.commit()
+    row = conn.execute("SELECT * FROM review_project_profiles WHERE id = ?", (profile_id,)).fetchone()
+    conn.close()
+    return _serialize_profile(row)
+
+
+@router.post("/project-profiles/{profile_id}/validate")
+def validate_project_profile(profile_id: int, req: ReviewProjectProfileRequest):
+    errors = validate_profile_json(req.profile_json)
+    return {"ok": not errors, "errors": errors}
+
+
+@router.post("/project-profiles/{profile_id}/preview-context")
+def preview_project_profile_context(profile_id: int, req: ReviewProjectProfilePreviewRequest):
+    try:
+        context = preview_project_graph_context(profile_id, req.changed_paths)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Профиль проекта не найден")
+    return context.to_summary()
+
+
+@router.put("/settings/active-profile/{profile_id}")
+def set_active_project_profile(profile_id: int):
+    conn = get_db()
+    exists = conn.execute(
+        "SELECT 1 FROM review_project_profiles WHERE id = ? AND enabled = 1",
+        (profile_id,),
+    ).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Активный профиль проекта не найден")
+    conn.execute(
+        "UPDATE review_settings SET active_project_profile_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = 1",
+        (profile_id,),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "active_project_profile_id": profile_id}
+
+
 @router.get("/settings")
 def get_settings():
     conn = get_db()
@@ -386,6 +528,7 @@ def get_settings():
         SELECT system_prompt, review_instructions, review_project_root,
                review_project_config_path, review_sql_target,
                review_graph_context_enabled, review_graph_context_max_files,
+               active_project_profile_id,
                updated_at
         FROM review_settings
         WHERE id = 1
@@ -404,6 +547,7 @@ def get_settings():
             "review_sql_target": "PostgreSQL 17.5+",
             "review_graph_context_enabled": True,
             "review_graph_context_max_files": 12,
+            "active_project_profile_id": None,
             "updated_at": "",
         }
     data = dict(row)
@@ -426,6 +570,7 @@ def update_settings(req: ReviewSettingsUpdate):
             review_sql_target = ?,
             review_graph_context_enabled = ?,
             review_graph_context_max_files = ?,
+            active_project_profile_id = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
         """,
@@ -437,6 +582,7 @@ def update_settings(req: ReviewSettingsUpdate):
             req.review_sql_target.strip() or "PostgreSQL 17.5+",
             1 if req.review_graph_context_enabled else 0,
             req.review_graph_context_max_files,
+            req.active_project_profile_id,
         ),
     )
     conn.commit()

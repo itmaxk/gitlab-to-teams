@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -146,6 +147,24 @@ def init_db():
             review_sql_target TEXT DEFAULT 'PostgreSQL 17.5+',
             review_graph_context_enabled INTEGER DEFAULT 1,
             review_graph_context_max_files INTEGER DEFAULT 12,
+            active_project_profile_id INTEGER,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS review_project_profiles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seed_key TEXT UNIQUE,
+            name TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            enabled INTEGER DEFAULT 1,
+            is_default INTEGER DEFAULT 0,
+            project_root TEXT DEFAULT '',
+            config_path TEXT DEFAULT 'configuration/@config-rgsl',
+            sql_target TEXT DEFAULT 'PostgreSQL 17.5+',
+            graph_context_enabled INTEGER DEFAULT 1,
+            graph_context_max_files INTEGER DEFAULT 12,
+            profile_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -333,10 +352,35 @@ def _migrate(conn: sqlite3.Connection):
             "review_sql_target": "ALTER TABLE review_settings ADD COLUMN review_sql_target TEXT DEFAULT 'PostgreSQL 17.5+'",
             "review_graph_context_enabled": "ALTER TABLE review_settings ADD COLUMN review_graph_context_enabled INTEGER DEFAULT 1",
             "review_graph_context_max_files": "ALTER TABLE review_settings ADD COLUMN review_graph_context_max_files INTEGER DEFAULT 12",
+            "active_project_profile_id": "ALTER TABLE review_settings ADD COLUMN active_project_profile_id INTEGER",
         }
         for col, sql in review_setting_migrations.items():
             if review_columns and col not in review_columns:
                 conn.execute(sql)
+    except Exception:
+        pass
+
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS review_project_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                seed_key TEXT UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                enabled INTEGER DEFAULT 1,
+                is_default INTEGER DEFAULT 0,
+                project_root TEXT DEFAULT '',
+                config_path TEXT DEFAULT 'configuration/@config-rgsl',
+                sql_target TEXT DEFAULT 'PostgreSQL 17.5+',
+                graph_context_enabled INTEGER DEFAULT 1,
+                graph_context_max_files INTEGER DEFAULT 12,
+                profile_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
     except Exception:
         pass
 
@@ -649,7 +693,64 @@ def seed_review_settings():
             (DEFAULT_REVIEW_PROMPT,),
         )
         conn.commit()
+    _seed_review_project_profile(conn)
+    conn.commit()
     conn.close()
+
+
+def _seed_review_project_profile(conn: sqlite3.Connection):
+    from services.review_project_context import default_adinsure_profile_json
+
+    settings = conn.execute(
+        """
+        SELECT review_project_root, review_project_config_path, review_sql_target,
+               review_graph_context_enabled, review_graph_context_max_files,
+               active_project_profile_id
+        FROM review_settings WHERE id = 1
+        """
+    ).fetchone()
+    project_root = (settings["review_project_root"] if settings else "") or ""
+    config_path = (settings["review_project_config_path"] if settings else "") or "configuration/@config-rgsl"
+    sql_target = (settings["review_sql_target"] if settings else "") or "PostgreSQL 17.5+"
+    graph_enabled = int(settings["review_graph_context_enabled"] if settings else 1)
+    max_files = int((settings["review_graph_context_max_files"] if settings else 12) or 12)
+    profile_json = json.dumps(default_adinsure_profile_json(), ensure_ascii=False)
+
+    existing = conn.execute(
+        "SELECT id FROM review_project_profiles WHERE seed_key = ?",
+        ("adinsure_implementation",),
+    ).fetchone()
+    if not existing:
+        cur = conn.execute(
+            """
+            INSERT INTO review_project_profiles (
+                seed_key, name, description, enabled, is_default,
+                project_root, config_path, sql_target, graph_context_enabled,
+                graph_context_max_files, profile_json
+            )
+            VALUES (?, ?, ?, 1, 1, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "adinsure_implementation",
+                "AdInsure implementation",
+                "Seed profile for AdInsure configuration-constructor repositories.",
+                project_root,
+                config_path,
+                sql_target,
+                graph_enabled,
+                max_files,
+                profile_json,
+            ),
+        )
+        profile_id = cur.lastrowid
+    else:
+        profile_id = existing["id"]
+
+    if settings and not settings["active_project_profile_id"]:
+        conn.execute(
+            "UPDATE review_settings SET active_project_profile_id = ? WHERE id = 1",
+            (profile_id,),
+        )
 
 
 SEED_UPDATABLE_FIELDS = (

@@ -314,10 +314,8 @@ Use this section to validate symbols, imports, requires, module-scope constants,
 
 {project_graph_context_text.strip()}
 
-## Constructor Graph Checks
-- Check broken configuration references, missing sink/source mappings, missing dataProvider/dataSource links, and invalid document state/transition links.
-- For SQL review use the configured SQL target from the graph context. Do not require multi-db compatibility unless explicitly requested.
-- Cross-check schemas, mappings, UI/export fields, postgres query parameters, printout source mappings, notification templates, and JS package imports when related files are provided."""
+## Constructor Graph Checks"""
+        user_message += "\n- Validate related project graph files and unresolved links."
 
     user_message += """
 

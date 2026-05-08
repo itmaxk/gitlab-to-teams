@@ -104,6 +104,7 @@
 | 2026-05-07 | Зафиксирован V1-план улучшения `/review` и таблица выполнения | Документ создан в `docs/review_improve_v1.md` |
 | 2026-05-07 | Реализованы project profile, graph resolver, prompt rubric и UI transparency для `/review` | `pytest tests/test_review_project_context.py tests/test_review_batching.py tests/test_review_settings.py tests/test_review_jobs.py` |
 | 2026-05-07 | Проведена общая регрессионная проверка после реализации V1 | `pytest` |
+| 2026-05-07 | Hardcoded AdInsure graph rules перенесены в редактируемый профиль БД; добавлены CRUD, validation и preview context | `pytest` |
 
 ## Как обновлять статус
 
