@@ -89,6 +89,23 @@ def _format_row(cells: dict[int, str]) -> str:
     return " | ".join(parts)
 
 
+def _build_row_details(sheet_rows: dict[int, dict[int, str]], row_numbers: list[int]) -> list[dict]:
+    details: list[dict] = []
+    for row_number in row_numbers:
+        cells = sheet_rows.get(row_number, {})
+        details.append({
+            "row": row_number,
+            "cells": [
+                {
+                    "column": _column_index_to_letters(column_index),
+                    "value": value.replace("\r", "").replace("\n", "\\n").strip(),
+                }
+                for column_index, value in sorted(cells.items())
+            ],
+        })
+    return details
+
+
 def extract_workbook_cells(content: bytes) -> dict[str, dict[int, dict[int, str]]]:
     try:
         with ZipFile(BytesIO(content)) as zip_file:
@@ -307,6 +324,8 @@ def _build_grouped_row_findings(
             "line": deleted_rows[0],
             "message": f"Лист '{sheet_name}', удалены строки {_compress_row_numbers(deleted_rows)}.",
             "suggestion": f"Примеры удаленных строк: {_preview_rows(before_sheet, deleted_rows)}",
+            "xlsx_rows": _build_row_details(before_sheet, deleted_rows),
+            "xlsx_change_type": "deleted_rows",
         })
         covered_deleted.update(deleted_rows)
 
@@ -318,6 +337,8 @@ def _build_grouped_row_findings(
             "line": added_rows[0],
             "message": f"Лист '{sheet_name}', добавлены строки {_compress_row_numbers(added_rows)}.",
             "suggestion": f"Примеры новых строк: {_preview_rows(after_sheet, added_rows)}",
+            "xlsx_rows": _build_row_details(after_sheet, added_rows),
+            "xlsx_change_type": "added_rows",
         })
         covered_added.update(added_rows)
 
@@ -407,6 +428,8 @@ def build_xlsx_diff_findings(
                     "line": row_number,
                     "message": f"Лист '{sheet_name}', строка {row_number} добавлена.",
                     "suggestion": f"Стало: {_format_row(after_cells) or 'пусто'}",
+                    "xlsx_rows": _build_row_details(after_sheet, [row_number]),
+                    "xlsx_change_type": "added_rows",
                 }, comparison_ref, is_master_comparison))
                 continue
             if after_cells is None:
@@ -419,6 +442,8 @@ def build_xlsx_diff_findings(
                     "line": row_number,
                     "message": f"Лист '{sheet_name}', строка {row_number} удалена.",
                     "suggestion": f"Было: {_format_row(before_cells) or 'пусто'}",
+                    "xlsx_rows": _build_row_details(before_sheet, [row_number]),
+                    "xlsx_change_type": "deleted_rows",
                 }, comparison_ref, is_master_comparison))
                 continue
 

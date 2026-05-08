@@ -5,6 +5,25 @@
 ### Goal
 - Add a dedicated xlsx review mode in `/review` that compares changed `.xlsx` files in an MR against `master` by default or a user-provided ref.
 
+### Milestone 2
+- Status: `[x]`
+- Goal: make grouped added/deleted XLSX rows readable in UI and GitLab comments.
+- Tasks:
+- attach structured row/cell data to added/deleted row findings
+- render row details as an expandable table in `/review`
+- include an analogous markdown table when publishing the review to GitLab
+- cover structured XLSX row findings and comment formatting with regression tests
+- Definition of done:
+- long grouped row recommendations are no longer the only way to inspect added rows
+- GitLab publish includes a per-row table for structured XLSX row findings
+- focused tests for XLSX diff and comment formatting pass
+- Validation commands:
+- `pytest tests/test_xlsx_review_service.py tests/test_review_comment_formatter.py`
+- Known risks:
+- very large row groups can still produce large UI/GitLab tables because the requirement is to inspect rows individually
+- Stop-and-fix rule:
+- if GitLab markdown renders poorly, keep structured data and adjust only the formatter output
+
 ### Milestone 1
 - Status: `[x]`
 - Goal: implement backend xlsx diff flow and UI trigger.

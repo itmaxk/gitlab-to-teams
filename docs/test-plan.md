@@ -9,9 +9,12 @@
 - A changed xlsx row is detected with old/new values
 - The compare flow loads base and source-branch versions and emits findings for changed rows
 - The selected base ref is preserved in the review result metadata
+- A grouped added/deleted row finding carries structured row/cell details for table rendering
+- GitLab comment formatting includes an XLSX rows table when structured row details are present
 
 ## Validation
 - `pytest tests/test_xlsx_review_service.py`
+- `pytest tests/test_xlsx_review_service.py tests/test_review_comment_formatter.py`
 
 ## Out of scope
 - Rich Excel formatting diffs, formulas with formatting semantics, and binary workbook features outside cell value comparison

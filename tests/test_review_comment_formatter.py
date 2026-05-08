@@ -101,3 +101,43 @@ def test_format_gitlab_review_comment_uses_xlsx_header_for_xlsx_reviews():
     )
 
     assert comment.startswith(XLSX_HEADER)
+
+
+def test_format_gitlab_review_comment_adds_xlsx_rows_table():
+    comment = format_gitlab_review_comment(
+        mr_iid=10,
+        mr_title="XLSX rows",
+        findings=[
+            {
+                "severity": "info",
+                "category": "xlsx",
+                "file_path": "config/rates.xlsx",
+                "line": 173,
+                "message": "Лист 'Rates', добавлены строки 173-174.",
+                "suggestion": "Примеры новых строк: 173: A=IDGPN1VTB",
+                "xlsx_rows": [
+                    {
+                        "row": 173,
+                        "cells": [
+                            {"column": "A", "value": "IDGPN1VTB"},
+                            {"column": "B", "value": "Драйвер гарантия (1 год)"},
+                        ],
+                    },
+                    {
+                        "row": 174,
+                        "cells": [
+                            {"column": "A", "value": "IDGPN2VTB"},
+                            {"column": "B", "value": "Драйвер Гарантия (2 года)"},
+                        ],
+                    },
+                ],
+            }
+        ],
+        summary={"errors": 0, "warnings": 0, "info": 1, "total": 1},
+        model_used="xlsx-diff:master",
+    )
+
+    assert "<summary>Строки XLSX</summary>" in comment
+    assert "| Строка | A | B |" in comment
+    assert "| 173 | IDGPN1VTB | Драйвер гарантия (1 год) |" in comment
+    assert "| 174 | IDGPN2VTB | Драйвер Гарантия (2 года) |" in comment

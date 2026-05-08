@@ -162,6 +162,13 @@ def test_build_xlsx_diff_findings_groups_many_deleted_rows():
 
     assert len(findings) == 1
     assert findings[0]["message"] == "Лист '_HitPolicy', удалены строки 1-4."
+    assert findings[0]["xlsx_change_type"] == "deleted_rows"
+    assert findings[0]["xlsx_rows"] == [
+        {"row": 1, "cells": [{"column": "A", "value": "UNIQUE"}]},
+        {"row": 2, "cells": [{"column": "A", "value": "FIRST"}]},
+        {"row": 3, "cells": [{"column": "A", "value": "PRIORITY"}]},
+        {"row": 4, "cells": [{"column": "A", "value": "ANY"}]},
+    ]
 
 
 def test_build_xlsx_diff_findings_groups_many_column_value_changes():

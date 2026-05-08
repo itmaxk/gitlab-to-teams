@@ -530,6 +530,47 @@ function setFilter(f) {
   renderFindings();
 }
 
+function renderXlsxRowsTable(f) {
+  const rows = Array.isArray(f.xlsx_rows) ? f.xlsx_rows : [];
+  if (!rows.length) return "";
+
+  const columns = Array.from(new Set(rows.flatMap(row =>
+    (row.cells || []).map(cell => cell.column).filter(Boolean)
+  ))).sort((a, b) => {
+    const columnNumber = (name) => String(name).split("").reduce((acc, ch) => acc * 26 + ch.charCodeAt(0) - 64, 0);
+    return columnNumber(a) - columnNumber(b);
+  });
+  if (!columns.length) return "";
+
+  const rowLabel = f.xlsx_change_type === "deleted_rows" ? "Удаленные строки" : "Добавленные строки";
+  return `
+    <details class="mt-3 overflow-hidden rounded-lg border border-slate-700 bg-slate-950/60">
+      <summary class="cursor-pointer select-none px-3 py-2 text-xs font-medium text-emerald-300 hover:bg-slate-900">
+        ${rowLabel}: показать таблицу (${rows.length})
+      </summary>
+      <div class="max-h-96 overflow-auto">
+        <table class="min-w-full border-collapse text-left text-xs">
+          <thead class="sticky top-0 bg-slate-900 text-slate-300">
+            <tr>
+              <th class="border-b border-slate-700 px-3 py-2 font-medium">Строка</th>
+              ${columns.map(column => `<th class="border-b border-slate-700 px-3 py-2 font-medium">${escHtml(column)}</th>`).join("")}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(row => {
+              const values = Object.fromEntries((row.cells || []).map(cell => [cell.column, cell.value || ""]));
+              return `<tr class="border-b border-slate-800 last:border-b-0 hover:bg-slate-900/80">
+                <td class="whitespace-nowrap px-3 py-2 font-mono text-slate-400">${escHtml(row.row)}</td>
+                ${columns.map(column => `<td class="max-w-sm whitespace-pre-wrap break-words px-3 py-2 text-slate-200">${escHtml(values[column] || "")}</td>`).join("")}
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+}
+
 function renderFindings() {
   const list = document.getElementById("findingsList");
   const filtered = activeFilter === "all" ? currentFindings : currentFindings.filter(f => f.severity === activeFilter);
@@ -568,6 +609,7 @@ function renderFindings() {
       </div>
       <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
       ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Рекомендация:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
+      ${renderXlsxRowsTable(f)}
     </div>`;
   }).join("");
 }

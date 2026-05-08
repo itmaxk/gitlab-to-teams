@@ -37,6 +37,49 @@ CLEAN_REVIEW = "\u0417\u0430\u043c\u0435\u0442\u043d\u044b\u0445 \u043f\u0440\u0
 ANALYZED_FILES = "\u041f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432"
 SKIPPED_FILES = "\u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043e \u0444\u0430\u0439\u043b\u043e\u0432 \u0431\u0435\u0437 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u043e\u0433\u043e diff"
 INCOMPLETE_DIFF = "\u041d\u0435 \u0432\u0441\u0435 \u0444\u0430\u0439\u043b\u044b \u0438\u043c\u0435\u043b\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0439 diff \u0434\u043b\u044f \u0430\u043d\u0430\u043b\u0438\u0437\u0430"
+XLSX_ROWS_DETAILS = "\u0421\u0442\u0440\u043e\u043a\u0438 XLSX"
+XLSX_ROW_COLUMN = "\u0421\u0442\u0440\u043e\u043a\u0430"
+
+
+def _escape_markdown_table_cell(value: object) -> str:
+    text = str(value or "").replace("\r", " ").replace("\n", "<br>")
+    return text.replace("|", "\\|").strip()
+
+
+def _column_name_to_number(name: str) -> int:
+    result = 0
+    for char in name.upper():
+        if "A" <= char <= "Z":
+            result = result * 26 + (ord(char) - ord("A") + 1)
+    return result
+
+
+def _format_xlsx_rows_table(rows: list[dict]) -> list[str]:
+    columns = sorted({
+        str(cell.get("column") or "")
+        for row in rows
+        for cell in row.get("cells", [])
+        if cell.get("column")
+    }, key=_column_name_to_number)
+    if not rows or not columns:
+        return []
+
+    lines = [
+        "<details>",
+        f"<summary>{XLSX_ROWS_DETAILS}</summary>",
+        "",
+        "| " + " | ".join([XLSX_ROW_COLUMN, *columns]) + " |",
+        "| " + " | ".join(["---", *["---" for _ in columns]]) + " |",
+    ]
+    for row in rows:
+        values = {
+            str(cell.get("column") or ""): _escape_markdown_table_cell(cell.get("value"))
+            for cell in row.get("cells", [])
+        }
+        row_number = _escape_markdown_table_cell(row.get("row"))
+        lines.append("| " + " | ".join([row_number, *[values.get(column, "") for column in columns]]) + " |")
+    lines.extend(["", "</details>"])
+    return lines
 
 
 def _normalize_severity(value: str | None) -> str:
@@ -125,6 +168,10 @@ def format_gitlab_review_comment(
                 lines.append("")
                 lines.append(f"   **{SUGGESTION_LABEL}**")
                 lines.append(f"   {suggestion}")
+            xlsx_rows = finding.get("xlsx_rows") or []
+            if xlsx_rows:
+                lines.append("")
+                lines.extend(f"   {line}" if line else "" for line in _format_xlsx_rows_table(xlsx_rows))
             lines.append("")
         lines.append("")
 
