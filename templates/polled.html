@@ -18,7 +18,23 @@
       {% if stats.merged_cursors %}
         <span class="font-bold text-purple-300">
           {% for cursor in stats.merged_cursors %}
-            {{ cursor.branch }}: {{ cursor.merged_at[:19] }}{% if not loop.last %}, {% endif %}
+            {{ cursor.branch }}:
+            {% if cursor.mr_url %}
+              <a href="{{ cursor.mr_url }}" target="_blank" class="text-purple-200 underline decoration-purple-400/50 underline-offset-2 hover:text-white">!{{ cursor.mr_iid }}</a>
+            {% endif %}
+            {{ cursor.merged_at[:19] }}{% if not loop.last %}, {% endif %}
+          {% endfor %}
+        </span>
+      {% else %}
+        <span class="font-bold text-slate-500">—</span>
+      {% endif %}
+    </div>
+    <div class="bg-slate-800 rounded-lg px-4 py-2 border border-slate-700">
+      Релизные ветки:
+      {% if stats.release_branches %}
+        <span class="font-bold text-cyan-300">
+          {% for branch in stats.release_branches %}
+            {{ branch.name }}: {{ branch.created_at[:16].replace('T', ' ') if branch.created_at else '—' }}{% if not loop.last %}, {% endif %}
           {% endfor %}
         </span>
       {% else %}

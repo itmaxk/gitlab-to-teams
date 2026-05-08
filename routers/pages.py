@@ -1,4 +1,6 @@
 import os
+import asyncio
+import re
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -8,11 +10,77 @@ from pathlib import Path
 from typing import Optional
 
 from db import get_db
+from services.gitlab_client import get_branches, get_project_id
 from services.poller import _get_merged_mr_poll_cursors
 from services.review_config import is_review_llm_configured
 
 router = APIRouter(tags=["pages"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+def _branch_created_at(branch: dict) -> str:
+    commit = branch.get("commit") or {}
+    return (
+        branch.get("created_at")
+        or commit.get("created_at")
+        or commit.get("committed_date")
+        or commit.get("authored_date")
+        or ""
+    )
+
+
+async def _load_latest_release_branches() -> list[dict]:
+    project_id = await get_project_id()
+    release_re = re.compile(r"^release/(\d+)$")
+    releases = []
+    page = 1
+    while True:
+        batch = await get_branches(project_id, search="release/", per_page=100, page=page)
+        if not batch:
+            break
+        for branch in batch:
+            match = release_re.match(branch.get("name", ""))
+            if match:
+                releases.append({
+                    "version": int(match.group(1)),
+                    "name": branch.get("name", ""),
+                    "created_at": _branch_created_at(branch),
+                })
+        if len(batch) < 100:
+            break
+        page += 1
+
+    releases.sort(key=lambda item: item["version"], reverse=True)
+    return releases[:2]
+
+
+def _latest_release_branch_dates() -> list[dict]:
+    try:
+        return asyncio.run(_load_latest_release_branches())
+    except Exception:
+        return []
+
+
+def _merged_cursor_rows(conn, merged_cursors: dict[str, str]) -> list[dict]:
+    rows = []
+    for branch, merged_at in sorted(merged_cursors.items()):
+        row = conn.execute(
+            """SELECT mr_iid, mr_url
+               FROM polled_mrs
+               WHERE target_branch = ?
+                 AND LOWER(mr_state) = 'merged'
+                 AND mr_merged_at = ?
+               ORDER BY polled_at DESC
+               LIMIT 1""",
+            (branch, merged_at),
+        ).fetchone()
+        rows.append({
+            "branch": branch,
+            "merged_at": merged_at,
+            "mr_iid": row["mr_iid"] if row else "",
+            "mr_url": row["mr_url"] if row else "",
+        })
+    return rows
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -87,42 +155,50 @@ def polled_mrs(
 ):
     conn = get_db()
 
-    query = "SELECT * FROM polled_mrs WHERE 1=1"
+    where_clauses = ["1=1"]
     params: list = []
     recent_merged_from = (
         datetime.now(timezone.utc) - timedelta(days=30)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if not show_all:
-        query += """ AND (
-            mr_state IN ('open', 'opened')
+    show_all_enabled = str(show_all).lower() in {"1", "true", "yes", "on"}
+    if not show_all_enabled:
+        where_clauses.append("""(
+            LOWER(mr_state) IN ('open', 'opened')
             OR (
-                mr_state = 'merged'
+                LOWER(mr_state) = 'merged'
                 AND COALESCE(NULLIF(mr_merged_at, ''), NULLIF(mr_created_at, ''), '') >= ?
             )
-        )"""
+        )""")
         params.append(recent_merged_from)
     if mr_state:
-        query += " AND mr_state = ?"
+        where_clauses.append("LOWER(mr_state) = LOWER(?)")
         params.append(mr_state)
     if success >= 0:
-        query += " AND success = ?"
+        where_clauses.append("success = ?")
         params.append(success)
     if has_matches == 1:
-        query += " AND rules_matched > 0"
+        where_clauses.append("rules_matched > 0")
     elif has_matches == 0:
-        query += " AND rules_matched = 0"
+        where_clauses.append("rules_matched = 0")
     if target_branch:
-        query += " AND target_branch = ?"
+        where_clauses.append("target_branch = ?")
         params.append(target_branch)
-    query += " ORDER BY polled_at DESC"
+    where_sql = " AND ".join(where_clauses)
+    query = f"SELECT * FROM polled_mrs WHERE {where_sql} ORDER BY polled_at DESC"
 
     rows = conn.execute(query, params).fetchall()
-    total = conn.execute("SELECT COUNT(*) FROM polled_mrs").fetchone()[0]
-    success_count = conn.execute(
-        "SELECT COUNT(*) FROM polled_mrs WHERE success = 1"
+    total = conn.execute(
+        f"SELECT COUNT(*) FROM polled_mrs WHERE {where_sql}",
+        params,
     ).fetchone()[0]
-    conn.close()
+    success_count = conn.execute(
+        f"SELECT COUNT(*) FROM polled_mrs WHERE {where_sql} AND success = 1",
+        params,
+    ).fetchone()[0]
     merged_cursors = _get_merged_mr_poll_cursors()
+    merged_cursor_rows = _merged_cursor_rows(conn, merged_cursors)
+    conn.close()
+    release_branches = _latest_release_branch_dates()
 
     return templates.TemplateResponse(
         request,
@@ -133,17 +209,15 @@ def polled_mrs(
                 "total": total,
                 "success": success_count,
                 "errors": total - success_count,
-                "merged_cursors": [
-                    {"branch": branch, "merged_at": merged_at}
-                    for branch, merged_at in sorted(merged_cursors.items())
-                ],
+                "merged_cursors": merged_cursor_rows,
+                "release_branches": release_branches,
             },
             "filters": {
                 "mr_state": mr_state,
                 "success": success,
                 "has_matches": has_matches,
                 "target_branch": target_branch,
-                "show_all": show_all,
+                "show_all": 1 if show_all_enabled else 0,
                 "recent_merged_from": recent_merged_from,
             },
         },
