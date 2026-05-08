@@ -109,7 +109,9 @@
             {{ row.mr_state }}
           </span>
         </td>
-        <td class="py-2 px-3 text-slate-400 whitespace-nowrap">{{ row.mr_created_at[:10] if row.mr_created_at else '—' }}</td>
+        <td class="py-2 px-3 text-slate-400 whitespace-nowrap" title="{{ row.mr_created_at or '' }}">
+          {{ row.mr_created_at[:16].replace('T', ' ') if row.mr_created_at else '—' }}
+        </td>
         <td class="py-2 px-3 text-center text-slate-300">{{ row.changed_files_count }}</td>
         <td class="py-2 px-3 text-center">
           <span class="text-slate-300">{{ row.rules_checked }}</span>
