@@ -13,6 +13,7 @@ from db import get_db
 from services.gitlab_client import get_branches, get_project_id
 from services.poller import _get_merged_mr_poll_cursors
 from services.review_config import is_review_llm_configured
+from services.rule_store import get_rule_aggregate, list_rule_aggregates, upsert_rule_aggregate
 
 router = APIRouter(tags=["pages"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -327,19 +328,14 @@ def settings_page(request: Request):
 def rules_list(request: Request):
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM notification_rules ORDER BY created_at DESC"
-    ).fetchall()
+    rows = list_rule_aggregates(conn)
     rules = []
     for r in rows:
         d = dict(r)
-        emails = conn.execute(
-            "SELECT email FROM email_recipients WHERE rule_id = ?", (d["id"],)
-        ).fetchall()
-        d["emails"] = [e["email"] for e in emails]
+        d["emails"] = d.get("recipients", [])
         d["enabled"] = bool(d["enabled"])
-        d["send_teams"] = bool(d.get("send_teams", 1))
-        d["send_email"] = bool(d["send_email"])
+        d["send_teams"] = bool(d.get("send_teams", 0))
+        d["send_email"] = bool(d.get("send_email", 0))
         d["send_gitlab"] = bool(d.get("send_gitlab", 0))
         d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
         d["action_type"] = d.get("action_type", "notify") or "notify"
@@ -382,47 +378,44 @@ async def save_new_rule(
     teams_webhook_url: str = Form(""),
     send_email: Optional[str] = Form(None),
     send_gitlab: Optional[str] = Form(None),
+    pipeline_job_name: str = Form("changelog:validate"),
+    pipeline_retry_jobs: str = Form(""),
+    retry_trace_marker: str = Form("[5/5] Building fresh packages..."),
+    retry_trace_matcher_regex: str = Form("TLS socket disconnected|ECONNRESET|connection reset"),
+    review_base_ref: str = Form(""),
+    review_custom_prompt: str = Form(""),
 ):
     form = await request.form()
     emails = form.getlist("emails")
 
     conn = get_db()
-    cur = conn.execute(
-        """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, content_exclude, match_type,
-            target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix, file_check_mode,
-            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            name,
-            description,
-            file_pattern,
-            content_match,
-            content_exclude,
-            match_type,
-            target_branch,
-            mr_state,
-            poll_interval_seconds,
-            1 if file_check_enabled else 0,
-            file_check_path_prefix,
-            file_check_mode,
-            title_exclude,
-            action_type,
-            1 if send_teams else 0,
-            teams_webhook_url,
-            1 if send_email else 0,
-            1 if send_gitlab else 0,
-        ),
-    )
-    rule_id = cur.lastrowid
-    for email in emails:
-        email = email.strip()
-        if email:
-            conn.execute(
-                "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
-                (email, rule_id),
-            )
+    upsert_rule_aggregate(conn, {
+        "name": name,
+        "description": description,
+        "file_pattern": file_pattern,
+        "content_match": content_match,
+        "content_exclude": content_exclude,
+        "match_type": match_type,
+        "target_branch": target_branch,
+        "mr_state": mr_state,
+        "poll_interval_seconds": poll_interval_seconds,
+        "file_check_enabled": bool(file_check_enabled),
+        "file_check_path_prefix": file_check_path_prefix,
+        "file_check_mode": file_check_mode,
+        "title_exclude": title_exclude,
+        "action_type": action_type,
+        "send_teams": bool(send_teams),
+        "teams_webhook_url": teams_webhook_url,
+        "send_email": bool(send_email),
+        "send_gitlab": bool(send_gitlab),
+        "pipeline_job_name": pipeline_job_name,
+        "pipeline_retry_jobs": pipeline_retry_jobs,
+        "retry_trace_marker": retry_trace_marker,
+        "retry_trace_matcher_regex": retry_trace_matcher_regex,
+        "review_base_ref": review_base_ref,
+        "review_custom_prompt": review_custom_prompt,
+        "emails": emails,
+    })
     conn.commit()
     conn.close()
     return RedirectResponse(url="/rules", status_code=303)
@@ -431,17 +424,11 @@ async def save_new_rule(
 @router.get("/rules/{rule_id}/edit", response_class=HTMLResponse)
 def edit_rule_form(request: Request, rule_id: int):
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
-    ).fetchone()
-    if not row:
+    rule = get_rule_aggregate(conn, rule_id)
+    if not rule:
         conn.close()
         return RedirectResponse(url="/rules", status_code=303)
-    rule = dict(row)
-    emails = conn.execute(
-        "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
-    ).fetchall()
-    rule["emails"] = [e["email"] for e in emails]
+    rule["emails"] = rule.get("recipients", [])
     rule["enabled"] = bool(rule["enabled"])
     rule["send_teams"] = bool(rule.get("send_teams", 1))
     rule["send_email"] = bool(rule["send_email"])
@@ -482,49 +469,45 @@ async def save_edit_rule(
     send_email: Optional[str] = Form(None),
     send_gitlab: Optional[str] = Form(None),
     enabled: Optional[str] = Form(None),
+    pipeline_job_name: str = Form("changelog:validate"),
+    pipeline_retry_jobs: str = Form(""),
+    retry_trace_marker: str = Form("[5/5] Building fresh packages..."),
+    retry_trace_matcher_regex: str = Form("TLS socket disconnected|ECONNRESET|connection reset"),
+    review_base_ref: str = Form(""),
+    review_custom_prompt: str = Form(""),
 ):
     form = await request.form()
     emails = form.getlist("emails")
 
     conn = get_db()
-    conn.execute(
-        """UPDATE notification_rules SET
-           name=?, description=?, enabled=?, file_pattern=?, content_match=?,
-           content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
-           file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           title_exclude=?, action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
-           WHERE id=?""",
-        (
-            name,
-            description,
-            1 if enabled else 0,
-            file_pattern,
-            content_match,
-            content_exclude,
-            match_type,
-            target_branch,
-            mr_state,
-            poll_interval_seconds,
-            1 if file_check_enabled else 0,
-            file_check_path_prefix,
-            file_check_mode,
-            title_exclude,
-            action_type,
-            1 if send_teams else 0,
-            teams_webhook_url,
-            1 if send_email else 0,
-            1 if send_gitlab else 0,
-            rule_id,
-        ),
-    )
-    conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
-    for email in emails:
-        email = email.strip()
-        if email:
-            conn.execute(
-                "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
-                (email, rule_id),
-            )
+    upsert_rule_aggregate(conn, {
+        "name": name,
+        "description": description,
+        "enabled": bool(enabled),
+        "file_pattern": file_pattern,
+        "content_match": content_match,
+        "content_exclude": content_exclude,
+        "match_type": match_type,
+        "target_branch": target_branch,
+        "mr_state": mr_state,
+        "poll_interval_seconds": poll_interval_seconds,
+        "file_check_enabled": bool(file_check_enabled),
+        "file_check_path_prefix": file_check_path_prefix,
+        "file_check_mode": file_check_mode,
+        "title_exclude": title_exclude,
+        "action_type": action_type,
+        "send_teams": bool(send_teams),
+        "teams_webhook_url": teams_webhook_url,
+        "send_email": bool(send_email),
+        "send_gitlab": bool(send_gitlab),
+        "pipeline_job_name": pipeline_job_name,
+        "pipeline_retry_jobs": pipeline_retry_jobs,
+        "retry_trace_marker": retry_trace_marker,
+        "retry_trace_matcher_regex": retry_trace_matcher_regex,
+        "review_base_ref": review_base_ref,
+        "review_custom_prompt": review_custom_prompt,
+        "emails": emails,
+    }, rule_id)
     conn.commit()
     conn.close()
     return RedirectResponse(url="/rules", status_code=303)

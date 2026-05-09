@@ -4,6 +4,7 @@ import re
 from typing import Any, Callable, Awaitable
 
 from db import get_db
+from services.rule_store import load_runtime_rules
 
 
 async def evaluate_rules_for_mr(
@@ -20,15 +21,7 @@ async def evaluate_rules_for_mr(
         return []
 
     conn = get_db()
-    placeholders = ",".join("?" for _ in rule_ids)
-    rules = conn.execute(
-        f"""SELECT r.*, GROUP_CONCAT(e.email) as emails
-           FROM notification_rules r
-           LEFT JOIN email_recipients e ON e.rule_id = r.id
-           WHERE r.id IN ({placeholders}) AND r.enabled = 1
-           GROUP BY r.id""",
-        rule_ids,
-    ).fetchall()
+    rules = load_runtime_rules(conn, rule_ids, enabled_only=True)
     conn.close()
 
     results = []
@@ -39,8 +32,7 @@ async def evaluate_rules_for_mr(
             content_cache[file_path] = await get_content(file_path)
         return content_cache[file_path]
 
-    for rule_row in rules:
-        rule = dict(rule_row)
+    for rule in rules:
         title_exclude = rule.get("title_exclude") or ""
         if title_exclude and mr_title:
             try:
@@ -109,12 +101,11 @@ async def evaluate_rules_for_mr(
                     if file_found or not referenced_files:
                         continue
 
-            emails = rule["emails"].split(",") if rule["emails"] else []
             results.append({
                 "rule": rule,
                 "file_path": file_path,
                 "file_content": content or "",
-                "emails": emails,
+                "emails": rule.get("emails", []),
             })
 
     return results

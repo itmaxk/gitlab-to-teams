@@ -6,6 +6,12 @@ from db import get_db, get_global_setting, set_global_setting
 from models import RuleCreate, RuleUpdate
 from services.teams_client import send_teams_notification
 from services.notification_dispatcher import dispatch_notifications
+from services.rule_store import (
+    get_rule_aggregate,
+    list_rule_aggregates,
+    load_runtime_rule,
+    upsert_rule_aggregate,
+)
 
 router = APIRouter(prefix="/api/rules", tags=["rules"])
 
@@ -46,16 +52,16 @@ def recent_logs(
 
 
 def _rule_to_out(row) -> dict:
-    d = dict(row)
+    raw = dict(row)
     conn = get_db()
-    emails = conn.execute(
-        "SELECT email FROM email_recipients WHERE rule_id = ?", (d["id"],)
-    ).fetchall()
+    d = get_rule_aggregate(conn, raw["id"])
     conn.close()
-    d["emails"] = [e["email"] for e in emails]
+    if d is None:
+        return {}
+    d["emails"] = d.get("recipients", [])
     d["enabled"] = bool(d["enabled"])
-    d["send_teams"] = bool(d.get("send_teams", 1))
-    d["send_email"] = bool(d["send_email"])
+    d["send_teams"] = bool(d.get("send_teams", 0))
+    d["send_email"] = bool(d.get("send_email", 0))
     d["send_gitlab"] = bool(d.get("send_gitlab", 0))
     d["file_check_enabled"] = bool(d.get("file_check_enabled", 0))
     d["action_type"] = d.get("action_type", "notify") or "notify"
@@ -65,9 +71,7 @@ def _rule_to_out(row) -> dict:
 @router.get("")
 def list_rules() -> list[dict]:
     conn = get_db()
-    rows = conn.execute(
-        "SELECT * FROM notification_rules ORDER BY created_at DESC"
-    ).fetchall()
+    rows = list_rule_aggregates(conn)
     conn.close()
     return [_rule_to_out(r) for r in rows]
 
@@ -94,9 +98,7 @@ def update_global_title_excludes(data: dict):
 @router.get("/{rule_id}")
 def get_rule(rule_id: int) -> dict:
     conn = get_db()
-    row = conn.execute(
-        "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
-    ).fetchone()
+    row = get_rule_aggregate(conn, rule_id)
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -104,54 +106,17 @@ def get_rule(rule_id: int) -> dict:
 
 
 @router.post("", status_code=201)
-def create_rule(data: RuleCreate) -> dict:
+def create_rule(data: dict) -> dict:
     conn = get_db()
-    cur = conn.execute(
-        """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, content_exclude, match_type,
-            target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix, file_check_mode,
-            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            data.name,
-            data.description,
-            data.file_pattern,
-            data.content_match,
-            data.content_exclude,
-            data.match_type,
-            data.target_branch,
-            data.mr_state,
-            data.poll_interval_seconds,
-            int(data.file_check_enabled),
-            data.file_check_path_prefix,
-            data.file_check_mode,
-            data.title_exclude,
-            data.action_type,
-            int(data.send_teams),
-            data.teams_webhook_url,
-            int(data.send_email),
-            int(data.send_gitlab),
-        ),
-    )
-    rule_id = cur.lastrowid
-    for email in data.emails:
-        email = email.strip()
-        if email:
-            conn.execute(
-                "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
-                (email, rule_id),
-            )
+    rule_id = upsert_rule_aggregate(conn, data)
     conn.commit()
-    row = conn.execute(
-        "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
-    ).fetchone()
+    row = get_rule_aggregate(conn, rule_id)
     conn.close()
     return _rule_to_out(row)
 
 
 @router.put("/{rule_id}")
-def update_rule(rule_id: int, data: RuleUpdate) -> dict:
+def update_rule(rule_id: int, data: dict) -> dict:
     conn = get_db()
     row = conn.execute(
         "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
@@ -160,48 +125,9 @@ def update_rule(rule_id: int, data: RuleUpdate) -> dict:
         conn.close()
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    conn.execute(
-        """UPDATE notification_rules SET
-           name=?, description=?, enabled=?, file_pattern=?, content_match=?,
-           content_exclude=?, match_type=?, target_branch=?, mr_state=?, poll_interval_seconds=?,
-           file_check_enabled=?, file_check_path_prefix=?, file_check_mode=?,
-           title_exclude=?, action_type=?, send_teams=?, teams_webhook_url=?, send_email=?, send_gitlab=?, updated_at=CURRENT_TIMESTAMP
-           WHERE id=?""",
-        (
-            data.name,
-            data.description,
-            int(data.enabled),
-            data.file_pattern,
-            data.content_match,
-            data.content_exclude,
-            data.match_type,
-            data.target_branch,
-            data.mr_state,
-            data.poll_interval_seconds,
-            int(data.file_check_enabled),
-            data.file_check_path_prefix,
-            data.file_check_mode,
-            data.title_exclude,
-            data.action_type,
-            int(data.send_teams),
-            data.teams_webhook_url,
-            int(data.send_email),
-            int(data.send_gitlab),
-            rule_id,
-        ),
-    )
-    conn.execute("DELETE FROM email_recipients WHERE rule_id = ?", (rule_id,))
-    for email in data.emails:
-        email = email.strip()
-        if email:
-            conn.execute(
-                "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
-                (email, rule_id),
-            )
+    upsert_rule_aggregate(conn, data, rule_id)
     conn.commit()
-    row = conn.execute(
-        "SELECT * FROM notification_rules WHERE id = ?", (rule_id,)
-    ).fetchone()
+    row = get_rule_aggregate(conn, rule_id)
     conn.close()
     return _rule_to_out(row)
 
@@ -244,48 +170,12 @@ def copy_rule(rule_id: int) -> dict:
         conn.close()
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    src = dict(row)
-    cur = conn.execute(
-        """INSERT INTO notification_rules
-           (name, description, file_pattern, content_match, content_exclude, match_type,
-            target_branch, mr_state, poll_interval_seconds,
-            file_check_enabled, file_check_path_prefix, file_check_mode,
-            title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab, enabled)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
-        (
-            src["name"] + " (копия)",
-            src["description"],
-            src["file_pattern"],
-            src["content_match"],
-            src.get("content_exclude", ""),
-            src["match_type"],
-            src["target_branch"],
-            src["mr_state"],
-            src["poll_interval_seconds"],
-            src["file_check_enabled"],
-            src["file_check_path_prefix"],
-            src.get("file_check_mode", "present"),
-            src.get("title_exclude", ""),
-            src.get("action_type", "notify"),
-            src.get("send_teams", 1),
-            src["teams_webhook_url"],
-            src["send_email"],
-            src.get("send_gitlab", 0),
-        ),
-    )
-    new_id = cur.lastrowid
-    emails = conn.execute(
-        "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
-    ).fetchall()
-    for e in emails:
-        conn.execute(
-            "INSERT OR IGNORE INTO email_recipients (email, rule_id) VALUES (?, ?)",
-            (e["email"], new_id),
-        )
+    src = get_rule_aggregate(conn, rule_id)
+    src["name"] = src["name"] + " (копия)"
+    src["enabled"] = False
+    new_id = upsert_rule_aggregate(conn, src, force_disabled=True)
     conn.commit()
-    new_row = conn.execute(
-        "SELECT * FROM notification_rules WHERE id = ?", (new_id,)
-    ).fetchone()
+    new_row = get_rule_aggregate(conn, new_id)
     conn.close()
     return _rule_to_out(new_row)
 
@@ -302,10 +192,7 @@ async def test_rule(rule_id: int):
         conn.close()
         raise HTTPException(status_code=404, detail="Rule not found")
 
-    row = dict(raw)
-    emails_rows = conn.execute(
-        "SELECT email FROM email_recipients WHERE rule_id = ?", (rule_id,)
-    ).fetchall()
+    row = load_runtime_rule(conn, rule_id)
     conn.close()
 
     if row.get("action_type") == "pipeline_job_retry":
@@ -346,7 +233,7 @@ async def test_rule(rule_id: int):
         results.append("teams")
 
     if send_email:
-        emails = [e["email"] for e in emails_rows]
+        emails = row.get("emails", [])
         if not emails:
             default_email = os.getenv("DEFAULT_EMAIL", "")
             if default_email:

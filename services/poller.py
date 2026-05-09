@@ -28,6 +28,7 @@ from services.pipeline_check import (
     parse_retry_job_names,
     retry_failed_config_jobs,
 )
+from services.rule_store import load_enabled_runtime_rules
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ def _get_rules_grouped_by_schedule() -> dict[int, list[dict]]:
     """
     default_interval = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))
     conn = get_db()
-    rows = conn.execute("SELECT * FROM notification_rules WHERE enabled = 1").fetchall()
+    rows = load_enabled_runtime_rules(conn)
     conn.close()
 
     groups: dict[int, list[dict]] = {}

@@ -5,7 +5,7 @@ import asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
-from routers.rules import copy_rule, test_rule as run_rule_test
+from routers.rules import copy_rule, create_rule, test_rule as run_rule_test
 
 
 def test_copy_rule_preserves_content_exclude_and_teams_flag(tmp_path, monkeypatch):
@@ -106,3 +106,58 @@ def test_pipeline_job_retry_test_runs_rule_immediately(tmp_path, monkeypatch):
     assert row["rules_checked"] == 1
     assert row["rules_matched"] == 1
     assert row["success"] == 1
+
+
+def test_create_rule_accepts_aggregate_payload_and_writes_child_tables(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    created = create_rule({
+        "name": "Aggregate retry rule",
+        "description": "Built by constructor DTO",
+        "enabled": True,
+        "scope": {
+            "target_branch": "*",
+            "mr_state": "opened",
+            "poll_interval_seconds": 600,
+        },
+        "conditions": [
+            {"type": "changed_file_glob", "operator": "glob", "value": "*"},
+            {"type": "title_exclude_regex", "operator": "regex", "value": "Draft"},
+        ],
+        "actions": [{"type": "pipeline_job_retry", "enabled": True}],
+        "channels": {
+            "teams": {"enabled": False, "settings": {}},
+            "email": {"enabled": True, "settings": {}},
+            "gitlab": {"enabled": False, "settings": {}},
+        },
+        "recipients": ["dev@example.test"],
+        "configs": {
+            "pipeline_job_retry": {
+                "jobs": ["config:validate", "config:check-uncommitted"],
+                "trace_marker": "[5/5] Building fresh packages...",
+                "trace_matcher_regex": "TLS socket disconnected",
+            }
+        },
+    })
+
+    assert created["action_type"] == "pipeline_job_retry"
+    assert created["content_match"] == "config:validate,config:check-uncommitted"
+    assert created["send_email"] is True
+    assert created["emails"] == ["dev@example.test"]
+
+    conn = db.get_db()
+    condition_count = conn.execute(
+        "SELECT COUNT(*) FROM rule_conditions WHERE rule_id = ?", (created["id"],)
+    ).fetchone()[0]
+    job_rows = conn.execute(
+        "SELECT job_name FROM rule_pipeline_retry_jobs WHERE rule_id = ? ORDER BY sort_order",
+        (created["id"],),
+    ).fetchall()
+    conn.close()
+
+    assert condition_count == 2
+    assert [row["job_name"] for row in job_rows] == [
+        "config:validate",
+        "config:check-uncommitted",
+    ]

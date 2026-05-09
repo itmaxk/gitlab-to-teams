@@ -2,6 +2,12 @@ import json
 import sqlite3
 from pathlib import Path
 
+from services.rule_store import (
+    backfill_rule_schema,
+    create_rule_schema,
+    upsert_rule_aggregate,
+)
+
 DB_PATH = Path(__file__).parent / "data.db"
 
 
@@ -239,25 +245,6 @@ def init_db():
     """)
 
     _migrate(conn)
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "mr_model_no_postgres",
-            "name": "MR changed model without postgres script",
-            "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
-            "file_pattern": "model/*/*",
-            "content_match": "",
-            "match_type": "contains",
-            "target_branch": "master",
-            "mr_state": "opened",
-            "file_check_enabled": 1,
-            "file_check_path_prefix": "database/postgres",
-            "file_check_mode": "absent_any",
-            "send_teams": 1,
-            "send_email": 1,
-            "enabled": 1,
-        },
-    )
 
     conn.close()
 
@@ -309,6 +296,7 @@ def _migrate(conn: sqlite3.Connection):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_rules_seed_key "
         "ON notification_rules(seed_key)"
     )
+    create_rule_schema(conn)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_jira_users_display_name "
         "ON jira_users(display_name)"
@@ -502,6 +490,7 @@ def _migrate(conn: sqlite3.Connection):
     except Exception:
         pass
 
+    backfill_rule_schema(conn)
     conn.commit()
 
 
@@ -542,6 +531,26 @@ def set_global_setting(key: str, value: str):
 
 def seed_default_rule():
     conn = get_db()
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "mr_model_no_postgres",
+            "name": "MR changed model without postgres script",
+            "description": "If files inside model subfolders changed and there is no SQL script under database/postgres, notify that a table migration script is required",
+            "file_pattern": "model/*/*",
+            "content_match": "",
+            "match_type": "contains",
+            "target_branch": "master",
+            "mr_state": "opened",
+            "file_check_enabled": 1,
+            "file_check_path_prefix": "database/postgres",
+            "file_check_mode": "absent_any",
+            "send_teams": 1,
+            "send_email": 1,
+            "enabled": 1,
+        },
+    )
+
     _seed_rule_if_missing(
         conn,
         {
@@ -830,16 +839,12 @@ SEED_UPDATABLE_FIELDS = (
 
 
 def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
+    rule = dict(rule)
     seed_key = rule.pop("seed_key", None) or rule.get("name", "")
     if not seed_key:
-        cols = ", ".join(rule.keys())
-        placeholders = ", ".join("?" for _ in rule)
-        conn.execute(
-            f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders})",
-            list(rule.values()),
-        )
+        rule_id = upsert_rule_aggregate(conn, rule)
         conn.commit()
-        return
+        return rule_id
     rule["seed_key"] = seed_key
     cols = ", ".join(rule.keys())
     placeholders = ", ".join("?" for _ in rule)
@@ -850,4 +855,10 @@ def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
         f"ON CONFLICT(seed_key) DO UPDATE SET {update_clause}",
         list(rule.values()),
     )
+    row = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?", (seed_key,)
+    ).fetchone()
+    if row:
+        upsert_rule_aggregate(conn, rule, row["id"])
     conn.commit()
+    return row["id"] if row else None

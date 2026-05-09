@@ -18,7 +18,7 @@
   </div>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
-    <legend class="text-sm text-slate-400 px-2">GitLab</legend>
+    <legend class="text-sm text-slate-400 px-2">Basic / Scope</legend>
 
     <div class="grid grid-cols-3 gap-4">
       <div>
@@ -53,6 +53,7 @@
         <option value="xlsx_review" {{ 'selected' if rule and rule.action_type == 'xlsx_review' }}>XLSX ревью (xlsx_review)</option>
         <option value="code_review" {{ 'selected' if rule and rule.action_type == 'code_review' }}>Code review (code_review)</option>
         <option value="title_check" {{ 'selected' if rule and rule.action_type == 'title_check' }}>Проверка заголовка (title_check)</option>
+        <option value="pipeline_check" {{ 'selected' if rule and rule.action_type == 'pipeline_check' }}>Pipeline job check (pipeline_check)</option>
         <option value="pipeline_job_retry" {{ 'selected' if rule and rule.action_type == 'pipeline_job_retry' }}>Pipeline job retry (pipeline_job_retry)</option>
       </select>
       <p class="text-xs text-slate-500 mt-1">xlsx_review — автоматический XLSX-ревью для MR с xlsx-файлами. code_review — AI-ревью кода через LLM. title_check — проверка формата заголовка MR (JIRA-TASK: Short description, без русских букв, номер релиза для release-веток). pipeline_job_retry — retry failed jobs from content_match when trace stops after [5/5] Building fresh packages.... Пропускают MR с title начинающимся с Draft.</p>
@@ -60,7 +61,7 @@
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
-    <legend class="text-sm text-slate-400 px-2">Условия совпадения</legend>
+    <legend class="text-sm text-slate-400 px-2">Conditions</legend>
 
     <div class="grid grid-cols-2 gap-4">
       <div>
@@ -112,7 +113,7 @@
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
-    <legend class="text-sm text-slate-400 px-2">Проверка ссылок на файлы в changelog</legend>
+    <legend class="text-sm text-slate-400 px-2">Referenced / Related Files</legend>
 
     <div class="flex items-center gap-2">
       <input type="checkbox" name="file_check_enabled" id="file_check_enabled"
@@ -137,6 +138,8 @@
           class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
           <option value="present" {{ 'selected' if not rule or rule.file_check_mode == 'present' }}>Файл должен быть в MR</option>
           <option value="absent" {{ 'selected' if rule and rule.file_check_mode == 'absent' }}>Файл отсутствует в MR</option>
+          <option value="present_any" {{ 'selected' if rule and rule.file_check_mode == 'present_any' }}>Any changed file under prefix exists</option>
+          <option value="absent_any" {{ 'selected' if rule and rule.file_check_mode == 'absent_any' }}>No changed file under prefix exists</option>
         </select>
       </div>
     </div>
@@ -146,7 +149,57 @@
   </fieldset>
 
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
-    <legend class="text-sm text-slate-400 px-2">Уведомления</legend>
+    <legend class="text-sm text-slate-400 px-2">Actions</legend>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Pipeline check job</label>
+        <input type="text" name="pipeline_job_name"
+          value="{{ rule.configs.pipeline_check.job_name if rule and rule.configs else 'changelog:validate' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Retry jobs (comma-separated)</label>
+        <input type="text" name="pipeline_retry_jobs"
+          value="{{ rule.configs.pipeline_job_retry.jobs | join(',') if rule and rule.configs else '' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="config:check-uncommitted,config:validate">
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Retry trace marker</label>
+        <input type="text" name="retry_trace_marker"
+          value="{{ rule.configs.pipeline_job_retry.trace_marker if rule and rule.configs else '[5/5] Building fresh packages...' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Retry trace matcher regex</label>
+        <input type="text" name="retry_trace_matcher_regex"
+          value="{{ rule.configs.pipeline_job_retry.trace_matcher_regex if rule and rule.configs else 'TLS socket disconnected|ECONNRESET|connection reset' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Review base ref</label>
+        <input type="text" name="review_base_ref"
+          value="{{ rule.configs.review.base_ref if rule and rule.configs else '' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Review custom prompt</label>
+        <input type="text" name="review_custom_prompt"
+          value="{{ rule.configs.review.custom_prompt if rule and rule.configs else '' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">Delivery</legend>
 
     {% if rule %}
     <div class="flex items-center gap-2">

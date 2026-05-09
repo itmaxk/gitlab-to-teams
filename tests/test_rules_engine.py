@@ -8,6 +8,18 @@ import db
 from services.rules_engine import _extract_file_references, evaluate_rules_for_mr
 
 
+def _seed_model_without_postgres_rule() -> int:
+    db.seed_default_rule()
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id FROM notification_rules WHERE name = ?",
+        ("MR changed model without postgres script",),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    return row["id"]
+
+
 def test_extract_file_references_supports_handlebars():
     refs = _extract_file_references(
         "Templates: `user-card.handlebars`, migrate_001.sql, readme.md"
@@ -18,25 +30,28 @@ def test_extract_file_references_supports_handlebars():
     assert "readme.md" in refs
 
 
-def test_rule_matches_model_change_without_postgres_script(tmp_path, monkeypatch):
+def test_init_db_does_not_seed_notification_rules(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
 
     conn = db.get_db()
-    row = conn.execute(
-        "SELECT id FROM notification_rules WHERE name = ?",
-        ("MR changed model without postgres script",),
-    ).fetchone()
+    count = conn.execute("SELECT COUNT(*) FROM notification_rules").fetchone()[0]
     conn.close()
 
-    assert row is not None
+    assert count == 0
+
+
+def test_rule_matches_model_change_without_postgres_script(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    rule_id = _seed_model_without_postgres_rule()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [row["id"]],
+            [rule_id],
             ["model/customer/profile.py"],
             get_content,
         )
@@ -50,22 +65,14 @@ def test_rule_matches_model_change_without_postgres_script(tmp_path, monkeypatch
 def test_rule_skips_when_postgres_script_exists(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
-
-    conn = db.get_db()
-    row = conn.execute(
-        "SELECT id FROM notification_rules WHERE name = ?",
-        ("MR changed model without postgres script",),
-    ).fetchone()
-    conn.close()
-
-    assert row is not None
+    rule_id = _seed_model_without_postgres_rule()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [row["id"]],
+            [rule_id],
             [
                 "model/customer/profile.py",
                 "database/postgres/migration/20260330_alter_customer.sql",
@@ -145,21 +152,14 @@ def test_global_title_skip_skips_changelog_for_version(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    row = conn if conn else None
-    from db import get_db as _get_db
-    conn2 = _get_db()
-    rule_row = conn2.execute(
-        "SELECT id FROM notification_rules WHERE name = ?",
-        ("MR changed model without postgres script",),
-    ).fetchone()
-    conn2.close()
+    rule_id = _seed_model_without_postgres_rule()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [rule_row["id"]],
+            [rule_id],
             ["model/customer/profile.py"],
             get_content,
             mr_title="Changelog for version 2.0.1",
@@ -180,13 +180,7 @@ def test_global_title_skip_skips_release_tag(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    from db import get_db as _get_db
-    conn2 = _get_db()
-    rule_row = conn2.execute(
-        "SELECT id FROM notification_rules WHERE name = ?",
-        ("MR changed model without postgres script",),
-    ).fetchone()
-    conn2.close()
+    rule_id = _seed_model_without_postgres_rule()
 
     async def get_content(_: str) -> str:
         return "content"
@@ -200,7 +194,7 @@ def test_global_title_skip_skips_release_tag(tmp_path, monkeypatch):
     ]:
         matches = asyncio.run(
             evaluate_rules_for_mr(
-                [rule_row["id"]],
+                [rule_id],
                 ["model/customer/profile.py"],
                 get_content,
                 mr_title=title,
@@ -221,20 +215,14 @@ def test_global_title_skip_allows_normal_titles(tmp_path, monkeypatch):
     conn.commit()
     conn.close()
 
-    from db import get_db as _get_db
-    conn2 = _get_db()
-    rule_row = conn2.execute(
-        "SELECT id FROM notification_rules WHERE name = ?",
-        ("MR changed model without postgres script",),
-    ).fetchone()
-    conn2.close()
+    rule_id = _seed_model_without_postgres_rule()
 
     async def get_content(_: str) -> str:
         return "class CustomerModel: pass"
 
     matches = asyncio.run(
         evaluate_rules_for_mr(
-            [rule_row["id"]],
+            [rule_id],
             ["model/customer/profile.py"],
             get_content,
             mr_title="Fix customer profile validation",
