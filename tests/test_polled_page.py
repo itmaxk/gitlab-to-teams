@@ -150,6 +150,41 @@ def test_polled_combines_status_and_matches_filters(tmp_path, monkeypatch):
     assert [row["mr_iid"] for row in rows] == [1]
 
 
+def test_polled_filters_apply_to_latest_row_per_mr(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    _insert_polled_mr(
+        conn,
+        mr_iid=14326,
+        mr_state="opened",
+        rules_matched=1,
+        polled_at="2026-05-09 10:10:37",
+    )
+    _insert_polled_mr(
+        conn,
+        mr_iid=14326,
+        mr_state="opened",
+        rules_matched=0,
+        polled_at="2026-05-09 10:27:54",
+    )
+    conn.commit()
+    conn.close()
+
+    default_rows = _rendered_polled_rows(monkeypatch)
+    matched_rows = _rendered_polled_rows(monkeypatch, has_matches=1)
+    unmatched_rows = _rendered_polled_rows(monkeypatch, has_matches=0)
+
+    assert [(row["mr_iid"], row["polled_at"], row["rules_matched"]) for row in default_rows] == [
+        (14326, "2026-05-09 10:27:54", 0)
+    ]
+    assert matched_rows == []
+    assert [(row["mr_iid"], row["polled_at"], row["rules_matched"]) for row in unmatched_rows] == [
+        (14326, "2026-05-09 10:27:54", 0)
+    ]
+
+
 def test_polled_default_hides_old_merged_and_closed_until_show_all(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()

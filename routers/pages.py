@@ -184,15 +184,29 @@ def polled_mrs(
         where_clauses.append("target_branch = ?")
         params.append(target_branch)
     where_sql = " AND ".join(where_clauses)
-    query = f"SELECT * FROM polled_mrs WHERE {where_sql} ORDER BY polled_at DESC"
+    latest_polled_cte = """
+        WITH latest_polled AS (
+            SELECT p.*
+            FROM polled_mrs p
+            JOIN (
+                SELECT mr_iid, MAX(id) AS latest_id
+                FROM polled_mrs
+                GROUP BY mr_iid
+            ) latest ON latest.latest_id = p.id
+        )
+    """
+    query = (
+        f"{latest_polled_cte} "
+        f"SELECT * FROM latest_polled WHERE {where_sql} ORDER BY polled_at DESC, id DESC"
+    )
 
     rows = conn.execute(query, params).fetchall()
     total = conn.execute(
-        f"SELECT COUNT(*) FROM polled_mrs WHERE {where_sql}",
+        f"{latest_polled_cte} SELECT COUNT(*) FROM latest_polled WHERE {where_sql}",
         params,
     ).fetchone()[0]
     success_count = conn.execute(
-        f"SELECT COUNT(*) FROM polled_mrs WHERE {where_sql} AND success = 1",
+        f"{latest_polled_cte} SELECT COUNT(*) FROM latest_polled WHERE {where_sql} AND success = 1",
         params,
     ).fetchone()[0]
     merged_cursors = _get_merged_mr_poll_cursors()
