@@ -108,6 +108,20 @@ def should_retry_config_job_trace(trace: str) -> bool:
     return all(_is_retry_trace_boilerplate_line(line) for line in suffix_lines)
 
 
+def _has_newer_same_name_job(jobs: list[dict], job_name: str, job_id: int) -> bool:
+    """Return True when GitLab already lists a newer run for the same job."""
+    for job in jobs:
+        if job.get("name") != job_name:
+            continue
+        try:
+            other_job_id = int(job.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if other_job_id > job_id:
+            return True
+    return False
+
+
 def _was_job_retried(rule_id: int, job_id: int) -> bool:
     conn = get_db()
     row = conn.execute(
@@ -251,6 +265,10 @@ async def retry_failed_config_jobs(
             result.skipped.append({"job_id": job_id, "job_name": job_name, "reason": "already_retried"})
             continue
 
+        if _has_newer_same_name_job(jobs, job_name, job_id):
+            result.skipped.append({"job_id": job_id, "job_name": job_name, "reason": "newer_retry_exists"})
+            continue
+
         try:
             trace = await get_job_trace(project_id, job_id)
         except Exception:
@@ -283,6 +301,17 @@ async def retry_failed_config_jobs(
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             if status_code in (401, 403):
+                if await _job_has_newer_retry(project_id, int(pipeline_id), job_name, job_id):
+                    logger.info(
+                        "Job %s (%s) on MR !%s already has a newer retry",
+                        job_id,
+                        job_name,
+                        mr_iid,
+                    )
+                    result.skipped.append(
+                        {"job_id": job_id, "job_name": job_name, "reason": "newer_retry_exists"}
+                    )
+                    continue
                 logger.warning(
                     "GitLab refused retry for job %s (%s) on MR !%s: %s %s",
                     job_id,
@@ -300,3 +329,17 @@ async def retry_failed_config_jobs(
             result.errors.append(f"retry_failed:{job_id}")
 
     return result
+
+
+async def _job_has_newer_retry(
+    project_id: int,
+    pipeline_id: int,
+    job_name: str,
+    job_id: int,
+) -> bool:
+    try:
+        jobs = await get_pipeline_jobs(project_id, pipeline_id)
+    except Exception:
+        logger.exception("Failed to refresh jobs for pipeline %s", pipeline_id)
+        return False
+    return _has_newer_same_name_job(jobs, job_name, job_id)

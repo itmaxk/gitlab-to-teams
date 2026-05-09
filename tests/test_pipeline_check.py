@@ -265,6 +265,43 @@ async def test_does_not_retry_same_failed_job_twice(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_skips_failed_job_when_newer_retry_already_exists(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_retry_fresh_packages",),
+    ).fetchone()["id"]
+    conn.close()
+
+    pipelines = [{"id": 42, "status": "failed"}]
+    jobs = [
+        {"id": 101, "name": "config:validate", "status": "failed", "web_url": "https://gitlab.com/job/101"},
+        {"id": 201, "name": "config:validate", "status": "running", "web_url": "https://gitlab.com/job/201"},
+    ]
+    retry_mock = AsyncMock(return_value={"id": 301})
+
+    with (
+        patch("services.pipeline_check.get_mr_pipelines", new_callable=AsyncMock, return_value=pipelines),
+        patch("services.pipeline_check.get_pipeline_jobs", new_callable=AsyncMock, return_value=jobs),
+        patch("services.pipeline_check.get_job_trace", new_callable=AsyncMock) as trace_mock,
+        patch("services.pipeline_check.retry_job", retry_mock),
+    ):
+        result = await retry_failed_config_jobs(1, 10, ["config:validate"], rule_id)
+
+    assert result.checked == 1
+    assert result.retried == []
+    assert result.skipped == [
+        {"job_id": 101, "job_name": "config:validate", "reason": "newer_retry_exists"}
+    ]
+    trace_mock.assert_not_awaited()
+    retry_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_retry_forbidden_is_reported_without_marking_job_retried(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
@@ -310,6 +347,57 @@ async def test_retry_forbidden_is_reported_without_marking_job_retried(tmp_path,
     ).fetchone()
     conn.close()
     assert row is None
+
+
+@pytest.mark.anyio
+async def test_retry_forbidden_is_skipped_when_newer_retry_appears(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_retry_fresh_packages",),
+    ).fetchone()["id"]
+    conn.close()
+
+    pipelines = [{"id": 42, "status": "failed"}]
+    initial_jobs = [
+        {"id": 101, "name": "config:validate", "status": "failed", "web_url": "https://gitlab.com/job/101"},
+    ]
+    refreshed_jobs = [
+        {"id": 101, "name": "config:validate", "status": "failed", "web_url": "https://gitlab.com/job/101"},
+        {"id": 201, "name": "config:validate", "status": "pending", "web_url": "https://gitlab.com/job/201"},
+    ]
+    request = httpx.Request("POST", "https://gitlab.example/api/v4/projects/1/jobs/101/retry")
+    response = httpx.Response(403, request=request, text='{"message":"403 Forbidden"}')
+    retry_mock = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Client error '403 Forbidden'",
+            request=request,
+            response=response,
+        )
+    )
+
+    with (
+        patch("services.pipeline_check.get_mr_pipelines", new_callable=AsyncMock, return_value=pipelines),
+        patch(
+            "services.pipeline_check.get_pipeline_jobs",
+            new_callable=AsyncMock,
+            side_effect=[initial_jobs, refreshed_jobs],
+        ),
+        patch("services.pipeline_check.get_job_trace", new_callable=AsyncMock, return_value="[5/5] Building fresh packages...\n"),
+        patch("services.pipeline_check.retry_job", retry_mock),
+    ):
+        result = await retry_failed_config_jobs(1, 10, ["config:validate"], rule_id)
+
+    assert result.checked == 1
+    assert result.retried == []
+    assert result.errors == []
+    assert result.skipped == [
+        {"job_id": 101, "job_name": "config:validate", "reason": "newer_retry_exists"}
+    ]
 
 
 def test_seeded_config_retry_rule_uses_ten_minute_interval(tmp_path, monkeypatch):
