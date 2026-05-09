@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, patch
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -261,6 +262,54 @@ async def test_does_not_retry_same_failed_job_twice(tmp_path, monkeypatch):
         {"job_id": 101, "job_name": "config:validate", "reason": "already_retried"}
     ]
     retry_mock.assert_awaited_once_with(1, 101)
+
+
+@pytest.mark.anyio
+async def test_retry_forbidden_is_reported_without_marking_job_retried(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_retry_fresh_packages",),
+    ).fetchone()["id"]
+    conn.close()
+
+    pipelines = [{"id": 42, "status": "failed"}]
+    jobs = [
+        {"id": 101, "name": "config:validate", "status": "failed", "web_url": "https://gitlab.com/job/101"},
+    ]
+    request = httpx.Request("POST", "https://gitlab.example/api/v4/projects/1/jobs/101/retry")
+    response = httpx.Response(403, request=request, text='{"message":"403 Forbidden"}')
+    retry_mock = AsyncMock(
+        side_effect=httpx.HTTPStatusError(
+            "Client error '403 Forbidden'",
+            request=request,
+            response=response,
+        )
+    )
+
+    with (
+        patch("services.pipeline_check.get_mr_pipelines", new_callable=AsyncMock, return_value=pipelines),
+        patch("services.pipeline_check.get_pipeline_jobs", new_callable=AsyncMock, return_value=jobs),
+        patch("services.pipeline_check.get_job_trace", new_callable=AsyncMock, return_value="[5/5] Building fresh packages...\n"),
+        patch("services.pipeline_check.retry_job", retry_mock),
+    ):
+        result = await retry_failed_config_jobs(1, 10, ["config:validate"], rule_id)
+
+    assert result.checked == 1
+    assert result.retried == []
+    assert result.errors == ["retry_forbidden:101"]
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT retried_job_id FROM pipeline_job_retry_log WHERE rule_id = ? AND job_id = ?",
+        (rule_id, 101),
+    ).fetchone()
+    conn.close()
+    assert row is None
 
 
 def test_seeded_config_retry_rule_uses_ten_minute_interval(tmp_path, monkeypatch):

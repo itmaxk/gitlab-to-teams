@@ -1,6 +1,8 @@
 import logging
 import re
 
+import httpx
+
 from db import get_db
 from services.gitlab_client import get_job_trace, get_mr_pipelines, get_pipeline_jobs, retry_job
 
@@ -278,6 +280,21 @@ async def retry_failed_config_jobs(
                 mr_iid,
                 pipeline_id,
             )
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code in (401, 403):
+                logger.warning(
+                    "GitLab refused retry for job %s (%s) on MR !%s: %s %s",
+                    job_id,
+                    job_name,
+                    mr_iid,
+                    status_code,
+                    exc.response.text,
+                )
+                result.errors.append(f"retry_forbidden:{job_id}")
+            else:
+                logger.exception("Failed to retry job %s (MR !%s)", job_id, mr_iid)
+                result.errors.append(f"retry_failed:{job_id}")
         except Exception:
             logger.exception("Failed to retry job %s (MR !%s)", job_id, mr_iid)
             result.errors.append(f"retry_failed:{job_id}")
