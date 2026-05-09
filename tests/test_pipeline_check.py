@@ -38,6 +38,23 @@ def test_should_retry_trace_when_error_follows_marker():
     assert should_retry_config_job_trace(trace) is True
 
 
+def test_should_retry_trace_when_gitlab_boilerplate_follows_marker():
+    trace = (
+        "[5/5] Building fresh packages...\n"
+        "section_end:1710000000:step_script\r\x1b[0K\n"
+        "section_start:1710000001:upload_artifacts_on_failure\r\x1b[0K\n"
+        "Uploading artifacts for failed job\n"
+        "WARNING: target/logs: no matching files\n"
+        "ERROR: No files to upload\n"
+        "section_end:1710000002:upload_artifacts_on_failure\r\x1b[0K\n"
+        "section_start:1710000003:cleanup_file_variables\r\x1b[0K\n"
+        "Cleaning up project directory and file based variables\n"
+        "section_end:1710000004:cleanup_file_variables\r\x1b[0K\n"
+        "ERROR: Job failed: exit code 1\n"
+    )
+    assert should_retry_config_job_trace(trace) is True
+
+
 def test_should_retry_trace_when_tls_socket_disconnect_error_present():
     trace = (
         "yarn install\n"

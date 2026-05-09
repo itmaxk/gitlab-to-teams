@@ -1,5 +1,22 @@
 # Test Plan
 
+## Pipeline Config Retry Trace Matching
+
+## Scope
+- Trace matching for `pipeline_job_retry` rules in `services/pipeline_check.py`
+
+## Critical cases
+- Marker is the last meaningful script output
+- Marker is followed by GitLab section/artifact/cleanup/failure boilerplate
+- TLS socket disconnect still matches without the marker
+- Real command output after the marker still prevents retry
+
+## Validation
+- `pytest tests/test_pipeline_check.py`
+
+## Out of scope
+- Live GitLab retry against a real pipeline
+
 ## XLSX Review In /review
 
 ## Scope

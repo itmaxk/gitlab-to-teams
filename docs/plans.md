@@ -1,5 +1,27 @@
 # Plan
 
+## Pipeline Config Retry Trace Matching
+
+### Goal
+- Make the seeded rule `Retry config jobs after fresh packages stall` retry failed config jobs when GitLab appends failure/cleanup boilerplate after the fresh-packages stall marker.
+
+### Milestone 1
+- Status: `[x]`
+- Goal: relax trace matching only for known GitLab failure boilerplate.
+- Tasks:
+- add a regression case for marker + section/artifact/cleanup suffix
+- keep non-boilerplate output after the marker as a non-match
+- verify focused pipeline retry tests
+- Definition of done:
+- traces that stall at `[5/5] Building fresh packages...` and then contain only GitLab failure boilerplate match the retry rule
+- traces with real successful output after the marker still do not match
+- Validation commands:
+- `pytest tests/test_pipeline_check.py`
+- Known risks:
+- GitLab may add more boilerplate line formats later; keep additions explicit and covered by trace examples
+- Stop-and-fix rule:
+- if a new suffix is not clearly GitLab/Yarn failure boilerplate, keep the rule conservative and log/inspect the real trace first
+
 ## XLSX Review In /review
 
 ### Goal

@@ -71,6 +71,25 @@ def _normalize_trace(trace: str) -> str:
     return "".join(ch for ch in text if ch == "\n" or ch == "\t" or ord(ch) >= 32)
 
 
+def _is_retry_trace_boilerplate_line(line: str) -> bool:
+    if not line:
+        return True
+    if line.startswith(("section_start:", "section_end:")):
+        return True
+    if re.fullmatch(r"\d{2}:\d{2}", line):
+        return True
+    return line.startswith(
+        (
+            "Running after_script",
+            "Uploading artifacts",
+            "WARNING:",
+            "ERROR: No files to upload",
+            "Cleaning up project directory",
+            "ERROR: Job failed",
+        )
+    )
+
+
 def should_retry_config_job_trace(trace: str) -> bool:
     """Return True when the trace stops at the fresh packages marker."""
     normalized = _normalize_trace(trace)
@@ -80,8 +99,11 @@ def should_retry_config_job_trace(trace: str) -> bool:
     marker_index = normalized.rfind(CONFIG_BUILD_MARKER)
     if marker_index < 0:
         return False
-    suffix = normalized[marker_index + len(CONFIG_BUILD_MARKER):].strip()
-    return not suffix or suffix.startswith("ERROR: Job failed")
+    suffix_lines = [
+        line.strip()
+        for line in normalized[marker_index + len(CONFIG_BUILD_MARKER):].splitlines()
+    ]
+    return all(_is_retry_trace_boilerplate_line(line) for line in suffix_lines)
 
 
 def _was_job_retried(rule_id: int, job_id: int) -> bool:

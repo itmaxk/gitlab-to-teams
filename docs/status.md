@@ -1,5 +1,41 @@
 # Status
 
+## Pipeline Config Retry Trace Matching
+
+## Current phase
+- `Milestone 1` completed
+
+## Done
+- Found the strict suffix check in `services/pipeline_check.py`
+- Added a regression trace with GitLab section/artifact/cleanup boilerplate after `[5/5] Building fresh packages...`
+- Relaxed the matcher to ignore only known failure boilerplate after the marker
+- Passed focused pipeline retry tests
+- Passed poller resilience tests
+
+## In progress
+- None
+
+## Next
+- None
+
+## Decisions
+- Keep arbitrary command output after the marker as a non-match
+- Treat GitLab section markers, artifact upload warnings, cleanup lines, and final `ERROR: Job failed` as boilerplate
+
+## Assumptions
+- The missed matches are caused by GitLab adding job-failure boilerplate after the Yarn fresh-packages stall marker
+
+## Commands
+- `pytest tests/test_pipeline_check.py`
+- `pytest tests/test_poller_resilience.py`
+
+## Blockers
+- None
+
+## Audit log
+- 2026-05-09: started pipeline retry trace matching fix
+- 2026-05-09: completed matcher fix and focused validation
+
 ## XLSX Review In /review
 
 ## Current phase
