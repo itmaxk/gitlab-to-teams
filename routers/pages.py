@@ -197,7 +197,11 @@ def polled_mrs(
     """
     query = (
         f"{latest_polled_cte} "
-        f"SELECT * FROM latest_polled WHERE {where_sql} ORDER BY polled_at DESC, id DESC"
+        f"""SELECT * FROM latest_polled WHERE {where_sql}
+            ORDER BY
+                CASE WHEN LOWER(mr_state) IN ('open', 'opened') THEN 0 ELSE 1 END,
+                polled_at DESC,
+                id DESC"""
     )
 
     rows = conn.execute(query, params).fetchall()

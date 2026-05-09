@@ -185,6 +185,48 @@ def test_polled_filters_apply_to_latest_row_per_mr(tmp_path, monkeypatch):
     ]
 
 
+def test_polled_orders_opened_mrs_before_newer_non_opened_mrs(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    _insert_polled_mr(
+        conn,
+        mr_iid=1,
+        mr_state="merged",
+        rules_matched=0,
+        polled_at="2026-05-08 10:30:00",
+        mr_merged_at="2026-05-08T10:30:00Z",
+    )
+    _insert_polled_mr(
+        conn,
+        mr_iid=2,
+        mr_state="opened",
+        rules_matched=0,
+        polled_at="2026-05-08 10:00:00",
+    )
+    _insert_polled_mr(
+        conn,
+        mr_iid=3,
+        mr_state="open",
+        rules_matched=0,
+        polled_at="2026-05-08 10:05:00",
+    )
+    _insert_polled_mr(
+        conn,
+        mr_iid=4,
+        mr_state="closed",
+        rules_matched=0,
+        polled_at="2026-05-08 10:40:00",
+    )
+    conn.commit()
+    conn.close()
+
+    rows = _rendered_polled_rows(monkeypatch, show_all=1)
+
+    assert [row["mr_iid"] for row in rows] == [3, 2, 4, 1]
+
+
 def test_polled_default_hides_old_merged_and_closed_until_show_all(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
@@ -238,8 +280,8 @@ def test_polled_default_hides_old_merged_and_closed_until_show_all(tmp_path, mon
     default_rows = _rendered_polled_rows(monkeypatch)
     all_rows = _rendered_polled_rows(monkeypatch, show_all=1)
 
-    assert [row["mr_iid"] for row in default_rows] == [4, 2, 1]
-    assert [row["mr_iid"] for row in all_rows] == [5, 4, 3, 2, 1]
+    assert [row["mr_iid"] for row in default_rows] == [2, 1, 4]
+    assert [row["mr_iid"] for row in all_rows] == [2, 1, 5, 4, 3]
 
 
 def test_polled_show_all_zero_keeps_default_filter_and_statuses_are_case_insensitive(tmp_path, monkeypatch):
@@ -277,7 +319,7 @@ def test_polled_show_all_zero_keeps_default_filter_and_statuses_are_case_insensi
 
     context = _rendered_polled_context(monkeypatch, show_all="0")
 
-    assert [row["mr_iid"] for row in context["rows"]] == [2, 1]
+    assert [row["mr_iid"] for row in context["rows"]] == [1, 2]
     assert context["stats"]["total"] == 2
     assert context["filters"]["show_all"] == 0
 
