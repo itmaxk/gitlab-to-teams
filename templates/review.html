@@ -573,7 +573,9 @@ function renderXlsxRowsTable(f) {
 
 function renderFindings() {
   const list = document.getElementById("findingsList");
-  const filtered = activeFilter === "all" ? currentFindings : currentFindings.filter(f => f.severity === activeFilter);
+  const filtered = currentFindings
+    .map((finding, index) => ({ finding, index }))
+    .filter(item => activeFilter === "all" || item.finding.severity === activeFilter);
 
   if (!filtered.length) {
     list.innerHTML = '<div class="text-center text-slate-500 py-6">Нет замечаний' + (activeFilter !== "all" ? " с таким уровнем" : "") + "</div>";
@@ -596,22 +598,76 @@ function renderFindings() {
     general: "Общее",
   };
 
-  list.innerHTML = filtered.map(f => {
+  list.innerHTML = filtered.map(({ finding: f, index }) => {
     const cfg = severityCfg[f.severity] || severityCfg.info;
     const category = categoryLabels[(f.category || "general").toLowerCase()] || categoryLabels.general;
     const lineStr = f.line ? `:${f.line}` : "";
+    const publishButton = currentReviewId
+      ? `<button onclick="publishFindingToGitLab(${index})" id="btnPublishFinding${index}"
+                 class="rounded border border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-950/40 hover:text-emerald-200 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500">
+           Отправить в GitLab
+         </button>`
+      : "";
     return `<div class="${cfg.bg} border ${cfg.border} rounded-lg p-4">
-      <div class="flex items-center gap-2 mb-2">
-        <span class="${cfg.badge} text-white text-xs px-2 py-0.5 rounded">${cfg.label}</span>
-        <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(category)}</span>
-        ${f.comparison_ref ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.comparison_ref)}</span>` : ""}
-        <span class="text-slate-400 text-xs font-mono">${escHtml(f.file_path)}${lineStr}</span>
+      <div class="mb-2 flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div class="flex min-w-0 flex-wrap items-center gap-2">
+          <span class="${cfg.badge} text-white text-xs px-2 py-0.5 rounded">${cfg.label}</span>
+          <span class="bg-slate-700 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(category)}</span>
+          ${f.comparison_ref ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.comparison_ref)}</span>` : ""}
+          <span class="break-all text-slate-400 text-xs font-mono">${escHtml(f.file_path)}${lineStr}</span>
+        </div>
+        ${publishButton}
       </div>
       <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
       ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Рекомендация:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
+      <div id="findingPublishStatus${index}" class="mt-2 hidden text-xs"></div>
       ${renderXlsxRowsTable(f)}
     </div>`;
   }).join("");
+}
+
+async function publishFindingToGitLab(index) {
+  if (!currentReviewId) {
+    alert("Сначала запустите или откройте сохраненное ревью");
+    return;
+  }
+
+  const btn = document.getElementById(`btnPublishFinding${index}`);
+  const status = document.getElementById(`findingPublishStatus${index}`);
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Отправка...";
+  }
+  if (status) {
+    status.className = "mt-2 hidden text-xs";
+  }
+
+  try {
+    const resp = await fetch("/api/review/post-finding-comment", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_id: currentReviewId, finding_index: index }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    if (status) {
+      status.textContent = data.message || "Замечание отправлено в GitLab";
+      status.className = "mt-2 text-xs text-emerald-300";
+    }
+    if (btn) {
+      btn.textContent = "Отправлено";
+      btn.className = "rounded border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-500";
+    }
+  } catch (e) {
+    if (status) {
+      status.textContent = "Ошибка публикации: " + e.message;
+      status.className = "mt-2 text-xs text-red-300";
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Отправить в GitLab";
+    }
+  }
 }
 
 async function publishReviewToGitLab() {

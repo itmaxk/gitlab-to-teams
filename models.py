@@ -158,6 +158,11 @@ class ReviewPublishRequest(BaseModel):
     review_id: int
 
 
+class ReviewPublishFindingRequest(BaseModel):
+    review_id: int
+    finding_index: int = Field(ge=0)
+
+
 class SchemaRequest(BaseModel):
     mr_ids: list[str]
     target_branch: str = "master"

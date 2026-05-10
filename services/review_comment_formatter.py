@@ -39,6 +39,8 @@ SKIPPED_FILES = "\u041f\u0440\u043e\u043f\u0443\u0449\u0435\u043d\u043e \u0444\u
 INCOMPLETE_DIFF = "\u041d\u0435 \u0432\u0441\u0435 \u0444\u0430\u0439\u043b\u044b \u0438\u043c\u0435\u043b\u0438 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0439 diff \u0434\u043b\u044f \u0430\u043d\u0430\u043b\u0438\u0437\u0430"
 XLSX_ROWS_DETAILS = "\u0421\u0442\u0440\u043e\u043a\u0438 XLSX"
 XLSX_ROW_COLUMN = "\u0421\u0442\u0440\u043e\u043a\u0430"
+FINDING_DISCUSSION_HEADER = "## AI review finding"
+RESOLVE_REQUEST = "\u041f\u043e\u0441\u043b\u0435 \u0438\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044f \u043d\u0430\u0436\u043c\u0438\u0442\u0435 Resolve \u0432 \u044d\u0442\u043e\u0439 \u043d\u0438\u0442\u0438."
 
 
 def _escape_markdown_table_cell(value: object) -> str:
@@ -175,4 +177,49 @@ def format_gitlab_review_comment(
             lines.append("")
         lines.append("")
 
+    return "\n".join(lines)
+
+
+def format_gitlab_finding_discussion(
+    finding: dict,
+    *,
+    finding_number: int,
+    model_used: str,
+) -> str:
+    file_path = finding.get("file_path") or UNKNOWN_FILE
+    line = finding.get("line")
+    location = f"`{file_path}:{line}`" if line else f"`{file_path}`"
+    severity = _normalize_severity(finding.get("severity"))
+    category = _translate_category(finding.get("category"))
+    category_icon = _category_icon(finding.get("category"))
+    message = str(finding.get("message", "")).strip()
+    suggestion = str(finding.get("suggestion") or "").strip()
+
+    lines = [
+        FINDING_DISCUSSION_HEADER,
+        "",
+        f"- \u0417\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u0435: #{finding_number}",
+        f"- \u0421\u0435\u0440\u044c\u0435\u0437\u043d\u043e\u0441\u0442\u044c: {SEVERITY_META[severity]['label']}",
+        f"- \u041a\u0430\u0442\u0435\u0433\u043e\u0440\u0438\u044f: {category_icon} {category}",
+        f"- \u0410\u0442\u0440\u0438\u0431\u0443\u0442: {location}",
+        f"- \u041c\u043e\u0434\u0435\u043b\u044c: `{model_used or '-'}'",
+        "",
+        message or "\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0437\u0430\u043c\u0435\u0447\u0430\u043d\u0438\u044f \u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e.",
+    ]
+    if suggestion:
+        lines.extend([
+            "",
+            f"**{SUGGESTION_LABEL}**",
+            suggestion,
+        ])
+
+    xlsx_rows = finding.get("xlsx_rows") or []
+    if xlsx_rows:
+        lines.append("")
+        lines.extend(_format_xlsx_rows_table(xlsx_rows))
+
+    lines.extend([
+        "",
+        RESOLVE_REQUEST,
+    ])
     return "\n".join(lines)

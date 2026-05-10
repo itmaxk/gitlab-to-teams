@@ -13,13 +13,17 @@ from models import (
     ReviewInstructionItemUpdate,
     ReviewProjectProfilePreviewRequest,
     ReviewProjectProfileRequest,
+    ReviewPublishFindingRequest,
     ReviewPublishRequest,
     ReviewRequest,
     ReviewSettingsUpdate,
     XlsxReviewRequest,
 )
-from services.gitlab_notes import post_merge_request_note
-from services.review_comment_formatter import format_gitlab_review_comment
+from services.gitlab_notes import post_merge_request_discussion, post_merge_request_note
+from services.review_comment_formatter import (
+    format_gitlab_finding_discussion,
+    format_gitlab_review_comment,
+)
 from services.review_service import LLMRateLimitError, review_mr
 from services.review_project_context import (
     preview_project_graph_context,
@@ -709,6 +713,36 @@ async def publish_review_comment(req: ReviewPublishRequest):
         "ok": True,
         "message": "Комментарий отправлен в GitLab",
         "note_id": note.get("id"),
+        "mr_iid": review["mr_iid"],
+    }
+
+
+@router.post("/post-finding-comment")
+async def publish_review_finding_comment(req: ReviewPublishFindingRequest):
+    review = _load_review_record(req.review_id)
+    findings = review.get("findings", [])
+    if req.finding_index >= len(findings):
+        raise HTTPException(status_code=404, detail="Р—Р°РјРµС‡Р°РЅРёРµ СЂРµРІСЊСЋ РЅРµ РЅР°Р№РґРµРЅРѕ")
+
+    comment = format_gitlab_finding_discussion(
+        findings[req.finding_index],
+        finding_number=req.finding_index + 1,
+        model_used=review.get("model_used", ""),
+    )
+    try:
+        discussion = await post_merge_request_discussion(review["mr_iid"], comment)
+    except Exception as exc:
+        logger.exception(
+            "Failed to publish review finding %s for review %s",
+            req.finding_index,
+            req.review_id,
+        )
+        raise HTTPException(status_code=502, detail=f"РћС€РёР±РєР° РѕС‚РїСЂР°РІРєРё РІ GitLab: {exc}")
+
+    return {
+        "ok": True,
+        "message": "Р—Р°РјРµС‡Р°РЅРёРµ РѕС‚РїСЂР°РІР»РµРЅРѕ РІ GitLab РѕС‚РґРµР»СЊРЅС‹Рј РѕР±СЃСѓР¶РґРµРЅРёРµРј",
+        "discussion_id": discussion.get("id"),
         "mr_iid": review["mr_iid"],
     }
 
