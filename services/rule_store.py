@@ -823,6 +823,12 @@ def _compose_aggregate(
     aggregate["created_at"] = root.get("created_at", "")
     aggregate["updated_at"] = root.get("updated_at", "")
     aggregate.update(flat_fields_from_aggregate(aggregate))
+    aggregate.update({
+        "target_branch": aggregate["scope"]["target_branch"],
+        "mr_state": aggregate["scope"]["mr_state"],
+        "poll_interval_seconds": aggregate["scope"]["poll_interval_seconds"],
+        "project_keys": project_keys_to_string(aggregate["scope"]["project_keys"]),
+    })
     aggregate["emails"] = aggregate["recipients"]
     aggregate["summary"] = build_rule_summary(aggregate)
     return aggregate

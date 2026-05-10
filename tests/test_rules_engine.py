@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
+from services.rule_store import list_rule_aggregates
 from services.rules_engine import _extract_file_references, evaluate_rules_for_mr
 
 
@@ -91,6 +92,41 @@ def test_init_db_backfills_existing_seeded_rules_without_reinserting(tmp_path, m
 
     assert rules_count == 1
     assert child_count > 0
+
+
+def test_rule_aggregate_exposes_legacy_scope_fields_for_rules_ui(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, enabled, target_branch, mr_state, poll_interval_seconds,
+           project_keys, file_pattern, content_match, match_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "UI compatibility rule",
+            1,
+            "master",
+            "opened",
+            600,
+            "ADIRGSLSUPP",
+            "*.md",
+            "type: breaking",
+            "contains",
+        ),
+    )
+    conn.commit()
+
+    rule = list_rule_aggregates(conn)[0]
+    conn.close()
+
+    assert rule["target_branch"] == "master"
+    assert rule["mr_state"] == "opened"
+    assert rule["poll_interval_seconds"] == 600
+    assert rule["project_keys"] == "ADIRGSLSUPP"
 
 
 def test_rule_matches_model_change_without_postgres_script(tmp_path, monkeypatch):
