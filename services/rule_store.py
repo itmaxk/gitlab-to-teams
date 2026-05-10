@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections import Counter
 from typing import Any
@@ -20,6 +21,7 @@ DEFAULT_PIPELINE_RETRY_SUFFIX = ""
 DEFAULT_PIPELINE_CHECK_TEMPLATE = (
     "Changelog не прошёл валидацию\n\n[Ссылка на job]({job_web_url})"
 )
+TITLE_PROJECT_RE = re.compile(r"\b([A-Z][A-Z0-9]+)-\d+\b", re.IGNORECASE)
 
 
 def create_rule_schema(conn: sqlite3.Connection) -> None:
@@ -361,6 +363,7 @@ def flat_fields_from_aggregate(rule: dict[str, Any]) -> dict[str, Any]:
     email = channels.get("email", {})
     gitlab = channels.get("gitlab", {})
     return {
+        "project_keys": project_keys_to_string(rule.get("scope", {}).get("project_keys", ["*"])),
         "file_pattern": file_pattern or "*",
         "content_match": content_match,
         "content_exclude": content_exclude.get("value", "") if content_exclude else "",
@@ -393,6 +396,7 @@ def upsert_rule_aggregate(
         aggregate["scope"].get("target_branch", "master"),
         aggregate["scope"].get("mr_state", "merged"),
         int(aggregate["scope"].get("poll_interval_seconds", 0) or 0),
+        project_keys_to_string(aggregate["scope"].get("project_keys", ["*"])),
         flat["file_pattern"],
         flat["content_match"],
         flat["content_exclude"],
@@ -412,11 +416,11 @@ def upsert_rule_aggregate(
             """
             INSERT INTO notification_rules (
                 name, description, enabled, target_branch, mr_state,
-                poll_interval_seconds, file_pattern, content_match, content_exclude,
+                poll_interval_seconds, project_keys, file_pattern, content_match, content_exclude,
                 match_type, file_check_enabled, file_check_path_prefix, file_check_mode,
                 title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             root_values,
         )
@@ -426,7 +430,7 @@ def upsert_rule_aggregate(
             """
             UPDATE notification_rules SET
                 name=?, description=?, enabled=?, target_branch=?, mr_state=?,
-                poll_interval_seconds=?, file_pattern=?, content_match=?, content_exclude=?,
+                poll_interval_seconds=?, project_keys=?, file_pattern=?, content_match=?, content_exclude=?,
                 match_type=?, file_check_enabled=?, file_check_path_prefix=?,
                 file_check_mode=?, title_exclude=?, action_type=?, send_teams=?,
                 teams_webhook_url=?, send_email=?, send_gitlab=?,
@@ -668,6 +672,7 @@ def _normalize_flat(data: dict[str, Any]) -> dict[str, Any]:
             "target_branch": data.get("target_branch", "master"),
             "mr_state": data.get("mr_state", "merged"),
             "poll_interval_seconds": data.get("poll_interval_seconds", 0),
+            "project_keys": parse_project_keys(data.get("project_keys", "*")),
             "skip_draft": data.get("skip_draft", True),
         },
         "conditions": conditions,
@@ -774,6 +779,7 @@ def _normalize_aggregate(data: dict[str, Any]) -> dict[str, Any]:
             "target_branch": scope.get("target_branch", data.get("target_branch", "master")) or "master",
             "mr_state": scope.get("mr_state", data.get("mr_state", "merged")) or "merged",
             "poll_interval_seconds": int(scope.get("poll_interval_seconds", data.get("poll_interval_seconds", 0)) or 0),
+            "project_keys": parse_project_keys(scope.get("project_keys", data.get("project_keys", "*"))),
             "skip_draft": bool(scope.get("skip_draft", True)),
         },
         "conditions": conditions,
@@ -801,6 +807,7 @@ def _compose_aggregate(
             "target_branch": root.get("target_branch", "master"),
             "mr_state": root.get("mr_state", "merged"),
             "poll_interval_seconds": root.get("poll_interval_seconds", 0),
+            "project_keys": parse_project_keys(root.get("project_keys", "*")),
             "skip_draft": True,
         },
         "conditions": conditions,
@@ -821,6 +828,7 @@ def build_rule_summary(rule: dict[str, Any]) -> str:
     parts = [
         f"{rule.get('action_type', 'notify')} on {rule.get('mr_state', 'merged')} MR",
         f"branch {rule.get('target_branch', 'master')}",
+        f"projects {rule.get('project_keys', '*')}",
     ]
     if rule.get("file_pattern"):
         parts.append(f"files {rule['file_pattern']}")
@@ -940,6 +948,42 @@ def _first_condition(
     conditions: list[dict[str, Any]], condition_type: str
 ) -> dict[str, Any] | None:
     return next((c for c in conditions if c.get("type") == condition_type), None)
+
+
+def extract_project_key_from_title(mr_title: str) -> str:
+    match = TITLE_PROJECT_RE.search(mr_title or "")
+    return match.group(1).upper() if match else ""
+
+
+def parse_project_keys(raw: str | list[str] | tuple[str, ...] | None) -> list[str]:
+    if raw is None:
+        return ["*"]
+    if isinstance(raw, (list, tuple)):
+        parts = raw
+    else:
+        parts = str(raw).replace("\n", ",").split(",")
+    keys = []
+    for part in parts:
+        key = str(part).strip().upper()
+        if not key:
+            continue
+        if key == "*":
+            return ["*"]
+        keys.append(key)
+    return sorted(dict.fromkeys(keys)) or ["*"]
+
+
+def project_keys_to_string(keys: str | list[str] | tuple[str, ...] | None) -> str:
+    parsed = parse_project_keys(keys)
+    return "*" if parsed == ["*"] else ",".join(parsed)
+
+
+def rule_matches_mr_project(rule: dict[str, Any], mr_title: str) -> bool:
+    keys = parse_project_keys(rule.get("project_keys") or rule.get("scope", {}).get("project_keys", "*"))
+    if keys == ["*"]:
+        return True
+    title_project = extract_project_key_from_title(mr_title)
+    return bool(title_project and title_project in keys)
 
 
 def _loads_json(raw: str | None, default: Any) -> Any:

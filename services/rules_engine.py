@@ -4,7 +4,7 @@ import re
 from typing import Any, Callable, Awaitable
 
 from db import get_db
-from services.rule_store import load_runtime_rules
+from services.rule_store import load_runtime_rules, rule_matches_mr_project
 
 
 async def evaluate_rules_for_mr(
@@ -33,6 +33,8 @@ async def evaluate_rules_for_mr(
         return content_cache[file_path]
 
     for rule in rules:
+        if not rule_matches_mr_project(rule, mr_title):
+            continue
         title_exclude = rule.get("title_exclude") or ""
         if title_exclude and mr_title:
             try:

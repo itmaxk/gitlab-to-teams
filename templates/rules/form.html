@@ -20,7 +20,7 @@
   <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
     <legend class="text-sm text-slate-400 px-2">Basic / Scope</legend>
 
-    <div class="grid grid-cols-3 gap-4">
+    <div class="grid grid-cols-4 gap-4">
       <div>
         <label class="block text-sm text-slate-400 mb-1">Целевая ветка</label>
         <input type="text" name="target_branch" value="{{ rule.target_branch if rule else 'master' }}"
@@ -42,6 +42,13 @@
           class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none"
           placeholder="0 = из .env">
         <p class="text-xs text-slate-500 mt-1">0 = значение из .env (POLL_INTERVAL_SECONDS)</p>
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Jira projects</label>
+        <input type="text" name="project_keys" value="{{ rule.project_keys if rule else '*' }}"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="* or ADIRGSLSUPP,CORE">
+        <p class="text-xs text-slate-500 mt-1">* = all projects; matches keys like ADIRGSLSUPP-6585 anywhere in MR title</p>
       </div>
     </div>
 

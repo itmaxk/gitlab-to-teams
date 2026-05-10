@@ -80,6 +80,7 @@
           <span title="Целевая ветка">🌿 <code class="text-slate-300">{{ rule.target_branch }}</code></span>
           <span title="Статус MR">📋 <code class="text-slate-300">{{ rule.mr_state }}</code></span>
           <span title="Интервал опроса">⏱ {{ rule.effective_interval }}с</span>
+          <span title="Jira projects">Jira <code class="text-slate-300">{{ rule.project_keys }}</code></span>
           <span title="Паттерн файла">📁 <code class="text-slate-300">{{ rule.file_pattern }}</code></span>
           <span title="Условие">🔍
             {% if rule.match_type == 'json_additional_props' %}

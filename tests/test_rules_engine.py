@@ -84,6 +84,94 @@ def test_rule_skips_when_postgres_script_exists(tmp_path, monkeypatch):
     assert matches == []
 
 
+def test_rule_project_filter_matches_jira_key_inside_title(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, description, enabled, project_keys, file_pattern, content_match,
+           match_type, target_branch, mr_state, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "Project-scoped rule",
+            "Only ADIRGSLSUPP titles should match",
+            1,
+            "ADIRGSLSUPP",
+            "*.md",
+            "type: breaking",
+            "contains",
+            "master",
+            "opened",
+            0,
+        ),
+    )
+    rule_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    async def get_content(_: str) -> str:
+        return "type: breaking"
+
+    matches = asyncio.run(
+        evaluate_rules_for_mr(
+            [rule_id],
+            ["changelogs/unreleased/test.md"],
+            get_content,
+            mr_title="Draft: ADIRGSLSUPP-6585: Desc",
+        )
+    )
+
+    assert len(matches) == 1
+
+
+def test_rule_project_filter_skips_other_jira_project(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    cur = conn.execute(
+        """
+        INSERT INTO notification_rules
+          (name, description, enabled, project_keys, file_pattern, content_match,
+           match_type, target_branch, mr_state, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "Project-scoped rule",
+            "Only ADIRGSLSUPP titles should match",
+            1,
+            "ADIRGSLSUPP",
+            "*.md",
+            "type: breaking",
+            "contains",
+            "master",
+            "opened",
+            0,
+        ),
+    )
+    rule_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+
+    async def get_content(_: str) -> str:
+        return "type: breaking"
+
+    matches = asyncio.run(
+        evaluate_rules_for_mr(
+            [rule_id],
+            ["changelogs/unreleased/test.md"],
+            get_content,
+            mr_title="Draft: OTHER-6585: Desc",
+        )
+    )
+
+    assert matches == []
+
+
 def test_empty_contains_rule_does_not_fetch_every_matching_file(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()

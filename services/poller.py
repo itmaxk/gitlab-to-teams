@@ -28,7 +28,7 @@ from services.pipeline_check import (
     parse_retry_job_names,
     retry_failed_config_jobs,
 )
-from services.rule_store import load_enabled_runtime_rules
+from services.rule_store import load_enabled_runtime_rules, rule_matches_mr_project
 
 logger = logging.getLogger(__name__)
 
@@ -324,15 +324,21 @@ async def poll_once(rules: list[dict]):
             if should_skip_by_global_title(mr_title):
                 continue
 
+            project_rules = [
+                rule for rule in group_rules if rule_matches_mr_project(rule, mr_title)
+            ]
+            if not project_rules:
+                continue
+
             pending_rule_ids = [
-                r["id"] for r in group_rules if not _is_mr_processed(r["id"], mr_iid)
+                r["id"] for r in project_rules if not _is_mr_processed(r["id"], mr_iid)
             ]
             tc_rule_ids = {
-                r["id"] for r in group_rules if r.get("action_type") == "title_check"
+                r["id"] for r in project_rules if r.get("action_type") == "title_check"
             }
             pipeline_retry_rule_ids = {
                 r["id"]
-                for r in group_rules
+                for r in project_rules
                 if r.get("action_type") == "pipeline_job_retry"
             }
             all_rule_ids = list(
@@ -343,32 +349,32 @@ async def poll_once(rules: list[dict]):
 
             xlsx_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "xlsx_review"
             ]
             code_review_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "code_review"
             ]
             title_check_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in all_rule_ids and r.get("action_type") == "title_check"
             ]
             pipeline_check_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in pending_rule_ids and r.get("action_type") == "pipeline_check"
             ]
             pipeline_retry_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in all_rule_ids and r.get("action_type") == "pipeline_job_retry"
             ]
             notify_rules = [
                 r
-                for r in group_rules
+                for r in project_rules
                 if r["id"] in pending_rule_ids
                 and r.get("action_type", "notify") == "notify"
             ]

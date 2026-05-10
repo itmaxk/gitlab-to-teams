@@ -11,6 +11,7 @@ class RuleCreate(BaseModel):
     target_branch: str = "master"
     mr_state: str = "merged"
     poll_interval_seconds: int = 0
+    project_keys: str = "*"
     file_check_enabled: bool = False
     file_check_path_prefix: str = ""
     file_check_mode: str = "present"

@@ -120,6 +120,7 @@ def test_create_rule_accepts_aggregate_payload_and_writes_child_tables(tmp_path,
             "target_branch": "*",
             "mr_state": "opened",
             "poll_interval_seconds": 600,
+            "project_keys": ["ADIRGSLSUPP", "CORE"],
         },
         "conditions": [
             {"type": "changed_file_glob", "operator": "glob", "value": "*"},
@@ -143,6 +144,7 @@ def test_create_rule_accepts_aggregate_payload_and_writes_child_tables(tmp_path,
 
     assert created["action_type"] == "pipeline_job_retry"
     assert created["content_match"] == "config:validate,config:check-uncommitted"
+    assert created["project_keys"] == "ADIRGSLSUPP,CORE"
     assert created["send_email"] is True
     assert created["emails"] == ["dev@example.test"]
 

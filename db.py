@@ -32,6 +32,7 @@ def init_db():
             target_branch TEXT DEFAULT 'master',
             mr_state TEXT DEFAULT 'merged',
             poll_interval_seconds INTEGER DEFAULT 0,
+            project_keys TEXT DEFAULT '*',
             content_exclude TEXT DEFAULT '',
             file_check_enabled INTEGER DEFAULT 0,
             file_check_path_prefix TEXT DEFAULT '',
@@ -258,6 +259,7 @@ def _migrate(conn: sqlite3.Connection):
         "target_branch": "ALTER TABLE notification_rules ADD COLUMN target_branch TEXT DEFAULT 'master'",
         "mr_state": "ALTER TABLE notification_rules ADD COLUMN mr_state TEXT DEFAULT 'merged'",
         "poll_interval_seconds": "ALTER TABLE notification_rules ADD COLUMN poll_interval_seconds INTEGER DEFAULT 0",
+        "project_keys": "ALTER TABLE notification_rules ADD COLUMN project_keys TEXT DEFAULT '*'",
         "file_check_enabled": "ALTER TABLE notification_rules ADD COLUMN file_check_enabled INTEGER DEFAULT 0",
         "file_check_path_prefix": "ALTER TABLE notification_rules ADD COLUMN file_check_path_prefix TEXT DEFAULT ''",
         "content_exclude": "ALTER TABLE notification_rules ADD COLUMN content_exclude TEXT DEFAULT ''",
@@ -833,7 +835,7 @@ def _seed_review_project_profile(conn: sqlite3.Connection):
 
 SEED_UPDATABLE_FIELDS = (
     "name", "description", "file_pattern", "content_match", "content_exclude",
-    "match_type", "target_branch", "mr_state", "title_exclude",
+    "match_type", "target_branch", "mr_state", "project_keys", "title_exclude",
     "file_check_enabled", "file_check_path_prefix", "file_check_mode",
 )
 
