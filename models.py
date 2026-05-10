@@ -163,6 +163,17 @@ class ReviewPublishFindingRequest(BaseModel):
     finding_index: int = Field(ge=0)
 
 
+class ReviewEmailRequest(BaseModel):
+    review_id: int
+    recipients: list[str]
+
+
+class ReviewRunEmailRequest(BaseModel):
+    mr_input: str
+    recipients: list[str]
+    custom_prompt: str = ""
+
+
 class SchemaRequest(BaseModel):
     mr_ids: list[str]
     target_branch: str = "master"

@@ -11,18 +11,22 @@ from db import get_db
 from models import (
     ReviewInstructionItemCreate,
     ReviewInstructionItemUpdate,
+    ReviewEmailRequest,
     ReviewProjectProfilePreviewRequest,
     ReviewProjectProfileRequest,
     ReviewPublishFindingRequest,
     ReviewPublishRequest,
     ReviewRequest,
+    ReviewRunEmailRequest,
     ReviewSettingsUpdate,
     XlsxReviewRequest,
 )
+from services.email_client import send_html_email
 from services.gitlab_notes import post_merge_request_discussion, post_merge_request_note
 from services.review_comment_formatter import (
     format_gitlab_finding_discussion,
     format_gitlab_review_comment,
+    format_review_email_html,
 )
 from services.review_service import LLMRateLimitError, review_mr
 from services.review_project_context import (
@@ -119,6 +123,31 @@ def _load_review_record(review_id: int) -> dict:
     except (json.JSONDecodeError, KeyError):
         review["summary"] = {}
     return review
+
+
+def _clean_email_recipients(recipients: list[str]) -> list[str]:
+    return [email.strip() for email in recipients if email.strip()]
+
+
+def _send_review_email(review: dict, recipients: list[str]) -> dict:
+    recipients = _clean_email_recipients(recipients)
+    if not recipients:
+        raise HTTPException(status_code=400, detail="Укажите хотя бы одного получателя email")
+
+    subject = f"AI review MR !{review['mr_iid']}: {review.get('mr_title') or ''}".strip()
+    html_body = format_review_email_html(review)
+    try:
+        send_html_email(recipients, subject, html_body)
+    except Exception as exc:
+        logger.exception("Failed to send review email for review %s", review.get("id"))
+        raise HTTPException(status_code=502, detail=f"Ошибка отправки email: {exc}")
+
+    return {
+        "ok": True,
+        "message": f"Ревью отправлено на email: {len(recipients)} получател(я/ей)",
+        "recipients": recipients,
+        "mr_iid": review["mr_iid"],
+    }
 
 
 def _serialize_profile(row) -> dict:
@@ -314,6 +343,35 @@ async def run_review(req: ReviewRequest):
     except Exception as exc:
         logger.exception("Review failed for MR !%s", req.mr_input)
         raise HTTPException(status_code=500, detail=_translate_review_error(exc))
+
+
+@router.post("/run-and-send-email")
+async def run_review_and_send_email(req: ReviewRunEmailRequest):
+    try:
+        mr_iid = _parse_mr_iid(req.mr_input)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    try:
+        result = await review_mr(mr_iid, req.custom_prompt)
+        review = _load_review_record(result["id"])
+        email_result = _send_review_email(review, req.recipients)
+    except LLMRateLimitError as exc:
+        logger.warning("Review rate-limited for MR !%s: %s", req.mr_input, exc)
+        raise HTTPException(status_code=429, detail=_translate_review_error(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Review and email failed for MR !%s", req.mr_input)
+        raise HTTPException(status_code=500, detail=_translate_review_error(exc))
+
+    return {
+        "ok": True,
+        "review_id": result["id"],
+        "mr_iid": result["mr"]["iid"],
+        "review": result,
+        "email": email_result,
+    }
 
 
 @router.post("/start")
@@ -745,6 +803,12 @@ async def publish_review_finding_comment(req: ReviewPublishFindingRequest):
         "discussion_id": discussion.get("id"),
         "mr_iid": review["mr_iid"],
     }
+
+
+@router.post("/send-email")
+def send_review_email(req: ReviewEmailRequest):
+    review = _load_review_record(req.review_id)
+    return _send_review_email(review, req.recipients)
 
 
 @router.get("/{review_id}")

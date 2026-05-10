@@ -57,3 +57,29 @@ def send_changelog_email(
         if user and password:
             server.login(user, password)
         server.sendmail(sender, recipients, msg.as_string())
+
+
+def send_html_email(recipients: list[str], subject: str, html_body: str) -> None:
+    host = os.getenv("SMTP_HOST", "")
+    if not recipients:
+        raise ValueError("Нет получателей email")
+    if not host:
+        raise ConnectionError("SMTP_HOST не настроен в .env")
+
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER", "")
+    password = os.getenv("SMTP_PASSWORD", "")
+    sender = os.getenv("SMTP_FROM", user)
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg.attach(MIMEText(html_body, "html", "utf-8"))
+
+    with smtplib.SMTP(host, port, timeout=30) as server:
+        if port == 587:
+            server.starttls()
+        if user and password:
+            server.login(user, password)
+        server.sendmail(sender, recipients, msg.as_string())

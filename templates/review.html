@@ -451,11 +451,23 @@ function renderResults(data) {
       <span class="mx-2">|</span>
       <span>Модель: ${escHtml(data.model_used || "")}</span>
     </div>
-    <div class="mt-3">
+    <div class="mt-3 flex flex-col gap-3 xl:flex-row xl:items-end">
       <button onclick="publishReviewToGitLab()" id="btnPublishReview"
-              class="bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
+              class="w-fit bg-emerald-600 hover:bg-emerald-700 text-white text-sm px-4 py-2 rounded-lg font-medium">
         Выложить в GitLab
       </button>
+      <div class="flex min-w-0 flex-1 flex-col gap-2 md:flex-row md:items-end">
+        <label class="min-w-0 flex-1">
+          <span class="mb-1 block text-xs text-slate-400">Email получатели</span>
+          <input type="text" id="reviewEmailRecipients"
+                 placeholder="user@example.com, lead@example.com"
+                 class="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none">
+        </label>
+        <button onclick="sendReviewEmail()" id="btnSendReviewEmail"
+                class="w-fit rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+          Отправить на почту
+        </button>
+      </div>
     </div>
   `;
 
@@ -667,6 +679,52 @@ async function publishFindingToGitLab(index) {
       btn.disabled = false;
       btn.textContent = "Отправить в GitLab";
     }
+  }
+}
+
+function parseEmailRecipients(rawValue) {
+  return (rawValue || "")
+    .split(/[,\n;]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+async function sendReviewEmail() {
+  if (!currentReviewId) {
+    alert("Сначала запустите или откройте сохраненное ревью");
+    return;
+  }
+
+  const input = document.getElementById("reviewEmailRecipients");
+  const recipients = parseEmailRecipients(input?.value || "");
+  if (!recipients.length) {
+    alert("Введите email получателей");
+    return;
+  }
+
+  const btn = document.getElementById("btnSendReviewEmail");
+  const status = document.getElementById("publishStatus");
+  btn.disabled = true;
+  btn.textContent = "Отправка...";
+  status.className = "hidden rounded-lg p-4 mb-4 text-sm";
+
+  try {
+    const resp = await fetch("/api/review/send-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ review_id: currentReviewId, recipients }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || `HTTP ${resp.status}`);
+    status.textContent = data.message || "Ревью отправлено на почту";
+    status.className = "rounded-lg p-4 mb-4 text-sm bg-green-900/30 border border-green-700 text-green-300";
+  } catch (e) {
+    status.textContent = "Ошибка отправки email: " + e.message;
+    status.className = "rounded-lg p-4 mb-4 text-sm bg-red-900/30 border border-red-700 text-red-300";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Отправить на почту";
+    status.classList.remove("hidden");
   }
 }
 

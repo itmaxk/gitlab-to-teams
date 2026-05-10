@@ -1,4 +1,5 @@
 from collections import defaultdict
+from html import escape
 
 
 SEVERITY_META = {
@@ -41,6 +42,12 @@ XLSX_ROWS_DETAILS = "\u0421\u0442\u0440\u043e\u043a\u0438 XLSX"
 XLSX_ROW_COLUMN = "\u0421\u0442\u0440\u043e\u043a\u0430"
 FINDING_DISCUSSION_HEADER = "## AI review finding"
 RESOLVE_REQUEST = "\u041f\u043e\u0441\u043b\u0435 \u0438\u0441\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044f \u043d\u0430\u0436\u043c\u0438\u0442\u0435 Resolve \u0432 \u044d\u0442\u043e\u0439 \u043d\u0438\u0442\u0438."
+
+EMAIL_SEVERITY_META = {
+    "error": {"label": "\u041a\u0440\u0438\u0442\u0438\u0447\u043d\u043e", "bg": "#fee2e2", "text": "#991b1b", "border": "#fecaca"},
+    "warning": {"label": "\u041f\u0440\u0435\u0434\u0443\u043f\u0440\u0435\u0436\u0434\u0435\u043d\u0438\u0435", "bg": "#fef3c7", "text": "#92400e", "border": "#fde68a"},
+    "info": {"label": "\u0418\u043d\u0444\u043e", "bg": "#dbeafe", "text": "#1e40af", "border": "#bfdbfe"},
+}
 
 
 def _escape_markdown_table_cell(value: object) -> str:
@@ -223,3 +230,95 @@ def format_gitlab_finding_discussion(
         RESOLVE_REQUEST,
     ])
     return "\n".join(lines)
+
+
+def _summary_badge(label: str, value: object, bg: str, text: str, border: str) -> str:
+    return (
+        f'<span style="display:inline-block;margin:0 8px 8px 0;padding:7px 11px;'
+        f'border-radius:8px;background:{bg};color:{text};border:1px solid {border};'
+        f'font-size:13px;font-weight:700">{escape(label)}: {escape(str(value or 0))}</span>'
+    )
+
+
+def format_review_email_html(review: dict) -> str:
+    findings = review.get("findings", []) or []
+    summary = review.get("summary", {}) or {}
+    mr_title = str(review.get("mr_title") or "")
+    mr_url = str(review.get("mr_url") or "")
+    model_used = str(review.get("model_used") or "")
+    mr_iid = review.get("mr_iid") or ""
+
+    rows = []
+    for index, finding in enumerate(findings, start=1):
+        severity = _normalize_severity(finding.get("severity"))
+        severity_meta = EMAIL_SEVERITY_META[severity]
+        category = _translate_category(finding.get("category"))
+        file_path = str(finding.get("file_path") or UNKNOWN_FILE)
+        line = finding.get("line")
+        location = f"{file_path}:{line}" if line else file_path
+        suggestion = str(finding.get("suggestion") or "").strip()
+        rows.append(
+            "<tr>"
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;color:#64748b;font-size:13px">{index}</td>'
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0">'
+            f'<span style="display:inline-block;padding:4px 8px;border-radius:999px;'
+            f'background:{severity_meta["bg"]};color:{severity_meta["text"]};'
+            f'border:1px solid {severity_meta["border"]};font-size:12px;font-weight:700">'
+            f'{severity_meta["label"]}</span></td>'
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;color:#334155;font-size:13px">{escape(category)}</td>'
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;color:#475569;font-family:Consolas,Monaco,monospace;font-size:12px;word-break:break-all">{escape(location)}</td>'
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;color:#0f172a;font-size:13px;line-height:1.45">{escape(str(finding.get("message") or ""))}</td>'
+            f'<td style="padding:12px 14px;border-bottom:1px solid #e2e8f0;color:#166534;font-size:13px;line-height:1.45">{escape(suggestion) if suggestion else "&mdash;"}</td>'
+            "</tr>"
+        )
+
+    if not rows:
+        rows.append(
+            '<tr><td colspan="6" style="padding:22px;text-align:center;color:#16a34a;'
+            'border-bottom:1px solid #e2e8f0;font-size:14px">'
+            f"{escape(CLEAN_REVIEW)}</td></tr>"
+        )
+
+    mr_link = (
+        f'<a href="{escape(mr_url, quote=True)}" style="color:#2563eb;text-decoration:none;font-weight:700">!{escape(str(mr_iid))}</a>'
+        if mr_url else f"!{escape(str(mr_iid))}"
+    )
+
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;background:#f8fafc;color:#0f172a;font-family:Arial,Helvetica,sans-serif">
+  <div style="max-width:1120px;margin:0 auto;padding:24px">
+    <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden">
+      <div style="padding:22px 24px;background:#0f172a;color:#ffffff">
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:#93c5fd;font-weight:700">AI review</div>
+        <h1 style="margin:8px 0 6px;font-size:22px;line-height:1.3">{mr_link} {escape(mr_title)}</h1>
+        <div style="font-size:13px;color:#cbd5e1">Модель: {escape(model_used or "-")}</div>
+      </div>
+      <div style="padding:18px 24px 10px">
+        {_summary_badge("Критичных", summary.get("errors", 0), "#fee2e2", "#991b1b", "#fecaca")}
+        {_summary_badge("Предупреждений", summary.get("warnings", 0), "#fef3c7", "#92400e", "#fde68a")}
+        {_summary_badge("Инфо", summary.get("info", 0), "#dbeafe", "#1e40af", "#bfdbfe")}
+        {_summary_badge("Всего", summary.get("total", len(findings)), "#f1f5f9", "#334155", "#e2e8f0")}
+      </div>
+      <div style="padding:0 24px 24px;overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:10px;overflow:hidden">
+          <thead>
+            <tr style="background:#f1f5f9;color:#475569;text-align:left">
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">#</th>
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">Уровень</th>
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">Категория</th>
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">Атрибут</th>
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">Ошибка</th>
+              <th style="padding:10px 14px;font-size:12px;border-bottom:1px solid #e2e8f0">Рекомендация</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(rows)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
