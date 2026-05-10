@@ -116,7 +116,11 @@ def backfill_rule_schema(conn: sqlite3.Connection) -> None:
     rows = conn.execute("SELECT * FROM notification_rules").fetchall()
     for row in rows:
         if not _has_v2_children(conn, row["id"]):
-            upsert_rule_aggregate(conn, row_to_aggregate(conn, row, prefer_legacy=True))
+            upsert_rule_aggregate(
+                conn,
+                row_to_aggregate(conn, row, prefer_legacy=True),
+                row["id"],
+            )
 
 
 def load_enabled_runtime_rules(conn: sqlite3.Connection) -> list[dict[str, Any]]:

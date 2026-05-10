@@ -41,6 +41,58 @@ def test_init_db_does_not_seed_notification_rules(tmp_path, monkeypatch):
     assert count == 0
 
 
+def test_init_db_backfills_existing_seeded_rules_without_reinserting(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    conn = db.get_db()
+    conn.execute(
+        """
+        INSERT INTO notification_rules
+          (seed_key, name, description, enabled, file_pattern, content_match,
+           match_type, target_branch, mr_state, send_email)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "legacy_seeded_rule",
+            "Legacy seeded rule",
+            "Existing deployments can already have seed_key values",
+            1,
+            "*.md",
+            "type: breaking",
+            "contains",
+            "master",
+            "opened",
+            0,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    db.init_db()
+
+    conn = db.get_db()
+    rules_count = conn.execute(
+        "SELECT COUNT(*) FROM notification_rules WHERE seed_key = ?",
+        ("legacy_seeded_rule",),
+    ).fetchone()[0]
+    child_count = conn.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM rule_conditions WHERE rule_id = r.id) +
+            (SELECT COUNT(*) FROM rule_actions WHERE rule_id = r.id) +
+            (SELECT COUNT(*) FROM rule_channels WHERE rule_id = r.id)
+        FROM notification_rules r
+        WHERE r.seed_key = ?
+        """,
+        ("legacy_seeded_rule",),
+    ).fetchone()[0]
+    conn.close()
+
+    assert rules_count == 1
+    assert child_count > 0
+
+
 def test_rule_matches_model_change_without_postgres_script(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
