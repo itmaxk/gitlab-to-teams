@@ -50,6 +50,14 @@ class _FakeAsyncClient:
         return response
 
 
+class _LoopAwareFakeClient:
+    def __init__(self):
+        self.is_closed = False
+
+    async def aclose(self):
+        self.is_closed = True
+
+
 def test_get_mr_diff_fills_empty_changes_from_raw_diffs(monkeypatch):
     changes_payload = {
         "title": "Large MR",
@@ -179,6 +187,44 @@ def test_get_mr_diff_builds_synthetic_diff_when_gitlab_returns_nothing(monkeypat
     assert "@@ -1 +1 @@" in result["changes"][0]["diff"]
     assert "-before = 1" in result["changes"][0]["diff"]
     assert "+before = 2" in result["changes"][0]["diff"]
+
+
+def test_get_client_recreates_shared_client_for_new_event_loop(monkeypatch):
+    created = []
+
+    def fake_async_client(**kwargs):
+        client = _LoopAwareFakeClient()
+        created.append(client)
+        return client
+
+    monkeypatch.setattr(gitlab_client.httpx, "AsyncClient", fake_async_client)
+    monkeypatch.setattr(gitlab_client, "_client", None)
+    monkeypatch.setattr(gitlab_client, "_client_loop", None)
+
+    async def get_client_once():
+        return gitlab_client._get_client()
+
+    first = asyncio.run(get_client_once())
+    second = asyncio.run(get_client_once())
+
+    assert first is not second
+    assert created == [first, second]
+
+
+def test_close_client_ignores_closed_loop_runtime_error(monkeypatch):
+    class ClosedLoopClient:
+        is_closed = False
+
+        async def aclose(self):
+            raise RuntimeError("Event loop is closed")
+
+    monkeypatch.setattr(gitlab_client, "_client", ClosedLoopClient())
+    monkeypatch.setattr(gitlab_client, "_client_loop", None)
+
+    asyncio.run(gitlab_client.close_client())
+
+    assert gitlab_client._client is None
+    assert gitlab_client._client_loop is None
 
 
 def test_get_mr_diff_synthetic_fallback_uses_diff_refs_instead_of_branch_names(monkeypatch):

@@ -1,4 +1,5 @@
 import difflib
+import asyncio
 import logging
 import os
 import re
@@ -13,22 +14,34 @@ logger = logging.getLogger(__name__)
 # Connection pool for GitLab API requests
 _limits = httpx.Limits(max_connections=20, max_keepalive_connections=10)
 _client: httpx.AsyncClient | None = None
+_client_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _get_client() -> httpx.AsyncClient:
     """Return shared AsyncClient with connection pooling."""
-    global _client
-    if _client is None:
+    global _client, _client_loop
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    client_closed = bool(getattr(_client, "is_closed", False))
+    if _client is None or client_closed or (_client_loop is not None and _client_loop is not loop):
         _client = httpx.AsyncClient(verify=False, limits=_limits)
+        _client_loop = loop
     return _client
 
 
 async def close_client() -> None:
     """Close the shared HTTP client. Call on application shutdown."""
-    global _client
+    global _client, _client_loop
     if _client is not None:
-        await _client.aclose()
+        try:
+            await _client.aclose()
+        except RuntimeError as exc:
+            if "Event loop is closed" not in str(exc):
+                raise
         _client = None
+        _client_loop = None
 
 
 def _base_url() -> str:
