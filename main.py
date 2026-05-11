@@ -19,7 +19,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from db import init_db, seed_report_settings, seed_review_settings, seed_global_settings
+from db import (
+    init_db,
+    seed_default_rule,
+    seed_global_settings,
+    seed_report_settings,
+    seed_review_settings,
+)
 from services.gitlab_client import close_client
 from services.poller import start_polling
 from services.reports_scheduler import start_reports_scheduler
@@ -33,6 +39,7 @@ logging.basicConfig(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    seed_default_rule()
     seed_report_settings()
     seed_review_settings()
     seed_global_settings()
