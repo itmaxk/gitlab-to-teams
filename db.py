@@ -881,6 +881,11 @@ def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
         "SELECT id FROM notification_rules WHERE seed_key = ?", (seed_key,)
     ).fetchone()
     if row:
+        persisted = conn.execute(
+            "SELECT enabled FROM notification_rules WHERE id = ?", (row["id"],)
+        ).fetchone()
+        if persisted is not None:
+            rule["enabled"] = bool(persisted["enabled"])
         upsert_rule_aggregate(conn, rule, row["id"])
     conn.commit()
     return row["id"] if row else None

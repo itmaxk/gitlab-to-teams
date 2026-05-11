@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
-from services.rule_store import list_rule_aggregates
+from services.rule_store import get_rule_aggregate, list_rule_aggregates
 from services.rules_engine import _extract_file_references, evaluate_rules_for_mr
 
 
@@ -92,6 +92,33 @@ def test_init_db_backfills_existing_seeded_rules_without_reinserting(tmp_path, m
 
     assert rules_count == 1
     assert child_count > 0
+
+
+def test_seed_default_rule_preserves_existing_enabled_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    conn.execute(
+        "UPDATE notification_rules SET enabled = 0 WHERE seed_key = ?",
+        ("pipeline_config_sonar_publish_issues",),
+    )
+    conn.commit()
+    conn.close()
+
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT id, enabled FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_sonar_publish_issues",),
+    ).fetchone()
+    aggregate = get_rule_aggregate(conn, row["id"])
+    conn.close()
+
+    assert row["enabled"] == 0
+    assert aggregate["enabled"] is False
 
 
 def test_rule_aggregate_exposes_legacy_scope_fields_for_rules_ui(tmp_path, monkeypatch):
