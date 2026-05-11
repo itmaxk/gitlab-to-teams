@@ -28,6 +28,10 @@ from services.pipeline_check import (
     parse_retry_job_names,
     retry_failed_config_jobs,
 )
+from services.sonar_publish import (
+    parse_sonar_job_name,
+    publish_sonar_issues_after_job,
+)
 from services.rule_store import load_enabled_runtime_rules, rule_matches_mr_project
 
 logger = logging.getLogger(__name__)
@@ -341,8 +345,18 @@ async def poll_once(rules: list[dict]):
                 for r in project_rules
                 if r.get("action_type") == "pipeline_job_retry"
             }
+            sonar_rule_ids = {
+                r["id"]
+                for r in project_rules
+                if r.get("action_type") == "sonar_issues"
+            }
             all_rule_ids = list(
-                dict.fromkeys(tc_rule_ids | pipeline_retry_rule_ids | set(pending_rule_ids))
+                dict.fromkeys(
+                    tc_rule_ids
+                    | pipeline_retry_rule_ids
+                    | sonar_rule_ids
+                    | set(pending_rule_ids)
+                )
             )
             if not all_rule_ids:
                 continue
@@ -371,6 +385,11 @@ async def poll_once(rules: list[dict]):
                 r
                 for r in project_rules
                 if r["id"] in all_rule_ids and r.get("action_type") == "pipeline_job_retry"
+            ]
+            sonar_rules = [
+                r
+                for r in project_rules
+                if r["id"] in all_rule_ids and r.get("action_type") == "sonar_issues"
             ]
             notify_rules = [
                 r
@@ -501,11 +520,46 @@ async def poll_once(rules: list[dict]):
                     )
                     poll_notes.append(f"pipeline job retry error: {e}")
 
+            for sonar_rule in sonar_rules:
+                job_name = parse_sonar_job_name(sonar_rule.get("content_match", ""))
+                try:
+                    sonar_result = await publish_sonar_issues_after_job(
+                        project_id,
+                        mr_iid,
+                        job_name,
+                        sonar_rule["id"],
+                        mr_title,
+                        mr_url,
+                    )
+                    total_matched += len(sonar_result.published)
+                    if sonar_result.published:
+                        published_jobs = ", ".join(
+                            str(item.get("job_name") or item.get("job_id"))
+                            for item in sonar_result.published
+                        )
+                        poll_notes.append(f"published sonar issues: {published_jobs}")
+                    if sonar_result.skipped:
+                        skipped_jobs = ", ".join(
+                            f"{item.get('job_name')}:{item.get('reason')}"
+                            for item in sonar_result.skipped
+                        )
+                        poll_notes.append(f"skipped sonar issues: {skipped_jobs}")
+                    if sonar_result.errors:
+                        poll_notes.append(
+                            f"sonar publish errors: {', '.join(sonar_result.errors)}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        "Sonar issues publish check failed for MR !%s: %s", mr_iid, e
+                    )
+                    poll_notes.append(f"sonar publish error: {e}")
+
             rest_rule_ids = [
                 rid for rid in pending_rule_ids
                 if rid not in {r["id"] for r in title_check_rules}
                 and rid not in {r["id"] for r in pipeline_check_rules}
                 and rid not in {r["id"] for r in pipeline_retry_rules}
+                and rid not in {r["id"] for r in sonar_rules}
             ]
             if not rest_rule_ids:
                 try:

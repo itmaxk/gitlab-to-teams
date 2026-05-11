@@ -11,9 +11,9 @@ from pathlib import Path
 from services.sonar_client import (
     fetch_sonar_issues,
     build_sonar_url,
-    format_gitlab_comment,
     extract_sonar_link,
 )
+from services.sonar_publish import publish_sonar_issues_to_gitlab
 
 logger = logging.getLogger(__name__)
 
@@ -190,9 +190,9 @@ async def _post_comment_to_mr(
     raw_issues: list[dict] | None = None,
 ) -> None:
     """Постит комментарий с issues в GitLab MR."""
-    project_path = quote(_gitlab_project_path(), safe="")
-    url = f"{_gitlab_base()}/api/v4/projects/{project_path}/merge_requests/{mr_id}/notes"
-    comment = format_gitlab_comment(sonar_url, formatted_issues, raw_issues=raw_issues)
-    async with httpx.AsyncClient(verify=False, timeout=30) as client:
-        resp = await client.post(url, headers=_gitlab_headers(), json={"body": comment})
-        resp.raise_for_status()
+    await publish_sonar_issues_to_gitlab(
+        mr_id,
+        sonar_url,
+        formatted_issues,
+        raw_issues=raw_issues,
+    )

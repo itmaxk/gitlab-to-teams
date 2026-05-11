@@ -63,6 +63,10 @@
           <span class="text-xs px-2 py-0.5 rounded-full border bg-indigo-900/30 text-indigo-400 border-indigo-800">
             Pipeline Check
           </span>
+          {% elif rule.action_type == 'sonar_issues' %}
+          <span class="text-xs px-2 py-0.5 rounded-full border bg-emerald-900/30 text-emerald-400 border-emerald-800">
+            Sonar Issues
+          </span>
           {% endif %}
           {% if rule.is_duplicate_behavior %}
           <span class="text-xs px-2 py-0.5 rounded-full border bg-red-900/30 text-red-300 border-red-800">

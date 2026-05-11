@@ -721,6 +721,26 @@ def seed_default_rule():
         },
     )
 
+    _seed_rule_if_missing(
+        conn,
+        {
+            "seed_key": "pipeline_config_sonar_publish_issues",
+            "name": "Publish Sonar issues after config:sonar",
+            "description": "After config:sonar finishes in the latest MR pipeline, fetch SonarQube issues for the MR and publish a fresh GitLab comment, deleting the previous Sonar comment.",
+            "file_pattern": "*",
+            "content_match": "config:sonar",
+            "match_type": "contains",
+            "target_branch": "*",
+            "mr_state": "opened",
+            "poll_interval_seconds": 600,
+            "action_type": "sonar_issues",
+            "send_gitlab": 1,
+            "send_teams": 0,
+            "send_email": 0,
+            "enabled": 1,
+        },
+    )
+
     conn.close()
 
 

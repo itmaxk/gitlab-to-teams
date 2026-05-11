@@ -323,6 +323,7 @@ def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypat
         "title_check",
         "pipeline_check",
         "pipeline_job_retry",
+        "sonar_issues",
         "xlsx_review",
         "code_review",
     ]
@@ -387,6 +388,7 @@ def test_poll_once_global_title_skip_blocks_all_rule_actions(tmp_path, monkeypat
     monkeypatch.setattr(poller, "post_merge_request_discussion", forbidden_async_call)
     monkeypatch.setattr(poller, "check_pipeline_job_failed", forbidden_async_call)
     monkeypatch.setattr(poller, "retry_failed_config_jobs", forbidden_async_call)
+    monkeypatch.setattr(poller, "publish_sonar_issues_after_job", forbidden_async_call)
     monkeypatch.setattr(poller, "review_xlsx_mr", forbidden_async_call)
     monkeypatch.setattr(poller, "review_mr", forbidden_async_call)
     monkeypatch.setattr(poller, "is_title_valid", forbidden_sync_call)
@@ -645,7 +647,10 @@ def test_poll_once_pipeline_job_retry_is_not_mr_processed(tmp_path, monkeypatch)
         retry_calls.append((project_id, mr_iid, job_names, rule_id))
 
         class Result:
+            checked = 1
             retried = [{"job_id": 101}]
+            skipped = []
+            errors = []
 
         return Result()
 
@@ -681,6 +686,90 @@ def test_poll_once_pipeline_job_retry_is_not_mr_processed(tmp_path, monkeypatch)
     processed = conn.execute(
         "SELECT 1 FROM processed_mrs WHERE rule_id = ? AND mr_iid = ?",
         (rule_id, 127),
+    ).fetchone()
+    conn.close()
+    assert processed is None
+
+
+def test_poll_once_sonar_issues_is_not_mr_processed(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_config_sonar_publish_issues",),
+    ).fetchone()["id"]
+    conn.close()
+
+    poller._project_id = None
+    sonar_calls = []
+
+    async def fake_get_project_id():
+        return 26
+
+    async def fake_get_merge_requests(project_id, state, target_branch=None):
+        return [
+            {
+                "iid": 128,
+                "title": "ADIRGSLSUPP-6752: Economic parameters",
+                "web_url": "https://example.test/mr/128",
+                "state": state,
+                "source_branch": "feature/branch",
+                "target_branch": "master",
+                "author": {"name": "Dev"},
+                "created_at": "2026-04-29T00:00:00Z",
+            }
+        ]
+
+    async def fake_publish_sonar_issues_after_job(
+        project_id, mr_iid, job_name, rule_id, mr_title="", mr_url=""
+    ):
+        sonar_calls.append((project_id, mr_iid, job_name, rule_id, mr_title, mr_url))
+
+        class Result:
+            checked = 1
+            published = [{"job_id": 101, "job_name": job_name}]
+            skipped = []
+            errors = []
+
+        return Result()
+
+    monkeypatch.setattr(poller, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(poller, "get_merge_requests", fake_get_merge_requests)
+    monkeypatch.setattr(
+        poller, "publish_sonar_issues_after_job", fake_publish_sonar_issues_after_job
+    )
+
+    asyncio.run(
+        poller.poll_once(
+            [
+                {
+                    "id": rule_id,
+                    "target_branch": "*",
+                    "mr_state": "opened",
+                    "action_type": "sonar_issues",
+                    "content_match": "config:sonar",
+                }
+            ]
+        )
+    )
+
+    assert sonar_calls == [
+        (
+            26,
+            128,
+            "config:sonar",
+            rule_id,
+            "ADIRGSLSUPP-6752: Economic parameters",
+            "https://example.test/mr/128",
+        )
+    ]
+    conn = db.get_db()
+    processed = conn.execute(
+        "SELECT 1 FROM processed_mrs WHERE rule_id = ? AND mr_iid = ?",
+        (rule_id, 128),
     ).fetchone()
     conn.close()
     assert processed is None

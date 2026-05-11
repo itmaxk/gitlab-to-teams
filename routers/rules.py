@@ -195,13 +195,13 @@ async def test_rule(rule_id: int):
     row = load_runtime_rule(conn, rule_id)
     conn.close()
 
-    if row.get("action_type") == "pipeline_job_retry":
+    if row.get("action_type") in {"pipeline_job_retry", "sonar_issues"}:
         from services.poller import poll_once
 
         await poll_once([row])
         return {
             "status": "checked",
-            "action": "pipeline_job_retry",
+            "action": row.get("action_type"),
         }
 
     send_teams = bool(row.get("send_teams", 1))

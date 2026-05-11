@@ -62,6 +62,7 @@
         <option value="title_check" {{ 'selected' if rule and rule.action_type == 'title_check' }}>Проверка заголовка (title_check)</option>
         <option value="pipeline_check" {{ 'selected' if rule and rule.action_type == 'pipeline_check' }}>Pipeline job check (pipeline_check)</option>
         <option value="pipeline_job_retry" {{ 'selected' if rule and rule.action_type == 'pipeline_job_retry' }}>Pipeline job retry (pipeline_job_retry)</option>
+        <option value="sonar_issues" {{ 'selected' if rule and rule.action_type == 'sonar_issues' }}>Sonar issues after job (sonar_issues)</option>
       </select>
       <p class="text-xs text-slate-500 mt-1">xlsx_review — автоматический XLSX-ревью для MR с xlsx-файлами. code_review — AI-ревью кода через LLM. title_check — проверка формата заголовка MR (JIRA-TASK: Short description, без русских букв, номер релиза для release-веток). pipeline_job_retry — retry failed jobs from content_match when trace stops after [5/5] Building fresh packages.... Пропускают MR с title начинающимся с Draft.</p>
     </div>
