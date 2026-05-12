@@ -853,13 +853,6 @@ def _seed_review_project_profile(conn: sqlite3.Connection):
         )
 
 
-SEED_UPDATABLE_FIELDS = (
-    "name", "description", "file_pattern", "content_match", "content_exclude",
-    "match_type", "target_branch", "mr_state", "project_keys", "title_exclude",
-    "file_check_enabled", "file_check_path_prefix", "file_check_mode",
-)
-
-
 def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
     rule = dict(rule)
     seed_key = rule.pop("seed_key", None) or rule.get("name", "")
@@ -867,25 +860,24 @@ def _seed_rule_if_missing(conn: sqlite3.Connection, rule: dict):
         rule_id = upsert_rule_aggregate(conn, rule)
         conn.commit()
         return rule_id
+
+    existing = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?", (seed_key,)
+    ).fetchone()
+    if existing:
+        return existing["id"]
+
     rule["seed_key"] = seed_key
     cols = ", ".join(rule.keys())
     placeholders = ", ".join("?" for _ in rule)
-    updatable = {k: v for k, v in rule.items() if k in SEED_UPDATABLE_FIELDS}
-    update_clause = ", ".join(f"{k} = excluded.{k}" for k in updatable)
     conn.execute(
-        f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders}) "
-        f"ON CONFLICT(seed_key) DO UPDATE SET {update_clause}",
+        f"INSERT INTO notification_rules ({cols}) VALUES ({placeholders})",
         list(rule.values()),
     )
     row = conn.execute(
         "SELECT id FROM notification_rules WHERE seed_key = ?", (seed_key,)
     ).fetchone()
-    if row:
-        persisted = conn.execute(
-            "SELECT enabled FROM notification_rules WHERE id = ?", (row["id"],)
-        ).fetchone()
-        if persisted is not None:
-            rule["enabled"] = bool(persisted["enabled"])
+    if row is not None:
         upsert_rule_aggregate(conn, rule, row["id"])
     conn.commit()
     return row["id"] if row else None

@@ -5,7 +5,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import db
-from services.rule_store import get_rule_aggregate, list_rule_aggregates
+from services.rule_store import get_rule_aggregate, list_rule_aggregates, upsert_rule_aggregate
 from services.rules_engine import _extract_file_references, evaluate_rules_for_mr
 
 
@@ -119,6 +119,71 @@ def test_seed_default_rule_preserves_existing_enabled_state(tmp_path, monkeypatc
 
     assert row["enabled"] == 0
     assert aggregate["enabled"] is False
+
+
+def test_seed_default_rule_preserves_saved_pipeline_rule_fields_after_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    rule_id = conn.execute(
+        "SELECT id FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_changelog_validate",),
+    ).fetchone()["id"]
+    upsert_rule_aggregate(
+        conn,
+        {
+            "name": "Custom changelog validation",
+            "description": "Saved from /rules",
+            "enabled": False,
+            "target_branch": "release/102",
+            "mr_state": "opened",
+            "poll_interval_seconds": 900,
+            "project_keys": "ADIRGSLSUPP",
+            "file_pattern": "custom/**/*.md",
+            "content_match": "custom:validate",
+            "match_type": "contains",
+            "action_type": "pipeline_check",
+            "send_teams": True,
+            "send_email": True,
+            "send_gitlab": True,
+            "gitlab_comment_mode": "note",
+            "gitlab_comment_template": "Saved message: {job_name} {job_web_url}",
+            "pipeline_job_name": "custom:validate",
+            "emails": ["dev@example.test"],
+        },
+        rule_id,
+    )
+    conn.commit()
+    conn.close()
+
+    db.seed_default_rule()
+
+    conn = db.get_db()
+    row = conn.execute(
+        "SELECT * FROM notification_rules WHERE seed_key = ?",
+        ("pipeline_changelog_validate",),
+    ).fetchone()
+    aggregate = get_rule_aggregate(conn, row["id"])
+    conn.close()
+
+    assert row["name"] == "Custom changelog validation"
+    assert row["enabled"] == 0
+    assert aggregate["target_branch"] == "release/102"
+    assert aggregate["poll_interval_seconds"] == 900
+    assert aggregate["project_keys"] == "ADIRGSLSUPP"
+    assert aggregate["file_pattern"] == "custom/**/*.md"
+    assert aggregate["content_match"] == "custom:validate"
+    assert aggregate["send_teams"] == 1
+    assert aggregate["send_email"] == 1
+    assert aggregate["send_gitlab"] == 1
+    assert aggregate["gitlab_comment_mode"] == "note"
+    assert aggregate["gitlab_comment_template"] == "Saved message: {job_name} {job_web_url}"
+    assert aggregate["configs"]["pipeline_check"]["discussion_template"] == (
+        "Saved message: {job_name} {job_web_url}"
+    )
+    assert aggregate["emails"] == ["dev@example.test"]
 
 
 def test_rule_aggregate_exposes_legacy_scope_fields_for_rules_ui(tmp_path, monkeypatch):
