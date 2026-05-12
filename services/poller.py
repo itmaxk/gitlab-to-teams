@@ -16,6 +16,7 @@ from services.notification_dispatcher import dispatch_notifications
 from services.xlsx_review_service import review_xlsx_mr
 from services.review_service import review_mr
 from services.review_comment_formatter import format_gitlab_review_comment
+from services.gitlab_delivery import render_gitlab_message
 from services.gitlab_notes import (
     post_merge_request_note,
     post_merge_request_discussion,
@@ -414,10 +415,28 @@ async def poll_once(rules: list[dict]):
                         mentions = " ".join(
                             f"@{a['username']}" for a in assignees if a.get("username")
                         )
-                        comment_body = f"{mentions}\n\n{error_msg}".strip() if mentions else error_msg
+                        template = tc_rule.get("gitlab_comment_template", "")
+                        if template:
+                            comment_body = render_gitlab_message(
+                                template,
+                                {
+                                    "mentions": mentions,
+                                    "error_msg": error_msg,
+                                    "mr_iid": mr_iid,
+                                    "mr_title": mr_title,
+                                    "mr_url": mr_url,
+                                    "rule_name": tc_rule.get("name", ""),
+                                },
+                            )
+                        else:
+                            comment_body = f"{mentions}\n\n{error_msg}".strip() if mentions else error_msg
                         try:
-                            discussion = await post_merge_request_discussion(mr_iid, comment_body)
-                            discussion_id = str((discussion or {}).get("id") or "")
+                            if tc_rule.get("gitlab_comment_mode") == "note":
+                                await post_merge_request_note(mr_iid, comment_body)
+                                discussion_id = ""
+                            else:
+                                discussion = await post_merge_request_discussion(mr_iid, comment_body)
+                                discussion_id = str((discussion or {}).get("id") or "")
                             total_matched += 1
                             _log_title_check(
                                 tc_rule["id"],
@@ -456,7 +475,7 @@ async def poll_once(rules: list[dict]):
                     )
                     result = PipelineCheckResult()
 
-                if result.failed:
+                if result.failed and pc_rule.get("send_gitlab", 0):
                     assignees = mr.get("assignees") or []
                     if not assignees:
                         assignee = mr.get("assignee")
@@ -465,14 +484,28 @@ async def poll_once(rules: list[dict]):
                     mentions = " ".join(
                         f"@{a['username']}" for a in assignees if a.get("username")
                     )
-                    body = ""
-                    if mentions:
-                        body = f"{mentions} "
-                    body += "Changelog не прошёл валидацию"
-                    if result.job_web_url:
-                        body += f"\n\n[Ссылка на job]({result.job_web_url})"
+                    template = pc_rule.get("gitlab_comment_template", "")
+                    if not template:
+                        template = "Changelog не прошёл валидацию\n\n[Ссылка на job]({job_web_url})"
+                    body = render_gitlab_message(
+                        template,
+                        {
+                            "mentions": mentions,
+                            "job_name": job_name,
+                            "job_web_url": result.job_web_url,
+                            "mr_iid": mr_iid,
+                            "mr_title": mr_title,
+                            "mr_url": mr_url,
+                            "rule_name": pc_rule.get("name", ""),
+                        },
+                    )
+                    if mentions and "{mentions}" not in template:
+                        body = f"{mentions} {body}".strip()
                     try:
-                        await post_merge_request_discussion(mr_iid, body)
+                        if pc_rule.get("gitlab_comment_mode") == "note":
+                            await post_merge_request_note(mr_iid, body)
+                        else:
+                            await post_merge_request_discussion(mr_iid, body)
                         total_matched += 1
                     except Exception as e:
                         logger.error(

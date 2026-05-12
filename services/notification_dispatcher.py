@@ -4,7 +4,7 @@ from typing import Any
 from db import get_db
 from services.teams_client import send_teams_notification
 from services.email_client import send_changelog_email
-from services.gitlab_notes import post_merge_request_note
+from services.gitlab_delivery import publish_gitlab_message, render_gitlab_message
 from services.review_comment_formatter import format_gitlab_review_comment
 
 
@@ -39,6 +39,7 @@ async def dispatch_notifications(
         teams_sent = False
         email_sent = False
         gitlab_sent = False
+        gitlab_discussion_id = ""
         error = ""
 
         webhook_url = rule["teams_webhook_url"] or os.getenv("TEAMS_WEBHOOK_URL", "")
@@ -78,14 +79,33 @@ async def dispatch_notifications(
 
         if rule.get("send_gitlab", 0):
             try:
-                comment = format_gitlab_review_comment(
-                    mr_iid=mr_iid,
-                    mr_title=mr_title,
-                    findings=match.get("findings", []),
-                    summary=match.get("summary", {}),
-                    model_used=match.get("model_used", ""),
+                template = rule.get("gitlab_comment_template", "")
+                if template:
+                    comment = render_gitlab_message(
+                        template,
+                        {
+                            "mr_iid": mr_iid,
+                            "mr_title": mr_title,
+                            "mr_url": mr_url,
+                            "rule_name": rule["name"],
+                            "file_path": file_path,
+                            "file_content": file_content,
+                        },
+                    )
+                else:
+                    comment = format_gitlab_review_comment(
+                        mr_iid=mr_iid,
+                        mr_title=mr_title,
+                        findings=match.get("findings", []),
+                        summary=match.get("summary", {}),
+                        model_used=match.get("model_used", ""),
+                    )
+                note = await publish_gitlab_message(
+                    mr_iid,
+                    comment,
+                    rule.get("gitlab_comment_mode", "note"),
                 )
-                await post_merge_request_note(mr_iid, comment)
+                gitlab_discussion_id = str((note or {}).get("id") or "")
                 gitlab_sent = True
             except Exception as e:
                 error += f"GitLab: {e}\n"
@@ -93,8 +113,9 @@ async def dispatch_notifications(
         conn = get_db()
         conn.execute(
             """INSERT INTO notification_log
-               (rule_id, mr_iid, mr_title, mr_url, file_path, file_content, teams_sent, email_sent, gitlab_sent, error)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (rule_id, mr_iid, mr_title, mr_url, file_path, file_content,
+                teams_sent, email_sent, gitlab_sent, gitlab_discussion_id, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 rule["id"],
                 mr_iid,
@@ -105,6 +126,7 @@ async def dispatch_notifications(
                 int(teams_sent),
                 int(email_sent),
                 int(gitlab_sent),
+                gitlab_discussion_id,
                 error.strip(),
             ),
         )

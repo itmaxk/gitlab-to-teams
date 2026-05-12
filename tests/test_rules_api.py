@@ -163,3 +163,30 @@ def test_create_rule_accepts_aggregate_payload_and_writes_child_tables(tmp_path,
         "config:validate",
         "config:check-uncommitted",
     ]
+
+
+def test_gitlab_comment_settings_roundtrip_for_flat_rule(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+
+    created = create_rule({
+        "name": "Pipeline check with custom GitLab text",
+        "description": "Uses a resolvable thread",
+        "enabled": True,
+        "target_branch": "*",
+        "mr_state": "opened",
+        "action_type": "pipeline_check",
+        "send_teams": False,
+        "send_email": False,
+        "send_gitlab": True,
+        "pipeline_job_name": "changelog:validate",
+        "gitlab_comment_mode": "discussion",
+        "gitlab_comment_template": "{mentions} fix {job_name}: {job_web_url}",
+    })
+
+    assert created["send_gitlab"] is True
+    assert created["gitlab_comment_mode"] == "discussion"
+    assert created["gitlab_comment_template"] == "{mentions} fix {job_name}: {job_web_url}"
+    assert created["configs"]["pipeline_check"]["discussion_template"] == (
+        "{mentions} fix {job_name}: {job_web_url}"
+    )

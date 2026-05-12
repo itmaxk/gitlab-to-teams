@@ -21,6 +21,8 @@ DEFAULT_PIPELINE_RETRY_SUFFIX = ""
 DEFAULT_PIPELINE_CHECK_TEMPLATE = (
     "Changelog не прошёл валидацию\n\n[Ссылка на job]({job_web_url})"
 )
+DEFAULT_GITLAB_COMMENT_MODE = "note"
+GITLAB_COMMENT_MODES = {"note", "discussion"}
 TITLE_PROJECT_RE = re.compile(r"\b([A-Z][A-Z0-9]+)-\d+\b", re.IGNORECASE)
 
 
@@ -293,7 +295,13 @@ def legacy_row_to_aggregate(conn: sqlite3.Connection, row: dict[str, Any]) -> di
             "settings": {"webhook_url": row.get("teams_webhook_url") or ""},
         },
         "email": {"enabled": bool(row.get("send_email", 0)), "settings": {}},
-        "gitlab": {"enabled": bool(row.get("send_gitlab", 0)), "settings": {}},
+        "gitlab": {
+            "enabled": bool(row.get("send_gitlab", 0)),
+            "settings": {
+                "comment_mode": "discussion" if action_type in {"pipeline_check", "title_check"} else DEFAULT_GITLAB_COMMENT_MODE,
+                "comment_template": DEFAULT_PIPELINE_CHECK_TEMPLATE if action_type == "pipeline_check" else "",
+            },
+        },
     }
     recipients = [
         r["email"]
@@ -366,6 +374,14 @@ def flat_fields_from_aggregate(rule: dict[str, Any]) -> dict[str, Any]:
     teams = channels.get("teams", {})
     email = channels.get("email", {})
     gitlab = channels.get("gitlab", {})
+    gitlab_settings = gitlab.get("settings", {}) or {}
+    gitlab_comment_mode = _normalize_gitlab_comment_mode(
+        gitlab_settings.get("comment_mode"),
+        "discussion" if action_type in {"pipeline_check", "title_check"} else DEFAULT_GITLAB_COMMENT_MODE,
+    )
+    gitlab_comment_template = gitlab_settings.get("comment_template", "")
+    if action_type == "pipeline_check" and not gitlab_comment_template:
+        gitlab_comment_template = pipeline_config.get("discussion_template") or DEFAULT_PIPELINE_CHECK_TEMPLATE
     return {
         "project_keys": project_keys_to_string(rule.get("scope", {}).get("project_keys", ["*"])),
         "file_pattern": file_pattern or "*",
@@ -381,6 +397,8 @@ def flat_fields_from_aggregate(rule: dict[str, Any]) -> dict[str, Any]:
         "teams_webhook_url": teams.get("settings", {}).get("webhook_url", ""),
         "send_email": 1 if email.get("enabled", False) else 0,
         "send_gitlab": 1 if gitlab.get("enabled", False) else 0,
+        "gitlab_comment_mode": gitlab_comment_mode,
+        "gitlab_comment_template": gitlab_comment_template,
     }
 
 
@@ -667,6 +685,13 @@ def _normalize_flat(data: dict[str, Any]) -> dict[str, Any]:
     jobs = data.get("pipeline_retry_jobs")
     if jobs is None:
         jobs = _split_csv(content_match) if action_type == "pipeline_job_retry" else []
+    gitlab_comment_mode = _normalize_gitlab_comment_mode(
+        data.get("gitlab_comment_mode"),
+        "discussion" if action_type in {"pipeline_check", "title_check"} else DEFAULT_GITLAB_COMMENT_MODE,
+    )
+    gitlab_comment_template = data.get("gitlab_comment_template") or ""
+    if action_type == "pipeline_check" and not gitlab_comment_template:
+        gitlab_comment_template = data.get("pipeline_discussion_template") or DEFAULT_PIPELINE_CHECK_TEMPLATE
     return _normalize_aggregate({
         "id": data.get("id"),
         "name": data.get("name", ""),
@@ -687,14 +712,20 @@ def _normalize_flat(data: dict[str, Any]) -> dict[str, Any]:
                 "settings": {"webhook_url": data.get("teams_webhook_url", "") or ""},
             },
             "email": {"enabled": bool(data.get("send_email", False)), "settings": {}},
-            "gitlab": {"enabled": bool(data.get("send_gitlab", False)), "settings": {}},
+            "gitlab": {
+                "enabled": bool(data.get("send_gitlab", False)),
+                "settings": {
+                    "comment_mode": gitlab_comment_mode,
+                    "comment_template": gitlab_comment_template,
+                },
+            },
         },
         "recipients": data.get("emails", []) or data.get("recipients", []),
         "configs": {
             "title_check": DEFAULT_TITLE_CHECK_CONFIG.copy(),
             "pipeline_check": {
                 "job_name": data.get("pipeline_job_name") or content_match or "changelog:validate",
-                "discussion_template": data.get("pipeline_discussion_template") or DEFAULT_PIPELINE_CHECK_TEMPLATE,
+                "discussion_template": gitlab_comment_template or data.get("pipeline_discussion_template") or DEFAULT_PIPELINE_CHECK_TEMPLATE,
                 "mention_assignees": bool(data.get("pipeline_mention_assignees", True)),
             },
             "pipeline_job_retry": {
@@ -773,6 +804,19 @@ def _normalize_aggregate(data: dict[str, Any]) -> dict[str, Any]:
         "base_ref": "",
         "custom_prompt": "",
     })
+    gitlab_settings = normalized_channels["gitlab"].setdefault("settings", {})
+    gitlab_settings["comment_mode"] = _normalize_gitlab_comment_mode(
+        gitlab_settings.get("comment_mode"),
+        "discussion" if action_type in {"pipeline_check", "title_check"} else DEFAULT_GITLAB_COMMENT_MODE,
+    )
+    if not gitlab_settings.get("comment_template"):
+        gitlab_settings["comment_template"] = (
+            configs["pipeline_check"].get("discussion_template", DEFAULT_PIPELINE_CHECK_TEMPLATE)
+            if action_type == "pipeline_check"
+            else ""
+        )
+    if action_type == "pipeline_check" and gitlab_settings.get("comment_template"):
+        configs["pipeline_check"]["discussion_template"] = gitlab_settings["comment_template"]
 
     return {
         "id": data.get("id"),
@@ -1009,3 +1053,12 @@ def _split_csv(raw: str | list[str]) -> list[str]:
     else:
         parts = str(raw or "").split(",")
     return [str(part).strip() for part in parts if str(part).strip()]
+
+
+def _normalize_gitlab_comment_mode(raw: str | None, default: str = DEFAULT_GITLAB_COMMENT_MODE) -> str:
+    value = str(raw or "").strip().lower()
+    if value in {"thread", "resolve_thread", "resolvable_thread"}:
+        value = "discussion"
+    if value in GITLAB_COMMENT_MODES:
+        return value
+    return default if default in GITLAB_COMMENT_MODES else DEFAULT_GITLAB_COMMENT_MODE

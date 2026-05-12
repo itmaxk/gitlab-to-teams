@@ -1,3 +1,4 @@
+import json
 import logging
 
 from db import get_db
@@ -9,8 +10,10 @@ from services.gitlab_client import (
 from services.gitlab_notes import (
     delete_merge_request_note,
     list_merge_request_notes,
+    post_merge_request_discussion,
     post_merge_request_note,
 )
+from services.gitlab_delivery import render_gitlab_message
 from services.sonar_client import (
     build_sonar_url,
     extract_sonar_link,
@@ -48,6 +51,22 @@ def parse_sonar_job_name(raw_value: str) -> str:
 
 def _sonar_job_log_path(job_id: int) -> str:
     return f"{SONAR_LOG_PREFIX}{job_id}"
+
+
+def _get_gitlab_settings(rule_id: int) -> dict:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT settings_json FROM rule_channels WHERE rule_id = ? AND channel_type = ?",
+        (rule_id, "gitlab"),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return {}
+    try:
+        settings = json.loads(row["settings_json"] or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return settings if isinstance(settings, dict) else {}
 
 
 def _was_sonar_job_published(rule_id: int, job_id: int) -> bool:
@@ -121,13 +140,36 @@ async def publish_sonar_issues_to_gitlab(
     sonar_url: str,
     formatted_issues: str,
     raw_issues: list[dict] | None = None,
+    comment_mode: str = "note",
+    comment_template: str = "",
+    context: dict | None = None,
 ) -> dict:
-    comment = format_gitlab_comment(sonar_url, formatted_issues, raw_issues=raw_issues)
+    if comment_template:
+        comment = render_gitlab_message(
+            comment_template,
+            {
+                "mr_iid": mr_iid,
+                "sonar_url": sonar_url,
+                "formatted_issues": formatted_issues,
+                "issues_count": len(raw_issues or []),
+                **(context or {}),
+            },
+        )
+    else:
+        comment = format_gitlab_comment(sonar_url, formatted_issues, raw_issues=raw_issues)
     await delete_previous_sonar_notes(mr_iid)
+    if comment_mode == "discussion":
+        return await post_merge_request_discussion(mr_iid, comment)
     return await post_merge_request_note(mr_iid, comment)
 
 
-async def fetch_and_publish_sonar_issues(project_id: int, mr_iid: int) -> dict:
+async def fetch_and_publish_sonar_issues(
+    project_id: int,
+    mr_iid: int,
+    comment_mode: str = "note",
+    comment_template: str = "",
+    context: dict | None = None,
+) -> dict:
     sonar_url = await resolve_sonar_url(project_id, mr_iid)
     result = await fetch_sonar_issues(sonar_url)
     note = await publish_sonar_issues_to_gitlab(
@@ -135,6 +177,9 @@ async def fetch_and_publish_sonar_issues(project_id: int, mr_iid: int) -> dict:
         sonar_url,
         result["formatted"],
         raw_issues=result["issues"],
+        comment_mode=comment_mode,
+        comment_template=comment_template,
+        context=context,
     )
     return {
         "count": result["total"],
@@ -198,7 +243,19 @@ async def publish_sonar_issues_after_job(
         return result
 
     try:
-        published = await fetch_and_publish_sonar_issues(project_id, mr_iid)
+        rule_settings = _get_gitlab_settings(rule_id)
+        published = await fetch_and_publish_sonar_issues(
+            project_id,
+            mr_iid,
+            comment_mode=rule_settings.get("comment_mode", "note"),
+            comment_template=rule_settings.get("comment_template", ""),
+            context={
+                "job_id": job_id,
+                "job_name": target_job_name,
+                "mr_title": mr_title,
+                "mr_url": mr_url,
+            },
+        )
         note_id = str((published.get("note") or {}).get("id") or "")
         _log_sonar_publish(
             rule_id,

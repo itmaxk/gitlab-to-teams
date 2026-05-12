@@ -243,6 +243,28 @@
       <label for="send_gitlab" class="text-sm text-slate-300">Оставить комментарий в GitLab MR</label>
     </div>
 
+    <div id="gitlab-settings-block" class="rounded-lg border border-slate-700 bg-slate-900/45 p-4 space-y-4">
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">GitLab comment type</label>
+        <select name="gitlab_comment_mode"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white focus:border-blue-500 focus:outline-none">
+          <option value="note" {{ 'selected' if not rule or rule.gitlab_comment_mode == 'note' }}>Regular comment</option>
+          <option value="discussion" {{ 'selected' if rule and rule.gitlab_comment_mode == 'discussion' }}>Resolvable thread</option>
+        </select>
+        <p class="text-xs text-slate-500 mt-1">Resolvable thread creates a GitLab discussion that can be closed with Resolve.</p>
+      </div>
+
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">GitLab message</label>
+        <textarea name="gitlab_comment_template" rows="5"
+          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none"
+          placeholder="Empty = default message for this rule">{{ rule.gitlab_comment_template if rule else '' }}</textarea>
+        <p class="text-xs text-slate-500 mt-1">
+          Placeholders: {mentions}, {job_name}, {job_web_url}, {mr_iid}, {mr_title}, {mr_url}, {rule_name}, {file_path}, {file_content}.
+        </p>
+      </div>
+    </div>
+
     <div>
       <label class="block text-sm text-slate-400 mb-1">Email-получатели (пусто = DEFAULT_EMAIL из .env)</label>
       <div id="email-list" class="space-y-2">
@@ -282,5 +304,14 @@ function toggleMatchTypeFields() {
 }
 document.querySelector('select[name="match_type"]').addEventListener('change', toggleMatchTypeFields);
 toggleMatchTypeFields();
+
+function toggleGitLabSettings() {
+  const checkbox = document.getElementById('send_gitlab');
+  const block = document.getElementById('gitlab-settings-block');
+  if (!checkbox || !block) return;
+  block.classList.toggle('hidden', !checkbox.checked);
+}
+document.getElementById('send_gitlab').addEventListener('change', toggleGitLabSettings);
+toggleGitLabSettings();
 </script>
 {% endblock %}
