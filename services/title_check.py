@@ -22,7 +22,7 @@ def is_title_valid(title: str, target_branch: str = "master") -> tuple[bool, str
         release_match = _RELEASE_NUM_RE.search(target_branch)
         if release_match:
             release_num = release_match.group(1)
-            if not re.search(rf"{release_num}\s*\)?\s*$", title):
+            if not re.search(rf"{release_num}\s*[\])]*\s*$", title):
                 return False, (
                     f"{_TITLE_ERROR_MSG} "
                     f"(отсутствует номер релиза {release_num} для ветки {target_branch})"

@@ -38,6 +38,15 @@ def test_valid_jira_task_release_full_word():
     assert msg == ""
 
 
+def test_valid_jira_task_release_square_bracket_rel():
+    valid, msg = is_title_valid(
+        "ADIRGSLSUPP-6764: ELLPVTB revert old code [rel102]",
+        "release/102",
+    )
+    assert valid is True
+    assert msg == ""
+
+
 def test_draft_prefix_skip():
     valid, msg = is_title_valid("Draft: work in progress", "master")
     assert valid is True
