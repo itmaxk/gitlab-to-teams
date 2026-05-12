@@ -644,9 +644,13 @@ async def review_xlsx_mr(
     mr_iid: int,
     base_ref: str = DEFAULT_XLSX_BASE_REF,
     progress_callback=None,
+    force_refresh_diff: bool = False,
 ) -> dict:
     project_id = await get_project_id()
-    mr_data = await get_mr_diff(project_id, mr_iid)
+    if force_refresh_diff:
+        mr_data = await get_mr_diff(project_id, mr_iid, force_refresh=True)
+    else:
+        mr_data = await get_mr_diff(project_id, mr_iid)
     xlsx_changes = [
         change for change in mr_data["changes"]
         if (change.get("new_path") or change.get("old_path") or "").lower().endswith(".xlsx")

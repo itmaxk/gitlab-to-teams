@@ -135,6 +135,39 @@ def test_review_mr_marks_files_without_diff_as_skipped(tmp_path, monkeypatch):
     assert result["summary"]["truncated"] is True
 
 
+def test_review_mr_can_force_refresh_gitlab_diff(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    async def fake_get_project_id():
+        return 77
+
+    calls = []
+
+    async def fake_get_mr_diff(project_id, mr_iid, **kwargs):
+        calls.append((project_id, mr_iid, kwargs))
+        return {
+            "title": "Fresh MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/fresh",
+            "source_ref": "fresh-head-sha",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/20",
+            "overflow": False,
+            "changes": [],
+        }
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+
+    result = asyncio.run(review_service.review_mr(20, force_refresh_diff=True))
+
+    assert result["mr"]["title"] == "Fresh MR"
+    assert calls == [(77, 20, {"force_refresh": True})]
+
+
 def test_resolve_batch_max_chars_defaults_to_safer_limit(monkeypatch):
     monkeypatch.delenv("REVIEW_MAX_DIFF_CHARS", raising=False)
     monkeypatch.delenv("REVIEW_BATCH_MAX_CHARS", raising=False)

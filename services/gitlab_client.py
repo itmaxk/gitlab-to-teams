@@ -70,12 +70,13 @@ def _ttl_cache(ttl_seconds: int, max_size: int):
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            force_refresh = bool(kwargs.pop("force_refresh", False))
             # Create cache key from positional args (project_id, mr_iid)
             key = tuple(args[:2]) if len(args) >= 2 else tuple(args)
 
             # Check cache
             now = time.time()
-            if key in cache:
+            if not force_refresh and key in cache:
                 result, timestamp = cache[key]
                 if now - timestamp < ttl_seconds:
                     logger.debug("Cache hit for %s", key)

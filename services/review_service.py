@@ -491,9 +491,13 @@ async def review_mr(
     mr_iid: int,
     custom_prompt: str = "",
     progress_callback: Callable[[int, int], object] | None = None,
+    force_refresh_diff: bool = False,
 ) -> dict:
     project_id = await get_project_id()
-    mr_data = await get_mr_diff(project_id, mr_iid)
+    if force_refresh_diff:
+        mr_data = await get_mr_diff(project_id, mr_iid, force_refresh=True)
+    else:
+        mr_data = await get_mr_diff(project_id, mr_iid)
 
     changes = mr_data["changes"]
     non_empty = [change for change in changes if change.get("diff")]

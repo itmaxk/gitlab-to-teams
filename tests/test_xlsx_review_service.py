@@ -511,6 +511,37 @@ def test_review_xlsx_mr_reports_missing_branch_file_as_warning_not_deleted_sheet
     assert "не удалось прочитать" in result["findings"][0]["message"]
 
 
+def test_review_xlsx_mr_can_force_refresh_gitlab_diff(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-force-refresh.db")
+    db.init_db()
+
+    async def fake_get_project_id():
+        return 77
+
+    calls = []
+
+    async def fake_get_mr_diff(project_id, mr_iid, **kwargs):
+        calls.append((project_id, mr_iid, kwargs))
+        return {
+            "title": "Fresh xlsx",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/xlsx",
+            "source_ref": "fresh-head-sha",
+            "target_branch": "master",
+            "web_url": "https://example.test/mr/21",
+            "changes": [],
+        }
+
+    monkeypatch.setattr(xlsx_review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(xlsx_review_service, "get_mr_diff", fake_get_mr_diff)
+
+    result = asyncio.run(xlsx_review_service.review_xlsx_mr(21, force_refresh_diff=True))
+
+    assert result["mr"]["title"] == "Fresh xlsx"
+    assert calls == [(77, 21, {"force_refresh": True})]
+
+
 def test_review_xlsx_mr_prefers_head_sha_over_source_branch_for_source_content(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "xlsx-review-headsha.db")
     db.init_db()

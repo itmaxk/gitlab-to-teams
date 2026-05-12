@@ -270,7 +270,12 @@ async def _run_review_job(job_id: str, mr_iid: int, custom_prompt: str) -> None:
             job["message"] = f"Анализ батча {current}/{total_batches}"
 
     try:
-        result = await review_mr(mr_iid, custom_prompt, progress_callback=progress_callback)
+        result = await review_mr(
+            mr_iid,
+            custom_prompt,
+            progress_callback=progress_callback,
+            force_refresh_diff=True,
+        )
         if job.get("status") == "canceled":
             return
         job["status"] = "completed"
@@ -310,7 +315,12 @@ async def _run_xlsx_review_job(job_id: str, mr_iid: int, base_ref: str) -> None:
             job["message"] = f"Сравнение xlsx {current}/{total_files}: {file_path}"
 
     try:
-        result = await review_xlsx_mr(mr_iid, base_ref, progress_callback=progress_callback)
+        result = await review_xlsx_mr(
+            mr_iid,
+            base_ref,
+            progress_callback=progress_callback,
+            force_refresh_diff=True,
+        )
         if job.get("status") == "canceled":
             return
         job["status"] = "completed"
@@ -336,7 +346,7 @@ async def run_review(req: ReviewRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        return await review_mr(mr_iid, req.custom_prompt)
+        return await review_mr(mr_iid, req.custom_prompt, force_refresh_diff=True)
     except LLMRateLimitError as exc:
         logger.warning("Review rate-limited for MR !%s: %s", req.mr_input, exc)
         raise HTTPException(status_code=429, detail=_translate_review_error(exc))
@@ -353,7 +363,7 @@ async def run_review_and_send_email(req: ReviewRunEmailRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        result = await review_mr(mr_iid, req.custom_prompt)
+        result = await review_mr(mr_iid, req.custom_prompt, force_refresh_diff=True)
         review = _load_review_record(result["id"])
         email_result = _send_review_email(review, req.recipients)
     except LLMRateLimitError as exc:
@@ -404,7 +414,7 @@ async def run_xlsx_review(req: XlsxReviewRequest):
         raise HTTPException(status_code=400, detail=str(exc))
 
     try:
-        return await review_xlsx_mr(mr_iid, req.base_ref or "")
+        return await review_xlsx_mr(mr_iid, req.base_ref or "", force_refresh_diff=True)
     except Exception as exc:
         logger.exception("XLSX review failed for MR !%s", req.mr_input)
         raise HTTPException(status_code=500, detail=_translate_review_error(exc))

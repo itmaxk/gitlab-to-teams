@@ -365,3 +365,55 @@ def test_clear_mr_diff_cache_invalidates_cached_diff(monkeypatch):
 
     assert refreshed["title"] == "Refreshed title"
     gitlab_client.clear_mr_diff_cache()
+
+
+def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
+    first_payload = {
+        "title": "Cached title",
+        "source_branch": "feature/cache",
+        "target_branch": "master",
+        "changes": [
+            {
+                "old_path": "cache.txt",
+                "new_path": "cache.txt",
+                "diff": "@@ -1 +1 @@\n-old\n+new",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    refreshed_payload = {
+        "title": "Latest title",
+        "source_branch": "feature/cache",
+        "target_branch": "master",
+        "diff_refs": {"head_sha": "latest-head-sha"},
+        "changes": [
+            {
+                "old_path": "cache.txt",
+                "new_path": "cache.txt",
+                "diff": "@@ -1 +1 @@\n-old\n+latest",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+
+    responses = [
+        _FakeResponse(json_data=first_payload),
+        _FakeResponse(json_data=refreshed_payload),
+    ]
+
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
+
+    first = asyncio.run(gitlab_client.get_mr_diff(1, 17))
+    refreshed = asyncio.run(gitlab_client.get_mr_diff(1, 17, force_refresh=True))
+    cached_latest = asyncio.run(gitlab_client.get_mr_diff(1, 17))
+
+    assert first["title"] == "Cached title"
+    assert refreshed["title"] == "Latest title"
+    assert refreshed["source_ref"] == "latest-head-sha"
+    assert cached_latest["title"] == "Latest title"
+    gitlab_client.clear_mr_diff_cache()

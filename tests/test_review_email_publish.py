@@ -71,7 +71,8 @@ def test_run_review_and_send_email_waits_for_review_then_sends(tmp_path, monkeyp
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "review-run-email.db")
     db.init_db()
 
-    async def fake_review_mr(mr_iid, custom_prompt):
+    async def fake_review_mr(mr_iid, custom_prompt, **kwargs):
+        assert kwargs == {"force_refresh_diff": True}
         conn = db.get_db()
         cur = conn.execute(
             """
