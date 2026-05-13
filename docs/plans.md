@@ -1,5 +1,28 @@
 # Plan
 
+## Review latest MR version
+
+### Goal
+- Ensure `/review` uses the latest MR diff version, including the newest source-branch commit, when the user runs code review.
+
+### Milestone 1
+- Status: `[x]`
+- Goal: read fresh review diffs from GitLab MR diff versions on forced refresh.
+- Tasks:
+- add a regression test where `/changes` is stale but the latest `versions/:id` payload contains the newest commit diff
+- make `get_mr_diff(..., force_refresh=True)` load the newest MR diff version and expose its `head_commit_sha` as `source_ref`
+- keep cached/non-forced reads compatible with the existing flow
+- Definition of done:
+- manual `/review` launches call the forced-refresh path and review the latest version of the MR
+- focused GitLab-client and review tests pass
+- Validation commands:
+- `pytest tests/test_gitlab_client_diff_fallback.py`
+- `pytest tests/test_review_batching.py tests/test_xlsx_review_service.py`
+- Known risks:
+- if a GitLab instance cannot serve diff versions, the forced path will fail instead of silently reviewing a stale diff
+- Stop-and-fix rule:
+- if a live GitLab instance rejects the versions endpoint, add an explicit logged fallback rather than hiding stale review input
+
 ## Pipeline Config Retry Trace Matching
 
 ### Goal

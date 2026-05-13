@@ -70,7 +70,7 @@ def _ttl_cache(ttl_seconds: int, max_size: int):
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
-            force_refresh = bool(kwargs.pop("force_refresh", False))
+            force_refresh = bool(kwargs.get("force_refresh", False))
             # Create cache key from positional args (project_id, mr_iid)
             key = tuple(args[:2]) if len(args) >= 2 else tuple(args)
 
@@ -566,8 +566,96 @@ def _diff_fallback_refs(data: dict) -> tuple[str, str]:
     return old_ref, new_ref
 
 
+def _changes_from_diff_items(items: list[dict]) -> list[dict]:
+    return [
+        {
+            "old_path": c.get("old_path", ""),
+            "new_path": c.get("new_path", ""),
+            "diff": c.get("diff", ""),
+            "new_file": c.get("new_file", False),
+            "deleted_file": c.get("deleted_file", False),
+            "renamed_file": c.get("renamed_file", False),
+        }
+        for c in items
+    ]
+
+
+def _latest_version_payload(versions: list[dict]) -> dict | None:
+    candidates = [
+        version
+        for version in versions
+        if version.get("state") in {"collected", "overflow", "without_files", None}
+    ]
+    if not candidates:
+        return None
+
+    def sort_key(version: dict) -> tuple[str, int]:
+        version_id = version.get("id") or 0
+        try:
+            version_id = int(version_id)
+        except (TypeError, ValueError):
+            version_id = 0
+        return (str(version.get("created_at") or ""), version_id)
+
+    return max(candidates, key=sort_key)
+
+
+async def _get_latest_mr_version(
+    client: httpx.AsyncClient,
+    project_id: int,
+    mr_iid: int,
+) -> dict | None:
+    versions_url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/versions"
+    versions_resp = await client.get(versions_url, headers=_headers(), timeout=30)
+    versions_resp.raise_for_status()
+    versions = versions_resp.json()
+    if not isinstance(versions, list):
+        return None
+
+    latest_version = _latest_version_payload(versions)
+    if not latest_version or not latest_version.get("id"):
+        return None
+
+    version_url = (
+        f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}"
+        f"/versions/{latest_version['id']}"
+    )
+    version_resp = await client.get(
+        version_url,
+        headers=_headers(),
+        params={"unidiff": "true"},
+        timeout=60,
+    )
+    version_resp.raise_for_status()
+    version_data = version_resp.json()
+    if not isinstance(version_data, dict):
+        return None
+    return version_data
+
+
+def _apply_version_diff(data: dict, version_data: dict | None) -> dict:
+    if not version_data:
+        return data
+
+    diffs = version_data.get("diffs")
+    if not isinstance(diffs, list):
+        return data
+
+    result = dict(data)
+    result["changes"] = _changes_from_diff_items(diffs)
+    result["overflow"] = bool(data.get("overflow")) or version_data.get("state") == "overflow"
+    result["diff_refs"] = {
+        **(data.get("diff_refs") or {}),
+        "base_sha": version_data.get("base_commit_sha") or (data.get("diff_refs") or {}).get("base_sha"),
+        "start_sha": version_data.get("start_commit_sha") or (data.get("diff_refs") or {}).get("start_sha"),
+        "head_sha": version_data.get("head_commit_sha") or (data.get("diff_refs") or {}).get("head_sha"),
+    }
+    result["sha"] = version_data.get("head_commit_sha") or data.get("sha", "")
+    return result
+
+
 @_ttl_cache(ttl_seconds=_MR_DIFF_CACHE_TTL_SECONDS, max_size=_MR_DIFF_CACHE_MAX_SIZE)
-async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
+async def get_mr_diff(project_id: int, mr_iid: int, force_refresh: bool = False) -> dict:
     """Return MR metadata plus per-file diffs.
 
     We first ask GitLab for `changes` with `access_raw_diffs=true` so collapsed
@@ -586,17 +674,13 @@ async def get_mr_diff(project_id: int, mr_iid: int) -> dict:
     )
     resp.raise_for_status()
     data = resp.json()
-    changes = [
-        {
-            "old_path": c.get("old_path", ""),
-            "new_path": c.get("new_path", ""),
-            "diff": c.get("diff", ""),
-            "new_file": c.get("new_file", False),
-            "deleted_file": c.get("deleted_file", False),
-            "renamed_file": c.get("renamed_file", False),
-        }
-        for c in data.get("changes", [])
-    ]
+    if force_refresh:
+        data = _apply_version_diff(
+            data,
+            await _get_latest_mr_version(client, project_id, mr_iid),
+        )
+
+    changes = _changes_from_diff_items(data.get("changes", []))
 
     if data.get("overflow") or any(not change["diff"] for change in changes):
         raw_url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}/raw_diffs"

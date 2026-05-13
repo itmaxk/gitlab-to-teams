@@ -392,6 +392,33 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
             {
                 "old_path": "cache.txt",
                 "new_path": "cache.txt",
+                "diff": "@@ -1 +1 @@\n-old\n+stale",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    versions_payload = [
+        {
+            "id": 101,
+            "created_at": "2026-05-13T10:00:00.000Z",
+            "state": "collected",
+            "head_commit_sha": "latest-head-sha",
+            "base_commit_sha": "base-sha",
+            "start_commit_sha": "start-sha",
+        }
+    ]
+    version_payload = {
+        "id": 101,
+        "head_commit_sha": "latest-head-sha",
+        "base_commit_sha": "base-sha",
+        "start_commit_sha": "start-sha",
+        "state": "collected",
+        "diffs": [
+            {
+                "old_path": "cache.txt",
+                "new_path": "cache.txt",
                 "diff": "@@ -1 +1 @@\n-old\n+latest",
                 "new_file": False,
                 "deleted_file": False,
@@ -403,6 +430,8 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
     responses = [
         _FakeResponse(json_data=first_payload),
         _FakeResponse(json_data=refreshed_payload),
+        _FakeResponse(json_data=versions_payload),
+        _FakeResponse(json_data=version_payload),
     ]
 
     monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
@@ -415,5 +444,75 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
     assert first["title"] == "Cached title"
     assert refreshed["title"] == "Latest title"
     assert refreshed["source_ref"] == "latest-head-sha"
+    assert refreshed["changes"][0]["diff"] == "@@ -1 +1 @@\n-old\n+latest"
     assert cached_latest["title"] == "Latest title"
+    gitlab_client.clear_mr_diff_cache()
+
+
+def test_get_mr_diff_force_refresh_uses_latest_diff_version(monkeypatch):
+    changes_payload = {
+        "title": "MR with stale changes payload",
+        "source_branch": "feature/latest",
+        "target_branch": "master",
+        "diff_refs": {"head_sha": "old-head-sha"},
+        "changes": [
+            {
+                "old_path": "app.py",
+                "new_path": "app.py",
+                "diff": "@@ -1 +1 @@\n-old\n+stale",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    versions_payload = [
+        {
+            "id": 12,
+            "created_at": "2026-05-13T12:00:00.000Z",
+            "state": "collected",
+            "head_commit_sha": "new-head-sha",
+            "base_commit_sha": "new-base-sha",
+            "start_commit_sha": "target-start-sha",
+        },
+        {
+            "id": 11,
+            "created_at": "2026-05-13T11:00:00.000Z",
+            "state": "collected",
+            "head_commit_sha": "old-head-sha",
+            "base_commit_sha": "old-base-sha",
+            "start_commit_sha": "old-start-sha",
+        },
+    ]
+    version_payload = {
+        "id": 12,
+        "head_commit_sha": "new-head-sha",
+        "base_commit_sha": "new-base-sha",
+        "start_commit_sha": "target-start-sha",
+        "state": "collected",
+        "diffs": [
+            {
+                "old_path": "app.py",
+                "new_path": "app.py",
+                "diff": "@@ -1 +1 @@\n-old\n+latest",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    responses = [
+        _FakeResponse(json_data=changes_payload),
+        _FakeResponse(json_data=versions_payload),
+        _FakeResponse(json_data=version_payload),
+    ]
+
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
+
+    result = asyncio.run(gitlab_client.get_mr_diff(1, 18, force_refresh=True))
+
+    assert result["source_ref"] == "new-head-sha"
+    assert result["changes"][0]["diff"] == "@@ -1 +1 @@\n-old\n+latest"
+    assert responses[2].params == {"unidiff": "true"}
     gitlab_client.clear_mr_diff_cache()

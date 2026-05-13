@@ -1,5 +1,22 @@
 # Test Plan
 
+## Review latest MR version
+
+## Scope
+- GitLab MR diff loading used by `/review` code review runs
+
+## Critical cases
+- Forced refresh bypasses the cached diff and replaces stale `/changes` diff content with the latest MR diff version
+- The newest version `head_commit_sha` becomes `source_ref` for full-file context loading
+- Normal cached reads still work for existing callers
+
+## Validation
+- `pytest tests/test_gitlab_client_diff_fallback.py`
+- `pytest tests/test_review_batching.py tests/test_xlsx_review_service.py`
+
+## Out of scope
+- Live GitLab API smoke test against a real project
+
 ## Pipeline Config Retry Trace Matching
 
 ## Scope

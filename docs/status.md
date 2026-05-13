@@ -1,5 +1,39 @@
 # Status
 
+## Review latest MR version
+
+## Current phase
+- `Milestone 1` completed
+
+## Done
+- Found that `/review` already calls `review_mr(..., force_refresh_diff=True)` through both direct and queued run paths
+- Changed the forced GitLab diff refresh path to load the newest MR diff version from `GET /versions` and `GET /versions/:id`
+- Preserved the latest version `head_commit_sha` as `source_ref` so full-file context also comes from the newest MR commit
+- Added a regression test where stale `/changes` content is replaced by the latest diff version payload
+
+## In progress
+- None
+
+## Next
+- None
+
+## Decisions
+- Scope the latest-version lookup to `force_refresh=True`, which is the `/review` launch path, while keeping normal cached lookups lightweight
+- Cache the fresh latest-version result under the same MR key after a forced refresh
+
+## Assumptions
+- GitLab returns MR diff versions newest-first or with sortable `created_at`/`id`; the implementation chooses the max by those fields
+
+## Commands
+- `pytest tests/test_gitlab_client_diff_fallback.py`
+- `pytest tests/test_review_batching.py tests/test_xlsx_review_service.py`
+
+## Blockers
+- None
+
+## Audit log
+- 2026-05-13: implemented latest MR diff version loading for forced `/review` refresh and passed focused tests
+
 ## Pipeline Config Retry Trace Matching
 
 ## Current phase
