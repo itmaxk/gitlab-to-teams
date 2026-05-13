@@ -38,6 +38,7 @@ def init_db():
             file_check_path_prefix TEXT DEFAULT '',
             file_check_mode TEXT DEFAULT 'present',
             title_exclude TEXT DEFAULT '',
+            skip_draft INTEGER DEFAULT 1,
             action_type TEXT DEFAULT 'notify',
             send_teams INTEGER DEFAULT 1,
             teams_webhook_url TEXT DEFAULT '',
@@ -269,6 +270,7 @@ def _migrate(conn: sqlite3.Connection):
         "action_type": "ALTER TABLE notification_rules ADD COLUMN action_type TEXT DEFAULT 'notify'",
         "seed_key": "ALTER TABLE notification_rules ADD COLUMN seed_key TEXT DEFAULT NULL",
         "title_exclude": "ALTER TABLE notification_rules ADD COLUMN title_exclude TEXT DEFAULT ''",
+        "skip_draft": "ALTER TABLE notification_rules ADD COLUMN skip_draft INTEGER DEFAULT 1",
     }
 
     need_seed_key_backfill = "seed_key" not in columns
@@ -622,122 +624,6 @@ def seed_default_rule():
             "send_teams": 1,
             "send_email": 1,
             "enabled": 0,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "auto_xlsx_review",
-            "name": "XLSX ревью нового MR",
-            "description": "Автоматический XLSX-ревью для новых MR (не merged, не Draft). Результат оставляется комментарием в GitLab.",
-            "file_pattern": "*.xlsx",
-            "content_match": "",
-            "match_type": "contains",
-            "target_branch": "master",
-            "mr_state": "opened",
-            "action_type": "xlsx_review",
-            "send_gitlab": 1,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "auto_code_review",
-            "name": "Code review нового MR",
-            "description": "Автоматическое AI-ревью кода для новых MR (не merged, не Draft). Результат оставляется комментарием в GitLab.",
-            "file_pattern": "*",
-            "content_match": "",
-            "match_type": "contains",
-            "target_branch": "master",
-            "mr_state": "opened",
-            "action_type": "code_review",
-            "send_gitlab": 1,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "mr_title_check",
-            "name": "Проверка заголовка MR",
-            "description": "Проверяет формат заголовка MR: JIRA-TASK: Short description. Заголовок не должен содержать русские буквы. Для release-веток требует номер релиза в конце заголовка. Пропускает MR со статусом Draft.",
-            "file_pattern": "*",
-            "content_match": "",
-            "match_type": "contains",
-            "target_branch": "*",
-            "mr_state": "opened",
-            "action_type": "title_check",
-            "send_gitlab": 1,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "pipeline_changelog_validate",
-            "name": "Проверка changelog:validate",
-            "description": "Проверяет, что job changelog:validate в pipeline MR прошёл успешно. Если job упал — создаёт discussion с упоминанием assignee.",
-            "file_pattern": "*",
-            "content_match": "changelog:validate",
-            "match_type": "contains",
-            "target_branch": "*",
-            "mr_state": "opened",
-            "action_type": "pipeline_check",
-            "send_gitlab": 1,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "pipeline_config_retry_fresh_packages",
-            "name": "Retry config jobs after fresh packages stall",
-            "description": "Retries failed config:check-uncommitted and config:validate jobs when their trace stops after [5/5] Building fresh packages... or has a TLS socket disconnect error.",
-            "file_pattern": "*",
-            "content_match": "config:check-uncommitted,config:validate",
-            "match_type": "contains",
-            "target_branch": "*",
-            "mr_state": "opened",
-            "poll_interval_seconds": 600,
-            "action_type": "pipeline_job_retry",
-            "send_gitlab": 0,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
-        },
-    )
-
-    _seed_rule_if_missing(
-        conn,
-        {
-            "seed_key": "pipeline_config_sonar_publish_issues",
-            "name": "Publish Sonar issues after config:sonar",
-            "description": "After config:sonar finishes in the latest MR pipeline, fetch SonarQube issues for the MR and publish a fresh GitLab comment, deleting the previous Sonar comment.",
-            "file_pattern": "*",
-            "content_match": "config:sonar",
-            "match_type": "contains",
-            "target_branch": "*",
-            "mr_state": "opened",
-            "poll_interval_seconds": 600,
-            "action_type": "sonar_issues",
-            "send_gitlab": 1,
-            "send_teams": 0,
-            "send_email": 0,
-            "enabled": 1,
         },
     )
 

@@ -355,9 +355,11 @@ def flat_fields_from_aggregate(rule: dict[str, Any]) -> dict[str, Any]:
     prefix = _first_condition(conditions, "changed_file_under_prefix")
     file_check = referenced or prefix
 
-    retry_config = rule.get("configs", {}).get("pipeline_job_retry", {})
-    pipeline_config = rule.get("configs", {}).get("pipeline_check", {})
-    review_config = rule.get("configs", {}).get("review", {})
+    configs = rule.get("configs", {})
+    title_config = configs.get("title_check", {})
+    retry_config = configs.get("pipeline_job_retry", {})
+    pipeline_config = configs.get("pipeline_check", {})
+    review_config = configs.get("review", {})
 
     content_match = content_condition.get("value", "") if content_condition else ""
     if action_type == "pipeline_check":
@@ -399,6 +401,18 @@ def flat_fields_from_aggregate(rule: dict[str, Any]) -> dict[str, Any]:
         "send_gitlab": 1 if gitlab.get("enabled", False) else 0,
         "gitlab_comment_mode": gitlab_comment_mode,
         "gitlab_comment_template": gitlab_comment_template,
+        "skip_draft": bool(rule.get("scope", {}).get("skip_draft", True)),
+        "title_require_jira_prefix": bool(title_config.get("require_jira_prefix", True)),
+        "title_forbid_cyrillic": bool(title_config.get("forbid_cyrillic", True)),
+        "title_require_release_suffix": bool(title_config.get("require_release_suffix", True)),
+        "title_mention_assignees": bool(title_config.get("mention_assignees", True)),
+        "title_resolve_discussion_when_fixed": bool(title_config.get("resolve_discussion_when_fixed", True)),
+        "pipeline_job_name": pipeline_config.get("job_name", ""),
+        "pipeline_mention_assignees": bool(pipeline_config.get("mention_assignees", True)),
+        "pipeline_retry_jobs": ",".join(retry_config.get("jobs", [])),
+        "retry_trace_marker": retry_config.get("trace_marker", ""),
+        "retry_trace_matcher_regex": retry_config.get("trace_matcher_regex", ""),
+        "retry_gitlab_boilerplate_suffix": retry_config.get("gitlab_boilerplate_suffix", ""),
     }
 
 
@@ -419,6 +433,7 @@ def upsert_rule_aggregate(
         aggregate["scope"].get("mr_state", "merged"),
         int(aggregate["scope"].get("poll_interval_seconds", 0) or 0),
         project_keys_to_string(aggregate["scope"].get("project_keys", ["*"])),
+        int(bool(aggregate["scope"].get("skip_draft", True))),
         flat["file_pattern"],
         flat["content_match"],
         flat["content_exclude"],
@@ -438,11 +453,11 @@ def upsert_rule_aggregate(
             """
             INSERT INTO notification_rules (
                 name, description, enabled, target_branch, mr_state,
-                poll_interval_seconds, project_keys, file_pattern, content_match, content_exclude,
+                poll_interval_seconds, project_keys, skip_draft, file_pattern, content_match, content_exclude,
                 match_type, file_check_enabled, file_check_path_prefix, file_check_mode,
                 title_exclude, action_type, send_teams, teams_webhook_url, send_email, send_gitlab
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             root_values,
         )
@@ -452,7 +467,7 @@ def upsert_rule_aggregate(
             """
             UPDATE notification_rules SET
                 name=?, description=?, enabled=?, target_branch=?, mr_state=?,
-                poll_interval_seconds=?, project_keys=?, file_pattern=?, content_match=?, content_exclude=?,
+                poll_interval_seconds=?, project_keys=?, skip_draft=?, file_pattern=?, content_match=?, content_exclude=?,
                 match_type=?, file_check_enabled=?, file_check_path_prefix=?,
                 file_check_mode=?, title_exclude=?, action_type=?, send_teams=?,
                 teams_webhook_url=?, send_email=?, send_gitlab=?,
@@ -722,7 +737,13 @@ def _normalize_flat(data: dict[str, Any]) -> dict[str, Any]:
         },
         "recipients": data.get("emails", []) or data.get("recipients", []),
         "configs": {
-            "title_check": DEFAULT_TITLE_CHECK_CONFIG.copy(),
+            "title_check": {
+                "require_jira_prefix": bool(data.get("title_require_jira_prefix", True)),
+                "forbid_cyrillic": bool(data.get("title_forbid_cyrillic", True)),
+                "require_release_suffix": bool(data.get("title_require_release_suffix", True)),
+                "mention_assignees": bool(data.get("title_mention_assignees", True)),
+                "resolve_discussion_when_fixed": bool(data.get("title_resolve_discussion_when_fixed", True)),
+            },
             "pipeline_check": {
                 "job_name": data.get("pipeline_job_name") or content_match or "changelog:validate",
                 "discussion_template": gitlab_comment_template or data.get("pipeline_discussion_template") or DEFAULT_PIPELINE_CHECK_TEMPLATE,
@@ -731,7 +752,7 @@ def _normalize_flat(data: dict[str, Any]) -> dict[str, Any]:
             "pipeline_job_retry": {
                 "trace_marker": data.get("retry_trace_marker") or DEFAULT_PIPELINE_RETRY_MARKER,
                 "trace_matcher_regex": data.get("retry_trace_matcher_regex") or DEFAULT_PIPELINE_RETRY_MATCHER,
-                "gitlab_boilerplate_suffix": data.get("retry_gitlab_boilerplate_suffix") or DEFAULT_PIPELINE_RETRY_SUFFIX,
+                "gitlab_boilerplate_suffix": data.get("retry_gitlab_boilerplate_suffix", DEFAULT_PIPELINE_RETRY_SUFFIX),
                 "jobs": jobs,
             },
             "review": {
@@ -785,18 +806,24 @@ def _normalize_aggregate(data: dict[str, Any]) -> dict[str, Any]:
     scope = data.get("scope") or {}
     configs = data.get("configs") or {}
     action_type = _primary_action(normalized_actions)
-    configs.setdefault("title_check", DEFAULT_TITLE_CHECK_CONFIG.copy())
-    configs.setdefault("pipeline_check", {
+    title_config = DEFAULT_TITLE_CHECK_CONFIG.copy()
+    title_config.update(configs.get("title_check") or {})
+    configs["title_check"] = title_config
+    pipeline_config = {
         "job_name": "changelog:validate",
         "discussion_template": DEFAULT_PIPELINE_CHECK_TEMPLATE,
         "mention_assignees": True,
-    })
-    configs.setdefault("pipeline_job_retry", {
+    }
+    pipeline_config.update(configs.get("pipeline_check") or {})
+    configs["pipeline_check"] = pipeline_config
+    retry_config = {
         "trace_marker": DEFAULT_PIPELINE_RETRY_MARKER,
         "trace_matcher_regex": DEFAULT_PIPELINE_RETRY_MATCHER,
         "gitlab_boilerplate_suffix": DEFAULT_PIPELINE_RETRY_SUFFIX,
         "jobs": [],
-    })
+    }
+    retry_config.update(configs.get("pipeline_job_retry") or {})
+    configs["pipeline_job_retry"] = retry_config
     configs["pipeline_job_retry"]["jobs"] = _split_csv(configs["pipeline_job_retry"].get("jobs", []))
     configs.setdefault("review", {
         "review_type": action_type if action_type in {"xlsx_review", "code_review"} else "",
@@ -828,7 +855,7 @@ def _normalize_aggregate(data: dict[str, Any]) -> dict[str, Any]:
             "mr_state": scope.get("mr_state", data.get("mr_state", "merged")) or "merged",
             "poll_interval_seconds": int(scope.get("poll_interval_seconds", data.get("poll_interval_seconds", 0)) or 0),
             "project_keys": parse_project_keys(scope.get("project_keys", data.get("project_keys", "*"))),
-            "skip_draft": bool(scope.get("skip_draft", True)),
+            "skip_draft": bool(scope.get("skip_draft", data.get("skip_draft", True))),
         },
         "conditions": conditions,
         "actions": normalized_actions,
@@ -856,7 +883,7 @@ def _compose_aggregate(
             "mr_state": root.get("mr_state", "merged"),
             "poll_interval_seconds": root.get("poll_interval_seconds", 0),
             "project_keys": parse_project_keys(root.get("project_keys", "*")),
-            "skip_draft": True,
+            "skip_draft": root.get("skip_draft", True),
         },
         "conditions": conditions,
         "actions": actions,
@@ -952,7 +979,7 @@ def _load_pipeline_retry_config(conn: sqlite3.Connection, rule_id: int) -> dict[
     return {
         "trace_marker": (row["trace_marker"] if row else "") or DEFAULT_PIPELINE_RETRY_MARKER,
         "trace_matcher_regex": (row["trace_matcher_regex"] if row else "") or DEFAULT_PIPELINE_RETRY_MATCHER,
-        "gitlab_boilerplate_suffix": (row["gitlab_boilerplate_suffix"] if row else "") or DEFAULT_PIPELINE_RETRY_SUFFIX,
+        "gitlab_boilerplate_suffix": row["gitlab_boilerplate_suffix"] if row else DEFAULT_PIPELINE_RETRY_SUFFIX,
         "jobs": jobs,
     }
 

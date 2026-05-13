@@ -52,6 +52,13 @@
       </div>
     </div>
 
+    <div class="flex items-center gap-2">
+      <input type="checkbox" name="skip_draft" id="skip_draft"
+        {{ 'checked' if not rule or rule.scope.skip_draft }}
+        class="rounded bg-slate-800 border-slate-600">
+      <label for="skip_draft" class="text-sm text-slate-300">Пропускать Draft MR</label>
+    </div>
+
     <div>
       <label class="block text-sm text-slate-400 mb-1">Тип действия</label>
       <select name="action_type"
@@ -166,6 +173,12 @@
           value="{{ rule.configs.pipeline_check.job_name if rule and rule.configs else 'changelog:validate' }}"
           class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
       </div>
+      <div class="flex items-center gap-2 pt-6">
+        <input type="checkbox" name="pipeline_mention_assignees" id="pipeline_mention_assignees"
+          {{ 'checked' if not rule or rule.configs.pipeline_check.mention_assignees }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="pipeline_mention_assignees" class="text-sm text-slate-300">Mention assignees in pipeline check</label>
+      </div>
       <div>
         <label class="block text-sm text-slate-400 mb-1">Retry jobs (comma-separated)</label>
         <input type="text" name="pipeline_retry_jobs"
@@ -190,6 +203,13 @@
       </div>
     </div>
 
+    <div>
+      <label class="block text-sm text-slate-400 mb-1">Retry GitLab boilerplate suffix</label>
+      <input type="text" name="retry_gitlab_boilerplate_suffix"
+        value="{{ rule.configs.pipeline_job_retry.gitlab_boilerplate_suffix if rule and rule.configs else '' }}"
+        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white font-mono text-sm focus:border-blue-500 focus:outline-none">
+    </div>
+
     <div class="grid grid-cols-2 gap-4">
       <div>
         <label class="block text-sm text-slate-400 mb-1">Review base ref</label>
@@ -202,6 +222,43 @@
         <input type="text" name="review_custom_prompt"
           value="{{ rule.configs.review.custom_prompt if rule and rule.configs else '' }}"
           class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-blue-500 focus:outline-none">
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="border border-slate-700 rounded-lg p-4 space-y-4">
+    <legend class="text-sm text-slate-400 px-2">Title check settings</legend>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="title_require_jira_prefix" id="title_require_jira_prefix"
+          {{ 'checked' if not rule or rule.configs.title_check.require_jira_prefix }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="title_require_jira_prefix" class="text-sm text-slate-300">Require JIRA prefix</label>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="title_forbid_cyrillic" id="title_forbid_cyrillic"
+          {{ 'checked' if not rule or rule.configs.title_check.forbid_cyrillic }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="title_forbid_cyrillic" class="text-sm text-slate-300">Forbid Cyrillic</label>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="title_require_release_suffix" id="title_require_release_suffix"
+          {{ 'checked' if not rule or rule.configs.title_check.require_release_suffix }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="title_require_release_suffix" class="text-sm text-slate-300">Require release suffix</label>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="title_mention_assignees" id="title_mention_assignees"
+          {{ 'checked' if not rule or rule.configs.title_check.mention_assignees }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="title_mention_assignees" class="text-sm text-slate-300">Mention assignees</label>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="title_resolve_discussion_when_fixed" id="title_resolve_discussion_when_fixed"
+          {{ 'checked' if not rule or rule.configs.title_check.resolve_discussion_when_fixed }}
+          class="rounded bg-slate-800 border-slate-600">
+        <label for="title_resolve_discussion_when_fixed" class="text-sm text-slate-300">Resolve discussion when fixed</label>
       </div>
     </div>
   </fieldset>
