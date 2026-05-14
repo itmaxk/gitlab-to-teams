@@ -22,6 +22,23 @@ DEFAULT_REVIEW_LLM_READ_TIMEOUT = 120.0
 DEFAULT_REVIEW_LLM_MAX_ATTEMPTS = 5
 DEFAULT_REVIEW_LLM_MAX_RETRY_DELAY = 60.0
 DEFAULT_REVIEW_FILE_CONTEXT_MAX_CHARS = 20000
+ALLOWED_REVIEW_SEVERITIES = {"error", "warning", "info"}
+ALLOWED_REVIEW_CATEGORIES = {
+    "bug",
+    "security",
+    "performance",
+    "maintainability",
+    "constructor-link",
+    "sql",
+    "schema-mapping",
+    "ui-component",
+    "test-risk",
+    "logic",
+    "xlsx",
+    "general",
+}
+ALLOWED_REVIEW_CONFIDENCE = {"high", "medium", "low"}
+ALLOWED_REVIEW_SOURCES = {"diff", "full_file_context", "graph_context", "final_pass"}
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -198,13 +215,44 @@ def _split_change_into_parts(change: dict, max_chars: int) -> list[str]:
     ]
 
 
+def _constructor_node_key(path: str) -> tuple[str, str, str] | None:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    try:
+        idx = parts.index("@config-rgsl")
+    except ValueError:
+        return None
+    if len(parts) <= idx + 3:
+        return None
+    package = parts[idx + 1]
+    kind = parts[idx + 2]
+    code_name = parts[idx + 3]
+    if not package or not kind or not code_name:
+        return None
+    return package, kind, code_name
+
+
+def _sort_changes_for_review(changes: list[dict]) -> list[dict]:
+    indexed = list(enumerate(changes))
+
+    def sort_key(item: tuple[int, dict]) -> tuple[int, str, str, str, int]:
+        index, change = item
+        path = change.get("new_path") or change.get("old_path") or ""
+        node_key = _constructor_node_key(path)
+        if node_key:
+            return (0, node_key[0], node_key[1], node_key[2], index)
+        return (1, path, "", "", index)
+
+    return [change for _, change in sorted(indexed, key=sort_key)]
+
+
 def _build_diff_batches(changes: list[dict], max_chars: int | None = None) -> list[str]:
     max_chars = max_chars or REVIEW_BATCH_MAX_CHARS
     batches: list[str] = []
     current_parts: list[str] = []
     current_len = 0
 
-    for change in changes:
+    for change in _sort_changes_for_review(changes):
         if not change.get("diff"):
             continue
 
@@ -281,6 +329,71 @@ def _build_file_context_text(file_contexts: dict[str, str], diff_text: str) -> s
     return "\n\n".join(parts)
 
 
+def _detect_review_areas(changed_paths: list[str]) -> dict:
+    areas = {
+        "ui_component": False,
+        "sql_datasource": False,
+        "schema_mapping": False,
+        "constructor_links": False,
+    }
+    evidence: dict[str, list[str]] = {key: [] for key in areas}
+    for raw_path in changed_paths:
+        path = raw_path.replace("\\", "/")
+        lower = path.lower()
+        if any(token in path for token in ("/UI/", "/ClientAction/")) or "/component/" in lower or "/view/" in lower:
+            areas["ui_component"] = True
+            evidence["ui_component"].append(raw_path)
+        if "query.postgres.handlebars" in lower or "/datasource/" in lower or "/dataprovider/" in lower:
+            areas["sql_datasource"] = True
+            evidence["sql_datasource"].append(raw_path)
+        if any(name in lower for name in ("inputschema.json", "resultschema.json", "inputmapping.js", "resultmapping.js", "dataschema.json", "mapping.js")):
+            areas["schema_mapping"] = True
+            evidence["schema_mapping"].append(raw_path)
+        if "/configuration.json" in lower or any(token in lower for token in ("/etlservice/", "/route/", "/integrationservice/", "/sinkgroup/", "/printoutrelation/", "/notification/")):
+            areas["constructor_links"] = True
+            evidence["constructor_links"].append(raw_path)
+
+    labels = []
+    if areas["ui_component"]:
+        labels.append("UI/Component")
+    if areas["sql_datasource"]:
+        labels.append("SQL/DataSource")
+    if areas["schema_mapping"]:
+        labels.append("Schema/Mapping")
+    if areas["constructor_links"]:
+        labels.append("Constructor links")
+
+    return {"areas": areas, "labels": labels, "evidence": evidence}
+
+
+def _build_mixed_review_checklist(review_areas: dict) -> str:
+    labels = review_areas.get("labels") or ["Mixed AdInsure"]
+    checks = [
+        "## Mixed AdInsure UI/Component + SQL/DataSource review focus",
+        "Detected review areas: " + ", ".join(labels),
+        "- Treat this MR as mixed AdInsure implementation code. UI/Component and SQL/DataSource changes may be part of one behavior chain.",
+        "- Primary goal: find runtime/configuration regression risks introduced by the diff, not style issues.",
+        "- Check cross-layer consistency: UI filters/results/actions/components -> view/dataExport/document configuration -> dataSource input/result schemas -> inputMapping/resultMapping -> query.postgres.handlebars -> dataProvider.",
+    ]
+    areas = review_areas.get("areas") or {}
+    if areas.get("ui_component"):
+        checks.extend([
+            "- UI/Component: verify UI fields/actions/components against schemas, dataSource result fields, translations, visibility/required logic, and client action field usage.",
+            "- Do not report old UI issues unless the changed diff makes them relevant.",
+        ])
+    if areas.get("sql_datasource"):
+        checks.extend([
+            "- SQL/DataSource: verify PostgreSQL 17.5+ syntax, SQL aliases, parameters, dataProvider link, and consistency with inputSchema/resultSchema and mappings.",
+            "- Do not require multi-db compatibility unless explicitly requested.",
+        ])
+    if areas.get("schema_mapping"):
+        checks.append("- Schema/Mapping: verify inputMapping parameters, resultMapping fields, schema required fields, null handling, dates, amounts, and enum/code-table values.")
+    if areas.get("constructor_links"):
+        checks.append("- Constructor links: verify dataSource/dataProvider, sink/source mappings, sinkGroup refs, printout/notification template links, and component owners when related context is available.")
+    checks.append("- If a finding crosses layers, set `chain` to a short path such as `UI -> dataSource -> SQL`.")
+    return "\n".join(checks)
+
+
 def _build_batch_message(
     mr_data: dict,
     files_changed: int,
@@ -291,7 +404,9 @@ def _build_batch_message(
     custom_prompt: str,
     file_context_text: str = "",
     project_graph_context_text: str = "",
+    review_areas: dict | None = None,
 ) -> str:
+    review_areas = review_areas or {"labels": [], "areas": {}}
     user_message = f"""## Merge Request
 - Title: {mr_data['title']}
 - Author: {mr_data['author']}
@@ -299,14 +414,18 @@ def _build_batch_message(
 - Files changed: {files_changed}
 - Review batch: {batch_index}/{batch_total}
 
-## Diff
+{_build_mixed_review_checklist(review_areas)}
+
+## Changed code — primary review target
+Create normal findings only for risks introduced by these changed lines/files.
 {diff_text}"""
 
     if file_context_text.strip():
         user_message += f"""
 
-## Full file context after change
-Use this section to validate symbols, imports, requires, module-scope constants, and surrounding code that may be outside the diff.
+## Full file context after change — reference only
+Use this section to validate symbols, imports, requires, module-scope constants, mappings, schemas, and surrounding code that may be outside the diff.
+Do not create findings only because old unrelated code in this section could be improved.
 {file_context_text.strip()}"""
 
     if project_graph_context_text.strip():
@@ -315,13 +434,19 @@ Use this section to validate symbols, imports, requires, module-scope constants,
 {project_graph_context_text.strip()}
 
 ## Constructor Graph Checks"""
-        user_message += "\n- Validate related project graph files and unresolved links."
+        user_message += "\n- Validate related project graph files and unresolved links. Related files are reference context; report them only when they create risk for changed behavior."
 
     user_message += """
 
 ## Output requirements
 - Return only a JSON array.
-- Write all human-readable text in fields `message` and `suggestion` in Russian.
+- Each item must have: `severity`, `category`, `file_path`, `line`, `message`, `suggestion`, `confidence`, `evidence`, `source`, `chain`.
+- Allowed severity: `error`, `warning`, `info`.
+- Allowed category: `bug`, `security`, `performance`, `maintainability`, `constructor-link`, `sql`, `schema-mapping`, `ui-component`, `test-risk`, `logic`, `general`.
+- Allowed confidence: `high`, `medium`, `low`.
+- Allowed source: `diff`, `full_file_context`, `graph_context`.
+- Use `source=diff` for findings directly caused by changed code; use `graph_context` only for cross-file constructor risks.
+- Write all human-readable text in fields `message`, `suggestion`, and `evidence` in Russian.
 - Do not translate file paths, identifiers, branch names, config keys, or code fragments.
 """
 
@@ -422,6 +547,21 @@ async def _call_llm(system_prompt: str, user_message: str) -> str:
     return data.get("choices", [{}])[0].get("message", {}).get("content", "")
 
 
+def _normalize_choice(raw_value: object, allowed: set[str], default: str) -> str:
+    value = str(raw_value or "").strip().lower()
+    return value if value in allowed else default
+
+
+def _normalize_line(raw_value: object) -> int | None:
+    if raw_value in (None, ""):
+        return None
+    try:
+        line = int(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return line if line > 0 else None
+
+
 def _parse_findings(raw: str | None) -> list[dict]:
     if not raw:
         return []
@@ -440,15 +580,55 @@ def _parse_findings(raw: str | None) -> list[dict]:
     for finding in findings:
         if not isinstance(finding, dict):
             continue
+        message = str(finding.get("message") or "").strip()
+        if not message:
+            continue
         valid.append({
-            "severity": finding.get("severity", "info"),
-            "category": finding.get("category", "bug"),
-            "file_path": finding.get("file_path", ""),
-            "line": finding.get("line"),
-            "message": finding.get("message", ""),
-            "suggestion": finding.get("suggestion"),
+            "severity": _normalize_choice(finding.get("severity"), ALLOWED_REVIEW_SEVERITIES, "info"),
+            "category": _normalize_choice(finding.get("category"), ALLOWED_REVIEW_CATEGORIES, "general"),
+            "file_path": str(finding.get("file_path") or "").strip(),
+            "line": _normalize_line(finding.get("line")),
+            "message": message,
+            "suggestion": str(finding.get("suggestion") or "").strip() or None,
+            "confidence": _normalize_choice(finding.get("confidence"), ALLOWED_REVIEW_CONFIDENCE, "medium"),
+            "evidence": str(finding.get("evidence") or "").strip(),
+            "source": _normalize_choice(finding.get("source"), ALLOWED_REVIEW_SOURCES, "diff"),
+            "chain": str(finding.get("chain") or "").strip(),
         })
     return valid
+
+
+def _deduplicate_findings(findings: list[dict]) -> list[dict]:
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for finding in findings:
+        key = (
+            finding.get("severity"),
+            finding.get("category"),
+            finding.get("file_path"),
+            finding.get("line"),
+            finding.get("message"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(finding)
+    return unique
+
+
+def _filter_findings_by_known_files(findings: list[dict], known_paths: set[str]) -> list[dict]:
+    if not known_paths:
+        return findings
+    filtered: list[dict] = []
+    normalized_known = {path.replace("\\", "/") for path in known_paths if path}
+    for finding in findings:
+        path = str(finding.get("file_path") or "").replace("\\", "/")
+        if path and path not in normalized_known:
+            finding = {**finding, "confidence": "low"}
+            evidence = finding.get("evidence") or ""
+            finding["evidence"] = (evidence + " Файл не найден среди измененных или связанных файлов; требуется ручная проверка.").strip()
+        filtered.append(finding)
+    return filtered
 
 
 def _compute_summary(
@@ -458,6 +638,7 @@ def _compute_summary(
     truncated: bool,
     skipped_files: int = 0,
     project_graph_context: dict | None = None,
+    review_areas: dict | None = None,
 ) -> dict:
     errors = sum(1 for finding in findings if finding["severity"] == "error")
     warnings = sum(1 for finding in findings if finding["severity"] == "warning")
@@ -472,7 +653,71 @@ def _compute_summary(
         "files_skipped": max(0, skipped_files),
         "truncated": truncated,
         "project_graph_context": project_graph_context or {},
+        "review_areas": review_areas or {},
     }
+
+
+def _build_final_review_message(
+    mr_data: dict,
+    changed_paths: list[str],
+    findings: list[dict],
+    review_areas: dict,
+    project_graph_context_summary: dict,
+) -> str:
+    return f"""## Final consolidation pass
+You are consolidating findings from previous batch reviews for one MR.
+Return only a JSON array using the same finding schema.
+
+## Merge Request
+- Title: {mr_data['title']}
+- Source: {mr_data['source_branch']} -> {mr_data['target_branch']}
+
+{_build_mixed_review_checklist(review_areas)}
+
+## Changed files
+{json.dumps(changed_paths, ensure_ascii=False, indent=2)}
+
+## Batch findings to consolidate
+{json.dumps(findings, ensure_ascii=False, indent=2)}
+
+## Project graph context summary
+{json.dumps(project_graph_context_summary, ensure_ascii=False, indent=2)}
+
+## Consolidation rules
+- Remove duplicates and weak speculative findings.
+- Preserve only findings that are actionable and tied to changed behavior.
+- Upgrade severity only when evidence is strong.
+- Use `source=final_pass` only for findings added or materially changed during consolidation.
+- Keep human-readable text in Russian.
+"""
+
+
+async def _consolidate_findings(
+    system_prompt: str,
+    mr_data: dict,
+    changed_paths: list[str],
+    findings: list[dict],
+    review_areas: dict,
+    project_graph_context_summary: dict,
+    known_paths: set[str],
+) -> list[dict]:
+    if not findings:
+        return findings
+    user_message = _build_final_review_message(
+        mr_data,
+        changed_paths,
+        findings,
+        review_areas,
+        project_graph_context_summary,
+    )
+    try:
+        consolidated = _parse_findings(await _call_llm(system_prompt, user_message))
+    except Exception as exc:
+        logger.warning("Final review consolidation failed, using batch findings: %s", exc)
+        return _deduplicate_findings(findings)
+    if not consolidated:
+        return _deduplicate_findings(findings)
+    return _deduplicate_findings(_filter_findings_by_known_files(consolidated, known_paths))
 
 
 async def _report_progress(
@@ -510,6 +755,7 @@ async def review_mr(
         change.get("new_path") or change.get("old_path") or ""
         for change in non_empty
     ]
+    review_areas = _detect_review_areas(changed_paths)
     project_graph_context = build_project_graph_context(changed_paths, project_settings)
     project_graph_context_text = project_graph_context.to_prompt_text()
     project_graph_context_summary = project_graph_context.to_summary()
@@ -530,6 +776,7 @@ async def review_mr(
             truncated,
             skipped_files,
             project_graph_context_summary,
+            review_areas,
         )
     else:
         for batch_index, diff_text in enumerate(diff_batches, start=1):
@@ -544,10 +791,25 @@ async def review_mr(
                 custom_prompt=custom_prompt,
                 file_context_text=file_context_text,
                 project_graph_context_text=project_graph_context_text,
+                review_areas=review_areas,
             )
             llm_response = await _call_llm(system_prompt, user_message)
             findings.extend(_parse_findings(llm_response))
             await _report_progress(progress_callback, batch_index, total_batches)
+
+        known_paths = set(changed_paths) | set(file_contexts) | {
+            item.get("path", "") for item in project_graph_context_summary.get("related_files", [])
+        }
+        findings = _filter_findings_by_known_files(_deduplicate_findings(findings), known_paths)
+        findings = await _consolidate_findings(
+            system_prompt,
+            mr_data,
+            changed_paths,
+            findings,
+            review_areas,
+            project_graph_context_summary,
+            known_paths,
+        )
 
         summary = _compute_summary(
             findings,
@@ -556,6 +818,7 @@ async def review_mr(
             truncated,
             skipped_files,
             project_graph_context_summary,
+            review_areas,
         )
 
     model_used = os.getenv("REVIEW_MODEL", "gpt-4o")

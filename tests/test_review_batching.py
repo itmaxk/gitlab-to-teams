@@ -54,6 +54,8 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
 
     async def fake_call_llm(system_prompt, user_message):
         llm_calls.append(user_message)
+        if "## Final consolidation pass" in user_message:
+            return '[{"severity":"warning","category":"bug","file_path":"a.py","line":1,"message":"A issue","suggestion":null,"confidence":"high","evidence":"Diff A","source":"final_pass","chain":""},{"severity":"info","category":"logic","file_path":"b.py","line":2,"message":"B note","suggestion":"Check branch","confidence":"medium","evidence":"Diff B","source":"final_pass","chain":""}]'
         if "a.py" in user_message:
             return '[{"severity":"warning","category":"bug","file_path":"a.py","line":1,"message":"A issue","suggestion":null}]'
         if "b.py" in user_message:
@@ -76,7 +78,8 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
 
     result = asyncio.run(review_service.review_mr(9, "focus on bugs", progress_callback=progress_callback))
 
-    assert len(llm_calls) >= 2
+    assert len(llm_calls) >= 3
+    assert any("## Final consolidation pass" in call for call in llm_calls)
     assert result["summary"]["files_total"] == 3
     assert result["summary"]["files_analyzed"] == 3
     assert result["summary"]["files_skipped"] == 0
@@ -89,6 +92,43 @@ def test_review_mr_processes_multiple_batches_and_marks_full_coverage(tmp_path, 
 
 def test_parse_findings_handles_none_response():
     assert review_service._parse_findings(None) == []
+
+
+def test_parse_findings_normalizes_structured_fields():
+    findings = review_service._parse_findings(
+        '[{"severity":"critical","category":"unknown","file_path":"a.js","line":"7",'
+        '"message":"Issue","suggestion":"Fix","confidence":"certain","evidence":"Because",'
+        '"source":"other","chain":"UI -> dataSource -> SQL"}]'
+    )
+
+    assert findings == [
+        {
+            "severity": "info",
+            "category": "general",
+            "file_path": "a.js",
+            "line": 7,
+            "message": "Issue",
+            "suggestion": "Fix",
+            "confidence": "medium",
+            "evidence": "Because",
+            "source": "diff",
+            "chain": "UI -> dataSource -> SQL",
+        }
+    ]
+
+
+def test_detect_review_areas_for_mixed_ui_sql_changes():
+    review_areas = review_service._detect_review_areas([
+        "configuration/@config-rgsl/contract/view/ContractSearch/UI/FiltersContent.json",
+        "configuration/@config-rgsl/contract/dataSource/ContractSearchDataSource/query.postgres.handlebars",
+        "configuration/@config-rgsl/contract/dataSource/ContractSearchDataSource/resultMapping.js",
+    ])
+
+    assert review_areas["areas"]["ui_component"] is True
+    assert review_areas["areas"]["sql_datasource"] is True
+    assert review_areas["areas"]["schema_mapping"] is True
+    assert "UI/Component" in review_areas["labels"]
+    assert "SQL/DataSource" in review_areas["labels"]
 
 
 def test_review_mr_marks_files_without_diff_as_skipped(tmp_path, monkeypatch):
@@ -198,7 +238,8 @@ def test_build_batch_message_requires_russian_human_text():
         custom_prompt="",
     )
 
-    assert "Write all human-readable text in fields `message` and `suggestion` in Russian." in message
+    assert "Write all human-readable text in fields `message`, `suggestion`, and `evidence` in Russian." in message
+    assert "Mixed AdInsure UI/Component + SQL/DataSource review focus" in message
 
 
 def test_build_batch_message_includes_saved_review_instruction_lists():

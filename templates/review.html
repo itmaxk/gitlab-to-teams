@@ -480,6 +480,11 @@ function renderResults(data) {
     ${(summary.files_skipped || 0) > 0 ? `<span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-300 border border-amber-700">Без diff: ${summary.files_skipped}</span>` : ""}
   `;
 
+  const reviewAreaLabels = ((summary.review_areas || {}).labels || []);
+  if (reviewAreaLabels.length) {
+    document.getElementById("summaryBar").innerHTML += `<span class="px-3 py-1 rounded text-sm bg-violet-900/30 text-violet-300 border border-violet-700">Mixed review: ${escHtml(reviewAreaLabels.join(", "))}</span>`;
+  }
+
   if (summary.master_comparison) {
     document.getElementById("summaryBar").innerHTML += summary.master_comparison.differs
       ? `<span class="px-3 py-1 rounded text-sm bg-amber-900/30 text-amber-300 border border-amber-700">&#9679; Отличия с ${escHtml(summary.master_comparison.ref)}: ${summary.master_comparison.finding_count}</span>`
@@ -604,6 +609,12 @@ function renderFindings() {
     bug: "Баг",
     security: "Безопасность",
     performance: "Производительность",
+    maintainability: "Поддерживаемость",
+    "constructor-link": "Связи конструктора",
+    sql: "SQL",
+    "schema-mapping": "Schema/Mapping",
+    "ui-component": "UI/Component",
+    "test-risk": "Риск тестирования",
     style: "Стиль",
     logic: "Логика",
     xlsx: "XLSX",
@@ -614,6 +625,18 @@ function renderFindings() {
     const cfg = severityCfg[f.severity] || severityCfg.info;
     const category = categoryLabels[(f.category || "general").toLowerCase()] || categoryLabels.general;
     const lineStr = f.line ? `:${f.line}` : "";
+    const confidenceLabel = { high: "Высокая", medium: "Средняя", low: "Низкая" }[(f.confidence || "").toLowerCase()] || "Средняя";
+    const sourceLabel = {
+      diff: "Diff",
+      full_file_context: "Контекст файла",
+      graph_context: "Graph context",
+      final_pass: "Final pass",
+    }[(f.source || "").toLowerCase()] || "Diff";
+    const detailsHtml = [
+      f.confidence ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">Уверенность: ${escHtml(confidenceLabel)}</span>` : "",
+      f.source ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">Источник: ${escHtml(sourceLabel)}</span>` : "",
+      f.chain ? `<span class="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">${escHtml(f.chain)}</span>` : "",
+    ].filter(Boolean).join(" ");
     const publishButton = currentReviewId
       ? `<button onclick="publishFindingToGitLab(${index})" id="btnPublishFinding${index}"
                  class="rounded border border-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-950/40 hover:text-emerald-200 disabled:cursor-not-allowed disabled:border-slate-700 disabled:text-slate-500">
@@ -630,7 +653,9 @@ function renderFindings() {
         </div>
         ${publishButton}
       </div>
+      ${detailsHtml ? `<div class="mb-2 flex flex-wrap gap-1">${detailsHtml}</div>` : ""}
       <p class="text-slate-200 text-sm mb-1">${escHtml(f.message)}</p>
+      ${f.evidence ? '<p class="text-slate-400 text-xs mt-1"><span class="text-sky-400">Доказательство:</span> ' + escHtml(f.evidence) + '</p>' : ''}
       ${f.suggestion ? '<p class="text-slate-400 text-xs mt-1"><span class="text-green-400">Рекомендация:</span> ' + escHtml(f.suggestion) + '</p>' : ''}
       <div id="findingPublishStatus${index}" class="mt-2 hidden text-xs"></div>
       ${renderXlsxRowsTable(f)}
