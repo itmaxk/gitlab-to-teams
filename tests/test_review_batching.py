@@ -242,6 +242,26 @@ def test_build_batch_message_requires_russian_human_text():
     assert "Mixed AdInsure UI/Component + SQL/DataSource review focus" in message
 
 
+def test_build_postgresql_review_context_extracts_added_sql():
+    context = review_service._build_postgresql_review_context([
+        {
+            "old_path": "configuration/@config-rgsl/acc-base/dataProvider/database/Test/query.postgres.handlebars",
+            "new_path": "configuration/@config-rgsl/acc-base/dataProvider/database/Test/query.postgres.handlebars",
+            "diff": "@@ -1 +1,2 @@\n-select * from t\n+select id, payload::jsonb from t where id = @id\n+order by created_at desc",
+        },
+        {
+            "old_path": "app.py",
+            "new_path": "app.py",
+            "diff": "@@ -1 +1 @@\n+print('skip')",
+        },
+    ])
+
+    assert "## PostgreSQL 17.5 deep SQL review target" in context
+    assert "query.postgres.handlebars" in context
+    assert "select id, payload::jsonb from t where id = @id" in context
+    assert "print('skip')" not in context
+
+
 def test_build_batch_message_includes_saved_review_instruction_lists():
     message = review_service._build_batch_message(
         mr_data={
@@ -422,4 +442,5 @@ def test_review_mr_includes_project_graph_context_for_adinsure_configs(tmp_path,
     assert "## Constructor Graph Checks" in llm_calls[0]
     assert "query.postgres.handlebars" in llm_calls[0]
     assert result["summary"]["project_graph_context"]["sql_target"] == "PostgreSQL 17.5+"
+    assert "## PostgreSQL 17.5 deep SQL review target" in llm_calls[0]
     assert result["summary"]["project_graph_context"]["related_files"]

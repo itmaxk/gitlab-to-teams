@@ -383,7 +383,12 @@ def _build_mixed_review_checklist(review_areas: dict) -> str:
         ])
     if areas.get("sql_datasource"):
         checks.extend([
-            "- SQL/DataSource: verify PostgreSQL 17.5+ syntax, SQL aliases, parameters, dataProvider link, and consistency with inputSchema/resultSchema and mappings.",
+            "- SQL/DataSource: perform a deep PostgreSQL 17.5 review of changed queries and database scripts, not just a generic code review.",
+            "- Verify PostgreSQL 17.5 syntax and semantics: aliases, CTE scope/materialization, joins, DISTINCT ON with ORDER BY, GROUP BY/HAVING, window functions, JSON/JSONB operators, casts, arrays, date/time zone handling, NULL semantics, boolean expressions, RETURNING, and transaction behavior.",
+            "- Verify parameter usage and templating: `@param` placeholders and Handlebars fragments are application template syntax, but dynamic SQL/string concatenation must not allow SQL injection or invalid generated SQL.",
+            "- Check execution quality: sargability, predicates on indexed columns, implicit casts, functions on columns in WHERE/JOIN, leading-wildcard LIKE/ILIKE, OR conditions, correlated subqueries, IN/EXISTS choices, pagination stability, ORDER BY determinism, unnecessary SELECT *, duplicate rows, and avoidable lock-heavy migrations.",
+            "- Cross-check SQL inputs/results against inputSchema/resultSchema/inputMapping/resultMapping and UI/export fields; report mismatched aliases, missing result columns, nullable/type mismatches, or filters not passed to the query.",
+            "- For migration scripts, check PostgreSQL 17.5 compatibility, idempotency, IF EXISTS/IF NOT EXISTS, safe DDL ordering, backfill correctness, NOT NULL/default handling, index creation strategy, and rollback/locking risk.",
             "- Do not require multi-db compatibility unless explicitly requested.",
         ])
     if areas.get("schema_mapping"):
@@ -392,6 +397,55 @@ def _build_mixed_review_checklist(review_areas: dict) -> str:
         checks.append("- Constructor links: verify dataSource/dataProvider, sink/source mappings, sinkGroup refs, printout/notification template links, and component owners when related context is available.")
     checks.append("- If a finding crosses layers, set `chain` to a short path such as `UI -> dataSource -> SQL`.")
     return "\n".join(checks)
+
+
+def _is_postgresql_review_path(path: str) -> bool:
+    lower = path.replace("\\", "/").lower()
+    return (
+        lower.endswith(".sql")
+        or lower.endswith(".pgsql")
+        or lower.endswith("query.postgres.handlebars")
+        or "/database/postgres/" in lower
+        or "/dataprovider/database/" in lower
+    )
+
+
+def _extract_added_diff_lines(diff: str) -> str:
+    lines = []
+    for line in (diff or "").splitlines():
+        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+            continue
+        if line.startswith("+"):
+            lines.append(line[1:])
+    return "\n".join(lines).strip()
+
+
+def _build_postgresql_review_context(changes: list[dict], *, max_chars: int = 20000) -> str:
+    parts = [
+        "## PostgreSQL 17.5 deep SQL review target",
+        "Analyze the SQL found in GitLab MR changes as PostgreSQL 17.5 SQL. Focus on correctness, security, performance, and schema/mapping consistency.",
+        "If database schema context from an external tool/MCP is available to the model, use it only as reference; findings still must be tied to changed MR files and lines.",
+    ]
+    sql_parts = []
+    for change in changes:
+        path = change.get("new_path") or change.get("old_path") or ""
+        if not _is_postgresql_review_path(path):
+            continue
+        added_sql = _extract_added_diff_lines(change.get("diff", ""))
+        if not added_sql:
+            continue
+        sql_parts.append(f"### {path}\n```sql\n{added_sql}\n```")
+
+    if sql_parts:
+        parts.append("### Changed PostgreSQL snippets from this MR")
+        parts.append("\n\n".join(sql_parts))
+    else:
+        parts.append("No standalone SQL snippet was extracted from added diff lines; still inspect SQL/DataSource files and related mappings in the main diff/context.")
+
+    text = "\n\n".join(parts)
+    if len(text) > max_chars:
+        return text[:max_chars] + "\n... [PostgreSQL review context truncated]"
+    return text
 
 
 def _build_batch_message(
@@ -404,6 +458,7 @@ def _build_batch_message(
     custom_prompt: str,
     file_context_text: str = "",
     project_graph_context_text: str = "",
+    postgresql_review_context: str = "",
     review_areas: dict | None = None,
 ) -> str:
     review_areas = review_areas or {"labels": [], "areas": {}}
@@ -435,6 +490,11 @@ Do not create findings only because old unrelated code in this section could be 
 
 ## Constructor Graph Checks"""
         user_message += "\n- Validate related project graph files and unresolved links. Related files are reference context; report them only when they create risk for changed behavior."
+
+    if postgresql_review_context.strip():
+        user_message += f"""
+
+{postgresql_review_context.strip()}"""
 
     user_message += """
 
@@ -759,6 +819,11 @@ async def review_mr(
     project_graph_context = build_project_graph_context(changed_paths, project_settings)
     project_graph_context_text = project_graph_context.to_prompt_text()
     project_graph_context_summary = project_graph_context.to_summary()
+    postgresql_review_context = (
+        _build_postgresql_review_context(non_empty)
+        if review_areas["areas"].get("sql_datasource")
+        else ""
+    )
 
     system_prompt = _get_system_prompt()
     saved_instructions = _build_saved_instructions_text()
@@ -791,6 +856,7 @@ async def review_mr(
                 custom_prompt=custom_prompt,
                 file_context_text=file_context_text,
                 project_graph_context_text=project_graph_context_text,
+                postgresql_review_context=postgresql_review_context,
                 review_areas=review_areas,
             )
             llm_response = await _call_llm(system_prompt, user_message)
