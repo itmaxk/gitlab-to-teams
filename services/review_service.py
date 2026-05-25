@@ -375,6 +375,8 @@ def _build_mixed_review_checklist(review_areas: dict) -> str:
         "- Treat this MR as mixed AdInsure implementation code. UI/Component and SQL/DataSource changes may be part of one behavior chain.",
         "- Primary goal: find runtime/configuration regression risks introduced by the diff, not style issues.",
         "- Check cross-layer consistency: UI filters/results/actions/components -> view/dataExport/document configuration -> dataSource input/result schemas -> inputMapping/resultMapping -> query.postgres.handlebars -> dataProvider.",
+        "- Diff hunks are partial views of files. Absence from a diff hunk is not evidence that an export, object property, document state, variable, import, or function is absent from the file.",
+        "- Before reporting a missing declaration/export/property/state in a changed file, verify it against the full file context for that same file. If full file context is unavailable or the claim depends only on a related file, do not report it as `source=diff`.",
     ]
     areas = review_areas.get("areas") or {}
     if areas.get("ui_component"):
@@ -482,6 +484,7 @@ Create normal findings only for risks introduced by these changed lines/files.
 ## Full file context after change — reference only
 Use this section to validate symbols, imports, requires, module-scope constants, mappings, schemas, and surrounding code that may be outside the diff.
 Do not create findings from this section alone. A finding is valid only when the risk is introduced by the changed diff, or by a related constructor graph file directly affected by the changed diff.
+Use this section to disprove missing-symbol findings: if a declaration/export/property/state exists here, do not report it as missing just because it is absent from the diff hunk.
 {file_context_text.strip()}"""
 
     if project_graph_context_text.strip():
@@ -508,6 +511,7 @@ Do not create findings from this section alone. A finding is valid only when the
 - Allowed source: `diff`, `graph_context`.
 - Use `source=diff` for findings directly caused by changed code; use `graph_context` only for cross-file constructor risks caused by changed files.
 - Never return `source=full_file_context`; full file context is reference-only and must not originate findings.
+- Do not report missing constants, states, imports, variables, object properties, exports, or functions based only on their absence from a diff hunk.
 - Write all human-readable text in fields `message`, `suggestion`, and `evidence` in Russian.
 - Do not translate file paths, identifiers, branch names, config keys, or code fragments.
 """

@@ -242,6 +242,42 @@ def test_build_batch_message_requires_russian_human_text():
     assert "Mixed AdInsure UI/Component + SQL/DataSource review focus" in message
     assert "Never return `source=full_file_context`" in message
     assert "Allowed source: `diff`, `full_file_context`, `graph_context`" not in message
+    assert "Absence from a diff hunk is not evidence" in message
+    assert "Do not report missing constants, states, imports, variables, object properties, exports, or functions based only on their absence from a diff hunk." in message
+
+
+def test_build_batch_message_requires_full_context_check_before_missing_state_finding():
+    message = review_service._build_batch_message(
+        mr_data={
+            "title": "State constants MR",
+            "author": "Dev",
+            "source_branch": "feature/states",
+            "target_branch": "main",
+        },
+        files_changed=1,
+        batch_index=1,
+        batch_total=1,
+        diff_text=(
+            "--- configuration/@config-rgsl/life-insurance/lib/lifeInsuranceRequestConstants.js\n"
+            "+++ configuration/@config-rgsl/life-insurance/lib/lifeInsuranceRequestConstants.js\n"
+            "@@ -28,3 +28,4 @@\n"
+            "+    CICEmployeeAnalysis: 'CICEmployeeAnalysis',"
+        ),
+        saved_instructions="",
+        custom_prompt="",
+        file_context_text=(
+            "### configuration/@config-rgsl/life-insurance/lib/lifeInsuranceRequestConstants.js\n"
+            "```text\n"
+            "const documentStates = {\n"
+            "    CICEmployeeAnalysis: 'CICEmployeeAnalysis',\n"
+            "    CICAnalysisCorrection: 'CICAnalysisCorrection',\n"
+            "};\n"
+            "```"
+        ),
+    )
+
+    assert "Use this section to disprove missing-symbol findings" in message
+    assert "if a declaration/export/property/state exists here, do not report it as missing" in message
 
 
 def test_build_postgresql_review_context_extracts_added_sql():
