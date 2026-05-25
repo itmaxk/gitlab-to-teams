@@ -10,6 +10,9 @@
 - Changed the forced GitLab diff refresh path to load the newest MR diff version from `GET /versions` and `GET /versions/:id`
 - Preserved the latest version `head_commit_sha` as `source_ref` so full-file context also comes from the newest MR commit
 - Added a regression test where stale `/changes` content is replaced by the latest diff version payload
+- Confirmed a second source of false positives: latest full-file context was allowed to originate findings even when a variable was not in the MR diff
+- Made full-file context reference-only and filtered `source=full_file_context` findings before saving review results
+- Added a regression test that keeps a diff finding and drops a context-only variable finding
 
 ## In progress
 - None
@@ -27,12 +30,14 @@
 ## Commands
 - `pytest tests/test_gitlab_client_diff_fallback.py`
 - `pytest tests/test_review_batching.py tests/test_xlsx_review_service.py`
+- `pytest tests/test_review_batching.py tests/test_gitlab_client_diff_fallback.py tests/test_xlsx_review_service.py`
 
 ## Blockers
 - None
 
 ## Audit log
 - 2026-05-13: implemented latest MR diff version loading for forced `/review` refresh and passed focused tests
+- 2026-05-25: prevented latest full-file context from producing standalone findings for variables outside the MR diff
 
 ## Pipeline Config Retry Trace Matching
 

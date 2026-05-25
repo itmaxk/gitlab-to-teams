@@ -240,6 +240,8 @@ def test_build_batch_message_requires_russian_human_text():
 
     assert "Write all human-readable text in fields `message`, `suggestion`, and `evidence` in Russian." in message
     assert "Mixed AdInsure UI/Component + SQL/DataSource review focus" in message
+    assert "Never return `source=full_file_context`" in message
+    assert "Allowed source: `diff`, `full_file_context`, `graph_context`" not in message
 
 
 def test_build_postgresql_review_context_extracts_added_sql():
@@ -357,6 +359,80 @@ def test_review_mr_includes_full_file_context_for_imports_outside_diff(tmp_path,
     assert len(llm_calls) == 1
     assert "## Full file context after change" in llm_calls[0]
     assert "const { signatureForm } = require(" in llm_calls[0]
+
+
+def test_review_mr_filters_findings_from_full_file_context_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid, **kwargs):
+        return {
+            "title": "Context-only variable MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/context-only",
+            "source_ref": "latest-head-sha",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/22",
+            "overflow": False,
+            "changes": [
+                {
+                    "old_path": "mapping.js",
+                    "new_path": "mapping.js",
+                    "diff": "@@ -1 +1 @@\n-oldValue = input.value\n+newValue = input.value",
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_content(project_id, file_path, ref):
+        assert ref == "latest-head-sha"
+        return "const variableOutsideMr = source.branch.only;\nnewValue = input.value;\n"
+
+    async def fake_call_llm(system_prompt, user_message):
+        return """[
+            {
+                "severity": "warning",
+                "category": "logic",
+                "file_path": "mapping.js",
+                "line": 1,
+                "message": "Проблема в измененной строке",
+                "suggestion": "Исправить newValue",
+                "confidence": "high",
+                "evidence": "+newValue = input.value",
+                "source": "diff",
+                "chain": ""
+            },
+            {
+                "severity": "warning",
+                "category": "logic",
+                "file_path": "mapping.js",
+                "line": 10,
+                "message": "Переменная variableOutsideMr не проверена",
+                "suggestion": "Исправить variableOutsideMr",
+                "confidence": "medium",
+                "evidence": "const variableOutsideMr = source.branch.only;",
+                "source": "full_file_context",
+                "chain": ""
+            }
+        ]"""
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(review_service, "get_file_content", fake_get_file_content)
+    monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)
+
+    result = asyncio.run(review_service.review_mr(22, force_refresh_diff=True))
+
+    assert [finding["source"] for finding in result["findings"]] == ["diff"]
+    assert "newValue" in result["findings"][0]["suggestion"]
+    assert "variableOutsideMr" not in result["findings"][0]["message"]
 
 
 def test_review_mr_includes_project_graph_context_for_adinsure_configs(tmp_path, monkeypatch):

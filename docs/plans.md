@@ -23,6 +23,25 @@
 - Stop-and-fix rule:
 - if a live GitLab instance rejects the versions endpoint, add an explicit logged fallback rather than hiding stale review input
 
+### Milestone 2
+- Status: `[x]`
+- Goal: prevent `/review` from reporting variables that are only present in the latest full-file context, not in MR diff changes.
+- Tasks:
+- keep latest `head_commit_sha` full-file context for validation
+- make full-file context reference-only in the LLM prompt
+- filter `source=full_file_context` findings before saving review results
+- add a regression test for a context-only variable finding
+- Definition of done:
+- `/review` still reads latest MR diff version and latest source file context
+- findings originating only from full-file context do not appear in results
+- focused review and GitLab diff tests pass
+- Validation commands:
+- `pytest tests/test_review_batching.py tests/test_gitlab_client_diff_fallback.py tests/test_xlsx_review_service.py`
+- Known risks:
+- some valid issues that require full-file context must still be tied back to changed diff behavior
+- Stop-and-fix rule:
+- if a true changed-line issue is filtered out, adjust the prompt/schema to tie it to `source=diff` instead of re-enabling context-only findings
+
 ## Pipeline Config Retry Trace Matching
 
 ### Goal

@@ -8,11 +8,13 @@
 ## Critical cases
 - Forced refresh bypasses the cached diff and replaces stale `/changes` diff content with the latest MR diff version
 - The newest version `head_commit_sha` becomes `source_ref` for full-file context loading
+- Latest full-file context is reference-only: findings with variables outside the MR diff are filtered when they originate only from `full_file_context`
 - Normal cached reads still work for existing callers
 
 ## Validation
 - `pytest tests/test_gitlab_client_diff_fallback.py`
 - `pytest tests/test_review_batching.py tests/test_xlsx_review_service.py`
+- `pytest tests/test_review_batching.py tests/test_gitlab_client_diff_fallback.py tests/test_xlsx_review_service.py`
 
 ## Out of scope
 - Live GitLab API smoke test against a real project

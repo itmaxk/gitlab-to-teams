@@ -39,6 +39,7 @@ ALLOWED_REVIEW_CATEGORIES = {
 }
 ALLOWED_REVIEW_CONFIDENCE = {"high", "medium", "low"}
 ALLOWED_REVIEW_SOURCES = {"diff", "full_file_context", "graph_context", "final_pass"}
+CONTEXT_ONLY_REVIEW_SOURCES = {"full_file_context"}
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -480,7 +481,7 @@ Create normal findings only for risks introduced by these changed lines/files.
 
 ## Full file context after change — reference only
 Use this section to validate symbols, imports, requires, module-scope constants, mappings, schemas, and surrounding code that may be outside the diff.
-Do not create findings only because old unrelated code in this section could be improved.
+Do not create findings from this section alone. A finding is valid only when the risk is introduced by the changed diff, or by a related constructor graph file directly affected by the changed diff.
 {file_context_text.strip()}"""
 
     if project_graph_context_text.strip():
@@ -504,8 +505,9 @@ Do not create findings only because old unrelated code in this section could be 
 - Allowed severity: `error`, `warning`, `info`.
 - Allowed category: `bug`, `security`, `performance`, `maintainability`, `constructor-link`, `sql`, `schema-mapping`, `ui-component`, `test-risk`, `logic`, `general`.
 - Allowed confidence: `high`, `medium`, `low`.
-- Allowed source: `diff`, `full_file_context`, `graph_context`.
-- Use `source=diff` for findings directly caused by changed code; use `graph_context` only for cross-file constructor risks.
+- Allowed source: `diff`, `graph_context`.
+- Use `source=diff` for findings directly caused by changed code; use `graph_context` only for cross-file constructor risks caused by changed files.
+- Never return `source=full_file_context`; full file context is reference-only and must not originate findings.
 - Write all human-readable text in fields `message`, `suggestion`, and `evidence` in Russian.
 - Do not translate file paths, identifiers, branch names, config keys, or code fragments.
 """
@@ -676,6 +678,14 @@ def _deduplicate_findings(findings: list[dict]) -> list[dict]:
     return unique
 
 
+def _filter_context_only_findings(findings: list[dict]) -> list[dict]:
+    return [
+        finding
+        for finding in findings
+        if finding.get("source") not in CONTEXT_ONLY_REVIEW_SOURCES
+    ]
+
+
 def _filter_findings_by_known_files(findings: list[dict], known_paths: set[str]) -> list[dict]:
     if not known_paths:
         return findings
@@ -745,7 +755,7 @@ Return only a JSON array using the same finding schema.
 
 ## Consolidation rules
 - Remove duplicates and weak speculative findings.
-- Preserve only findings that are actionable and tied to changed behavior.
+- Preserve only findings that are actionable and tied to changed diff behavior or constructor graph risks caused by changed files.
 - Upgrade severity only when evidence is strong.
 - Use `source=final_pass` only for findings added or materially changed during consolidation.
 - Keep human-readable text in Russian.
@@ -777,7 +787,9 @@ async def _consolidate_findings(
         return _deduplicate_findings(findings)
     if not consolidated:
         return _deduplicate_findings(findings)
-    return _deduplicate_findings(_filter_findings_by_known_files(consolidated, known_paths))
+    return _filter_context_only_findings(
+        _deduplicate_findings(_filter_findings_by_known_files(consolidated, known_paths))
+    )
 
 
 async def _report_progress(
@@ -860,13 +872,15 @@ async def review_mr(
                 review_areas=review_areas,
             )
             llm_response = await _call_llm(system_prompt, user_message)
-            findings.extend(_parse_findings(llm_response))
+            findings.extend(_filter_context_only_findings(_parse_findings(llm_response)))
             await _report_progress(progress_callback, batch_index, total_batches)
 
         known_paths = set(changed_paths) | set(file_contexts) | {
             item.get("path", "") for item in project_graph_context_summary.get("related_files", [])
         }
-        findings = _filter_findings_by_known_files(_deduplicate_findings(findings), known_paths)
+        findings = _filter_context_only_findings(
+            _filter_findings_by_known_files(_deduplicate_findings(findings), known_paths)
+        )
         findings = await _consolidate_findings(
             system_prompt,
             mr_data,
