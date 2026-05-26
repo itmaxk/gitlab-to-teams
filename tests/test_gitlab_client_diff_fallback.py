@@ -387,6 +387,7 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
         "title": "Latest title",
         "source_branch": "feature/cache",
         "target_branch": "master",
+        "sha": "latest-head-sha",
         "diff_refs": {"head_sha": "latest-head-sha"},
         "changes": [
             {
@@ -398,6 +399,12 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
                 "renamed_file": False,
             },
         ],
+    }
+    current_mr_payload = {
+        "title": "Latest title",
+        "source_branch": "feature/cache",
+        "target_branch": "master",
+        "sha": "latest-head-sha",
     }
     versions_payload = [
         {
@@ -430,6 +437,7 @@ def test_get_mr_diff_force_refresh_bypasses_cached_diff(monkeypatch):
     responses = [
         _FakeResponse(json_data=first_payload),
         _FakeResponse(json_data=refreshed_payload),
+        _FakeResponse(json_data=current_mr_payload),
         _FakeResponse(json_data=versions_payload),
         _FakeResponse(json_data=version_payload),
     ]
@@ -454,6 +462,7 @@ def test_get_mr_diff_force_refresh_uses_latest_diff_version(monkeypatch):
         "title": "MR with stale changes payload",
         "source_branch": "feature/latest",
         "target_branch": "master",
+        "sha": "old-head-sha",
         "diff_refs": {"head_sha": "old-head-sha"},
         "changes": [
             {
@@ -465,6 +474,12 @@ def test_get_mr_diff_force_refresh_uses_latest_diff_version(monkeypatch):
                 "renamed_file": False,
             },
         ],
+    }
+    current_mr_payload = {
+        "title": "MR with latest diff version",
+        "source_branch": "feature/latest",
+        "target_branch": "master",
+        "sha": "new-head-sha",
     }
     versions_payload = [
         {
@@ -503,6 +518,7 @@ def test_get_mr_diff_force_refresh_uses_latest_diff_version(monkeypatch):
     }
     responses = [
         _FakeResponse(json_data=changes_payload),
+        _FakeResponse(json_data=current_mr_payload),
         _FakeResponse(json_data=versions_payload),
         _FakeResponse(json_data=version_payload),
     ]
@@ -514,5 +530,97 @@ def test_get_mr_diff_force_refresh_uses_latest_diff_version(monkeypatch):
 
     assert result["source_ref"] == "new-head-sha"
     assert result["changes"][0]["diff"] == "@@ -1 +1 @@\n-old\n+latest"
-    assert responses[2].params == {"unidiff": "true"}
+    assert responses[3].params == {"unidiff": "true"}
+    gitlab_client.clear_mr_diff_cache()
+
+
+def test_get_mr_diff_force_refresh_compares_current_sha_when_diff_version_is_stale(monkeypatch):
+    changes_payload = {
+        "title": "MR with stale GitLab diff version",
+        "source_branch": "feature/current-sha",
+        "target_branch": "master",
+        "sha": "old-head-sha",
+        "diff_refs": {"base_sha": "base-sha", "head_sha": "old-head-sha"},
+        "changes": [
+            {
+                "old_path": "app.py",
+                "new_path": "app.py",
+                "diff": "@@ -1 +1 @@\n-old\n+stale",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    current_mr_payload = {
+        "iid": 19,
+        "title": "MR with current commit",
+        "source_branch": "feature/current-sha",
+        "target_branch": "master",
+        "sha": "current-head-sha",
+        "web_url": "https://example.test/mr/19",
+        "author": {"name": "Dev"},
+    }
+    versions_payload = [
+        {
+            "id": 12,
+            "created_at": "2026-05-13T12:00:00.000Z",
+            "state": "collected",
+            "head_commit_sha": "old-head-sha",
+            "base_commit_sha": "base-sha",
+            "start_commit_sha": "start-sha",
+        },
+    ]
+    version_payload = {
+        "id": 12,
+        "head_commit_sha": "old-head-sha",
+        "base_commit_sha": "base-sha",
+        "start_commit_sha": "start-sha",
+        "state": "collected",
+        "diffs": [
+            {
+                "old_path": "app.py",
+                "new_path": "app.py",
+                "diff": "@@ -1 +1 @@\n-old\n+version-stale",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    compare_payload = {
+        "diffs": [
+            {
+                "old_path": "app.py",
+                "new_path": "app.py",
+                "diff": "@@ -1 +1 @@\n-old\n+current",
+                "new_file": False,
+                "deleted_file": False,
+                "renamed_file": False,
+            },
+        ],
+    }
+    responses = [
+        _FakeResponse(json_data=changes_payload),
+        _FakeResponse(json_data=current_mr_payload),
+        _FakeResponse(json_data=versions_payload),
+        _FakeResponse(json_data=version_payload),
+        _FakeResponse(json_data=compare_payload),
+    ]
+
+    monkeypatch.setattr(gitlab_client, "_client", _FakeAsyncClient(responses))
+    gitlab_client.clear_mr_diff_cache()
+
+    result = asyncio.run(gitlab_client.get_mr_diff(1, 19, force_refresh=True))
+
+    assert result["title"] == "MR with current commit"
+    assert result["author"] == "Dev"
+    assert result["source_ref"] == "current-head-sha"
+    assert result["changes"][0]["diff"] == "@@ -1 +1 @@\n-old\n+current"
+    assert responses[4].params == {
+        "from": "base-sha",
+        "to": "current-head-sha",
+        "straight": "false",
+        "unidiff": "true",
+    }
     gitlab_client.clear_mr_diff_cache()

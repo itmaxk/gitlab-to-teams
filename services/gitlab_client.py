@@ -633,6 +633,64 @@ async def _get_latest_mr_version(
     return version_data
 
 
+async def _get_current_mr_metadata(
+    client: httpx.AsyncClient,
+    project_id: int,
+    mr_iid: int,
+) -> dict:
+    mr_url = f"{_base_url()}/api/v4/projects/{project_id}/merge_requests/{mr_iid}"
+    mr_resp = await client.get(mr_url, headers=_headers(), timeout=30)
+    mr_resp.raise_for_status()
+    mr_data = mr_resp.json()
+    return mr_data if isinstance(mr_data, dict) else {}
+
+
+async def _get_compare_diff(
+    client: httpx.AsyncClient,
+    project_id: int,
+    from_ref: str,
+    to_ref: str,
+) -> dict | None:
+    if not from_ref or not to_ref:
+        return None
+
+    compare_url = f"{_base_url()}/api/v4/projects/{project_id}/repository/compare"
+    compare_resp = await client.get(
+        compare_url,
+        headers=_headers(),
+        params={
+            "from": from_ref,
+            "to": to_ref,
+            "straight": "false",
+            "unidiff": "true",
+        },
+        timeout=60,
+    )
+    compare_resp.raise_for_status()
+    compare_data = compare_resp.json()
+    return compare_data if isinstance(compare_data, dict) else None
+
+
+def _apply_current_mr_metadata(data: dict, current_mr: dict) -> dict:
+    if not current_mr:
+        return data
+
+    result = dict(data)
+    for key in (
+        "title",
+        "description",
+        "source_branch",
+        "target_branch",
+        "web_url",
+        "sha",
+    ):
+        if current_mr.get(key):
+            result[key] = current_mr[key]
+    if current_mr.get("author"):
+        result["author"] = current_mr["author"]
+    return result
+
+
 def _apply_version_diff(data: dict, version_data: dict | None) -> dict:
     if not version_data:
         return data
@@ -651,6 +709,51 @@ def _apply_version_diff(data: dict, version_data: dict | None) -> dict:
         "head_sha": version_data.get("head_commit_sha") or (data.get("diff_refs") or {}).get("head_sha"),
     }
     result["sha"] = version_data.get("head_commit_sha") or data.get("sha", "")
+    return result
+
+
+async def _apply_current_head_diff_if_needed(
+    client: httpx.AsyncClient,
+    project_id: int,
+    data: dict,
+    current_mr: dict,
+) -> dict:
+    current_sha = (current_mr.get("sha") or "").strip()
+    if not current_sha:
+        return data
+
+    diff_refs = data.get("diff_refs") or {}
+    data_head = (
+        diff_refs.get("head_sha")
+        or data.get("sha")
+        or ""
+    ).strip()
+    if data_head == current_sha:
+        return data
+
+    from_ref = (
+        diff_refs.get("base_sha")
+        or diff_refs.get("start_sha")
+        or current_mr.get("target_branch")
+        or data.get("target_branch")
+        or ""
+    )
+    compare_data = await _get_compare_diff(client, project_id, from_ref, current_sha)
+    if not compare_data or not isinstance(compare_data.get("diffs"), list):
+        raise RuntimeError(
+            f"GitLab MR !{current_mr.get('iid') or ''} diff is stale "
+            f"({data_head or 'unknown'} != {current_sha}) and compare fallback did not return diffs"
+        )
+
+    result = dict(data)
+    result["changes"] = _changes_from_diff_items(compare_data.get("diffs", []))
+    result["overflow"] = bool(data.get("overflow")) or bool(compare_data.get("compare_timeout"))
+    result["sha"] = current_sha
+    result["diff_refs"] = {
+        **diff_refs,
+        "base_sha": from_ref,
+        "head_sha": current_sha,
+    }
     return result
 
 
@@ -675,10 +778,14 @@ async def get_mr_diff(project_id: int, mr_iid: int, force_refresh: bool = False)
     resp.raise_for_status()
     data = resp.json()
     if force_refresh:
+        current_mr = await _get_current_mr_metadata(client, project_id, mr_iid)
+        data = _apply_current_mr_metadata(data, current_mr)
         data = _apply_version_diff(
             data,
             await _get_latest_mr_version(client, project_id, mr_iid),
         )
+        data = _apply_current_mr_metadata(data, current_mr)
+        data = await _apply_current_head_diff_if_needed(client, project_id, data, current_mr)
 
     changes = _changes_from_diff_items(data.get("changes", []))
 
