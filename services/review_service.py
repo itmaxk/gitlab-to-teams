@@ -40,6 +40,8 @@ ALLOWED_REVIEW_CATEGORIES = {
 ALLOWED_REVIEW_CONFIDENCE = {"high", "medium", "low"}
 ALLOWED_REVIEW_SOURCES = {"diff", "full_file_context", "graph_context", "final_pass"}
 CONTEXT_ONLY_REVIEW_SOURCES = {"full_file_context"}
+IDENTIFIER_VALIDATION_SOURCES = {"diff", "final_pass"}
+CODE_IDENTIFIER_RE = re.compile(r"`([A-Za-z_$][A-Za-z0-9_$]{2,})`")
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -705,6 +707,60 @@ def _filter_findings_by_known_files(findings: list[dict], known_paths: set[str])
     return filtered
 
 
+def _build_review_support_text_by_path(
+    changes: list[dict],
+    file_contexts: dict[str, str],
+) -> dict[str, str]:
+    support: dict[str, list[str]] = {}
+    for change in changes:
+        path = change.get("new_path") or change.get("old_path") or ""
+        if not path:
+            continue
+        support.setdefault(path.replace("\\", "/"), []).append(change.get("diff") or "")
+    for path, content in file_contexts.items():
+        support.setdefault(path.replace("\\", "/"), []).append(content or "")
+    return {path: "\n".join(parts) for path, parts in support.items()}
+
+
+def _extract_backticked_identifiers(finding: dict) -> set[str]:
+    text = "\n".join(
+        str(finding.get(field) or "")
+        for field in ("message", "suggestion", "evidence")
+    )
+    return set(CODE_IDENTIFIER_RE.findall(text))
+
+
+def _filter_findings_by_supported_identifiers(
+    findings: list[dict],
+    support_text_by_path: dict[str, str],
+) -> list[dict]:
+    filtered: list[dict] = []
+    for finding in findings:
+        source = str(finding.get("source") or "").strip()
+        if source not in IDENTIFIER_VALIDATION_SOURCES:
+            filtered.append(finding)
+            continue
+
+        identifiers = _extract_backticked_identifiers(finding)
+        if not identifiers:
+            filtered.append(finding)
+            continue
+
+        path = str(finding.get("file_path") or "").replace("\\", "/")
+        support_text = support_text_by_path.get(path, "")
+        unsupported = sorted(identifier for identifier in identifiers if identifier not in support_text)
+        if unsupported:
+            logger.info(
+                "Dropped review finding for %s because referenced identifiers are not in diff/context: %s",
+                path or "<unknown>",
+                ", ".join(unsupported),
+            )
+            continue
+
+        filtered.append(finding)
+    return filtered
+
+
 def _compute_summary(
     findings: list[dict],
     files_total: int,
@@ -826,6 +882,7 @@ async def review_mr(
     diff_batches = _build_diff_batches(non_empty)
     total_batches = max(1, len(diff_batches))
     file_contexts = await _load_review_file_contexts(project_id, mr_data, non_empty)
+    support_text_by_path = _build_review_support_text_by_path(non_empty, file_contexts)
     project_settings = get_review_project_settings()
     changed_paths = [
         change.get("new_path") or change.get("old_path") or ""
@@ -885,6 +942,7 @@ async def review_mr(
         findings = _filter_context_only_findings(
             _filter_findings_by_known_files(_deduplicate_findings(findings), known_paths)
         )
+        findings = _filter_findings_by_supported_identifiers(findings, support_text_by_path)
         findings = await _consolidate_findings(
             system_prompt,
             mr_data,
@@ -894,6 +952,7 @@ async def review_mr(
             project_graph_context_summary,
             known_paths,
         )
+        findings = _filter_findings_by_supported_identifiers(findings, support_text_by_path)
 
         summary = _compute_summary(
             findings,

@@ -471,6 +471,71 @@ def test_review_mr_filters_findings_from_full_file_context_only(tmp_path, monkey
     assert "variableOutsideMr" not in result["findings"][0]["message"]
 
 
+def test_review_mr_filters_diff_finding_with_unsupported_backticked_identifier(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid, **kwargs):
+        return {
+            "title": "Unsupported identifier MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/attachments",
+            "source_ref": "latest-head-sha",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/23",
+            "overflow": False,
+            "changes": [
+                {
+                    "old_path": "configuration/@config-rgsl/infrastructure/component/AttachmentsTable/ClientAction/preArrayOperationHandler.js",
+                    "new_path": "configuration/@config-rgsl/infrastructure/component/AttachmentsTable/ClientAction/preArrayOperationHandler.js",
+                    "diff": (
+                        "@@ -31 +31 @@\n"
+                        "-if (config.polcyAttachmentsConfnames.includes(name)) return;\n"
+                        "+if (config.polcyAttachmentsConfnames?.includes(name)) return;"
+                    ),
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_content(project_id, file_path, ref):
+        assert ref == "latest-head-sha"
+        return "if (config.polcyAttachmentsConfnames?.includes(name)) return;\n"
+
+    async def fake_call_llm(system_prompt, user_message):
+        return """[
+            {
+                "severity": "error",
+                "category": "bug",
+                "file_path": "configuration/@config-rgsl/infrastructure/component/AttachmentsTable/ClientAction/preArrayOperationHandler.js",
+                "line": 31,
+                "message": "Опечатка в имени свойства `polcyAttachmentsConfnames` приводит к undefined.",
+                "suggestion": "Исправить имя свойства на `policyAttachmentsConfnames`.",
+                "confidence": "medium",
+                "evidence": "+if (config.polcyAttachmentsConfnames?.includes(name)) return;",
+                "source": "diff",
+                "chain": ""
+            }
+        ]"""
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(review_service, "get_file_content", fake_get_file_content)
+    monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)
+
+    result = asyncio.run(review_service.review_mr(23, force_refresh_diff=True))
+
+    assert result["findings"] == []
+    assert result["summary"]["total"] == 0
+
+
 def test_review_mr_includes_project_graph_context_for_adinsure_configs(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
