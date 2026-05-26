@@ -42,6 +42,11 @@ ALLOWED_REVIEW_SOURCES = {"diff", "full_file_context", "graph_context", "final_p
 CONTEXT_ONLY_REVIEW_SOURCES = {"full_file_context"}
 IDENTIFIER_VALIDATION_SOURCES = {"diff", "final_pass"}
 CODE_IDENTIFIER_RE = re.compile(r"`([A-Za-z_$][A-Za-z0-9_$]{2,})`")
+SQL_MISSING_FROM_RE = re.compile(
+    r"(?:без\s+оператора\s+from|without\s+from|missing\s+from|нет\s+from)",
+    re.IGNORECASE,
+)
+SQL_SELECT_FROM_RE = re.compile(r"\bselect\b[\s\S]{1,20000}?\bfrom\b", re.IGNORECASE)
 
 
 def _read_int_env(name: str, default: int) -> int:
@@ -409,6 +414,7 @@ def _is_postgresql_review_path(path: str) -> bool:
     return (
         lower.endswith(".sql")
         or lower.endswith(".pgsql")
+        or lower.endswith("query.handlebars")
         or lower.endswith("query.postgres.handlebars")
         or "/database/postgres/" in lower
         or "/dataprovider/database/" in lower
@@ -761,6 +767,42 @@ def _filter_findings_by_supported_identifiers(
     return filtered
 
 
+def _finding_claims_sql_missing_from(finding: dict) -> bool:
+    text = "\n".join(
+        str(finding.get(field) or "")
+        for field in ("message", "suggestion", "evidence")
+    )
+    return bool(SQL_MISSING_FROM_RE.search(text))
+
+
+def _support_text_has_select_from(support_text: str) -> bool:
+    return bool(SQL_SELECT_FROM_RE.search(support_text or ""))
+
+
+def _filter_sql_missing_from_false_positives(
+    findings: list[dict],
+    support_text_by_path: dict[str, str],
+) -> list[dict]:
+    filtered: list[dict] = []
+    for finding in findings:
+        source = str(finding.get("source") or "").strip()
+        if source not in IDENTIFIER_VALIDATION_SOURCES or not _finding_claims_sql_missing_from(finding):
+            filtered.append(finding)
+            continue
+
+        path = str(finding.get("file_path") or "").replace("\\", "/")
+        support_text = support_text_by_path.get(path, "")
+        if _support_text_has_select_from(support_text):
+            logger.info(
+                "Dropped review finding for %s because full SQL context contains SELECT ... FROM",
+                path or "<unknown>",
+            )
+            continue
+
+        filtered.append(finding)
+    return filtered
+
+
 def _compute_summary(
     findings: list[dict],
     files_total: int,
@@ -943,6 +985,7 @@ async def review_mr(
             _filter_findings_by_known_files(_deduplicate_findings(findings), known_paths)
         )
         findings = _filter_findings_by_supported_identifiers(findings, support_text_by_path)
+        findings = _filter_sql_missing_from_false_positives(findings, support_text_by_path)
         findings = await _consolidate_findings(
             system_prompt,
             mr_data,
@@ -953,6 +996,7 @@ async def review_mr(
             known_paths,
         )
         findings = _filter_findings_by_supported_identifiers(findings, support_text_by_path)
+        findings = _filter_sql_missing_from_false_positives(findings, support_text_by_path)
 
         summary = _compute_summary(
             findings,

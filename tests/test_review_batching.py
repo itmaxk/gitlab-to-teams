@@ -536,6 +536,89 @@ def test_review_mr_filters_diff_finding_with_unsupported_backticked_identifier(t
     assert result["summary"]["total"] == 0
 
 
+def test_review_mr_filters_sql_missing_from_false_positive_when_full_query_has_from(tmp_path, monkeypatch):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
+    db.init_db()
+    db.seed_review_settings()
+
+    file_path = "configuration/@config-rgsl/party/dataProvider/database/GetPartyDataProvider/query.handlebars"
+
+    async def fake_get_project_id():
+        return 77
+
+    async def fake_get_mr_diff(project_id, mr_iid, **kwargs):
+        return {
+            "title": "Party query MR",
+            "description": "",
+            "author": "Dev",
+            "source_branch": "feature/party-query",
+            "source_ref": "latest-head-sha",
+            "target_branch": "main",
+            "web_url": "https://example.test/mr/24",
+            "overflow": False,
+            "changes": [
+                {
+                    "old_path": file_path,
+                    "new_path": file_path,
+                    "diff": (
+                        "@@ -5,6 +5,8 @@\n"
+                        "        p.BODY,\n"
+                        "        pa.CODE_NAME,\n"
+                        "+       spsl.TAB_NUMBER,\n"
+                        "+       ptys.IS_QUALIFIED_INVESTOR\n"
+                    ),
+                    "new_file": False,
+                    "deleted_file": False,
+                    "renamed_file": False,
+                }
+            ],
+        }
+
+    async def fake_get_file_content(project_id, requested_path, ref):
+        assert requested_path == file_path
+        assert ref == "latest-head-sha"
+        return """SELECT p.PARTY_CODE,
+       p.PARTY_ID,
+       p.COMMON_BODY,
+       p.BODY,
+       pa.CODE_NAME,
+       spsl.TAB_NUMBER,
+       ptys.IS_QUALIFIED_INVESTOR
+FROM PTY.PARTY p
+LEFT JOIN LATERAL (
+    SELECT IS_QUALIFIED_INVESTOR FROM PTY_IMPL.PARTY_INFO_SAT_LATEST
+    WHERE PARTY_INFO_HKEY = ph.PARTY_HKEY
+) ptys ON true
+WHERE 1 = 1
+"""
+
+    async def fake_call_llm(system_prompt, user_message):
+        return f"""[
+            {{
+                "severity": "error",
+                "category": "bug",
+                "file_path": "{file_path}",
+                "line": null,
+                "message": "SQL-запрос содержит синтаксическую ошибку: после списка колонок сразу следует SELECT без оператора FROM.",
+                "suggestion": "Переписать запрос, явно указав SELECT-список и FROM-таблицу.",
+                "confidence": "medium",
+                "evidence": "+       spsl.TAB_NUMBER",
+                "source": "diff",
+                "chain": ""
+            }}
+        ]"""
+
+    monkeypatch.setattr(review_service, "get_project_id", fake_get_project_id)
+    monkeypatch.setattr(review_service, "get_mr_diff", fake_get_mr_diff)
+    monkeypatch.setattr(review_service, "get_file_content", fake_get_file_content)
+    monkeypatch.setattr(review_service, "_call_llm", fake_call_llm)
+
+    result = asyncio.run(review_service.review_mr(24, force_refresh_diff=True))
+
+    assert result["findings"] == []
+    assert result["summary"]["total"] == 0
+
+
 def test_review_mr_includes_project_graph_context_for_adinsure_configs(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "test.db")
     db.init_db()
