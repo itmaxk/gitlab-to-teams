@@ -50,7 +50,9 @@ def _author_identifier_values(author: dict) -> list[str]:
     return result
 
 
-async def _get_with_client(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict | list:
+async def _get_with_client(
+    client: httpx.AsyncClient, path: str, params: dict | None = None
+) -> dict | list:
     url = f"{_base_url()}{path}"
     async with _get_sem():
         resp = await client.get(url, headers=_auth_headers(), params=params)
@@ -66,30 +68,50 @@ async def _get(path: str, params: dict | None = None) -> dict | list:
         return await _get_with_client(client, path, params)
 
 
-async def search_issues(jql: str, fields: str = "key,summary,project", start_at: int = 0, max_results: int = 100) -> dict:
-    return await _get("/rest/api/2/search", {
-        "jql": jql,
-        "fields": fields,
-        "startAt": start_at,
-        "maxResults": max_results,
-    })
+async def search_issues(
+    jql: str,
+    fields: str = "key,summary,project",
+    start_at: int = 0,
+    max_results: int = 100,
+) -> dict:
+    return await _get(
+        "/rest/api/2/search",
+        {
+            "jql": jql,
+            "fields": fields,
+            "startAt": start_at,
+            "maxResults": max_results,
+        },
+    )
 
 
-async def get_issue_worklogs(issue_key: str, start_at: int = 0, max_results: int = 1000) -> dict:
-    return await _get(f"/rest/api/2/issue/{issue_key}/worklog", {
-        "startAt": start_at,
-        "maxResults": max_results,
-    })
+async def get_issue_worklogs(
+    issue_key: str, start_at: int = 0, max_results: int = 1000
+) -> dict:
+    return await _get(
+        f"/rest/api/2/issue/{issue_key}/worklog",
+        {
+            "startAt": start_at,
+            "maxResults": max_results,
+        },
+    )
 
 
-def _extract_worklogs(worklogs: list[dict], issue_key: str, issue_project: str,
-                       d_from: date, d_to: date,
-                       author_filter: str | None = None) -> list[dict]:
+def _extract_worklogs(
+    worklogs: list[dict],
+    issue_key: str,
+    issue_project: str,
+    d_from: date,
+    d_to: date,
+    author_filter: str | None = None,
+) -> list[dict]:
     """Извлекает и фильтрует ворклоги по дате и опционально по автору."""
     entries = []
     for wl in worklogs:
         author = wl.get("author", {})
-        author_key = author.get("accountId") or author.get("key") or author.get("name", "")
+        author_key = (
+            author.get("accountId") or author.get("key") or author.get("name", "")
+        )
         author_candidates = _author_identifier_values(author)
         if not author_key:
             continue
@@ -101,22 +123,24 @@ def _extract_worklogs(worklogs: list[dict], issue_key: str, issue_project: str,
         wl_date = date.fromisoformat(started)
         if wl_date < d_from or wl_date > d_to:
             continue
-        entries.append({
-            "issue_key": issue_key,
-            "worklog_id": str(wl.get("id", "")),
-            "date": started,
-            "started": wl.get("started", ""),
-            "updated": wl.get("updated", ""),
-            "seconds": wl.get("timeSpentSeconds", 0),
-            "project": issue_project,
-            "display_name": author.get("displayName", ""),
-            "email": author.get("emailAddress", ""),
-            "author_key": author_key,
-            "author_account_id": author.get("accountId", ""),
-            "author_key_field": author.get("key", ""),
-            "author_name": author.get("name", ""),
-            "author_candidates": author_candidates,
-        })
+        entries.append(
+            {
+                "issue_key": issue_key,
+                "worklog_id": str(wl.get("id", "")),
+                "date": started,
+                "started": wl.get("started", ""),
+                "updated": wl.get("updated", ""),
+                "seconds": wl.get("timeSpentSeconds", 0),
+                "project": issue_project,
+                "display_name": author.get("displayName", ""),
+                "email": author.get("emailAddress", ""),
+                "author_key": author_key,
+                "author_account_id": author.get("accountId", ""),
+                "author_key_field": author.get("key", ""),
+                "author_name": author.get("name", ""),
+                "author_candidates": author_candidates,
+            }
+        )
     return entries
 
 
@@ -128,12 +152,12 @@ def _match_candidate_entries(entries: list[dict], candidate: str) -> list[dict]:
     ]
 
 
-def _match_any_candidate_entries(entries: list[dict], candidates: list[str]) -> list[dict]:
+def _match_any_candidate_entries(
+    entries: list[dict], candidates: list[str]
+) -> list[dict]:
     cset = {c for c in candidates if c}
     return [
-        entry
-        for entry in entries
-        if cset & set(entry.get("author_candidates", []))
+        entry for entry in entries if cset & set(entry.get("author_candidates", []))
     ]
 
 
@@ -142,12 +166,16 @@ async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
     issues: list[dict] = []
     start_at = 0
     for _ in range(200):
-        data = await _get_with_client(client, "/rest/api/2/search", {
-            "jql": jql,
-            "fields": "key,summary,project",
-            "startAt": start_at,
-            "maxResults": 100,
-        })
+        data = await _get_with_client(
+            client,
+            "/rest/api/2/search",
+            {
+                "jql": jql,
+                "fields": "key,summary,project",
+                "startAt": start_at,
+                "maxResults": 100,
+            },
+        )
         batch = data.get("issues", [])
         if not batch:
             break
@@ -161,15 +189,21 @@ async def _fetch_all_issues(client: httpx.AsyncClient, jql: str) -> list[dict]:
     return issues
 
 
-async def _fetch_issue_worklogs(client: httpx.AsyncClient, issue_key: str) -> list[dict]:
+async def _fetch_issue_worklogs(
+    client: httpx.AsyncClient, issue_key: str
+) -> list[dict]:
     """Пагинированная загрузка ворклогов задачи."""
     all_worklogs: list[dict] = []
     wl_start = 0
     for _ in range(200):
-        wl_data = await _get_with_client(client, f"/rest/api/2/issue/{issue_key}/worklog", {
-            "startAt": wl_start,
-            "maxResults": 1000,
-        })
+        wl_data = await _get_with_client(
+            client,
+            f"/rest/api/2/issue/{issue_key}/worklog",
+            {
+                "startAt": wl_start,
+                "maxResults": 1000,
+            },
+        )
         worklogs = wl_data.get("worklogs", [])
         if not worklogs:
             break
@@ -179,7 +213,9 @@ async def _fetch_issue_worklogs(client: httpx.AsyncClient, issue_key: str) -> li
         if wl_start >= total_wl:
             break
     else:
-        logger.warning("_fetch_issue_worklogs: reached 200-page limit for issue: %s", issue_key)
+        logger.warning(
+            "_fetch_issue_worklogs: reached 200-page limit for issue: %s", issue_key
+        )
     return all_worklogs
 
 
@@ -213,7 +249,9 @@ def _deduplicate_issues(*issue_lists: list[dict]) -> list[dict]:
 
 
 async def get_all_worklogs_for_project(
-    project: str, date_from: str, date_to: str,
+    project: str,
+    date_from: str,
+    date_to: str,
 ) -> dict[str, list[dict]]:
     """Собирает все ворклоги по проекту за период, группирует по автору.
 
@@ -227,8 +265,7 @@ async def get_all_worklogs_for_project(
         f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
     )
     jql_updated = (
-        f'project = "{project}" '
-        f'AND updated >= "{date_from}" AND updated <= "{date_to}"'
+        f'project = "{project}" AND updated >= "{date_from}" AND updated <= "{date_to}"'
     )
     d_from = date.fromisoformat(date_from)
     d_to = date.fromisoformat(date_to)
@@ -249,14 +286,18 @@ async def get_all_worklogs_for_project(
         for issue in all_issues:
             issue_key = issue["key"]
             issue_project = issue["fields"]["project"]["key"]
-            for entry in _extract_worklogs(worklog_cache.get(issue_key, []), issue_key, issue_project, d_from, d_to):
+            for entry in _extract_worklogs(
+                worklog_cache.get(issue_key, []), issue_key, issue_project, d_from, d_to
+            ):
                 result.setdefault(entry["author_key"], []).append(entry)
 
     return result
 
 
 async def get_worklogs_for_users_all_projects(
-    user_ids: list[str], date_from: str, date_to: str,
+    user_ids: list[str],
+    date_from: str,
+    date_to: str,
 ) -> dict[str, list[dict]]:
     """Для каждого пользователя ищет ворклоги во всех проектах за период."""
     d_from = date.fromisoformat(date_from)
@@ -264,22 +305,32 @@ async def get_worklogs_for_users_all_projects(
     result: dict[str, list[dict]] = {}
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
-        async def _fetch_user_issues(user_id: str) -> tuple[str, list[dict]]:
-            jql = (
-                f'worklogAuthor = "{user_id}" '
-                f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
-            )
+
+        async def _fetch_user_issues(user_id: str, jql: str) -> tuple[str, list[dict]]:
             issues = await _fetch_all_issues(client, jql)
             return (user_id, issues)
 
+        all_tasks: list[tuple[str, str]] = []
+        for uid in user_ids:
+            wl_jql = (
+                f'worklogAuthor = "{uid}" '
+                f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
+            )
+            all_tasks.append((uid, wl_jql))
+            upd_jql = (
+                f'worklogAuthor = "{uid}" '
+                f'AND updated >= "{date_from}" AND updated <= "{date_to}"'
+            )
+            all_tasks.append((uid, upd_jql))
+
         user_issues = await asyncio.gather(
-            *[_fetch_user_issues(uid) for uid in user_ids]
+            *[_fetch_user_issues(uid, jql) for uid, jql in all_tasks]
         )
 
         issue_key_to_project: dict[str, str] = {}
         user_issue_keys: dict[str, set[str]] = {}
         for uid, issues in user_issues:
-            user_issue_keys[uid] = set()
+            user_issue_keys.setdefault(uid, set())
             for issue in issues:
                 key = issue["key"]
                 issue_key_to_project[key] = issue["fields"]["project"]["key"]
@@ -294,10 +345,16 @@ async def get_worklogs_for_users_all_projects(
             for issue_key in user_issue_keys.get(uid, set()):
                 issue_project = issue_key_to_project[issue_key]
                 worklogs = worklog_cache.get(issue_key, [])
-                entries.extend(_extract_worklogs(
-                    worklogs, issue_key, issue_project, d_from, d_to,
-                    author_filter=uid,
-                ))
+                entries.extend(
+                    _extract_worklogs(
+                        worklogs,
+                        issue_key,
+                        issue_project,
+                        d_from,
+                        d_to,
+                        author_filter=uid,
+                    )
+                )
             result[uid] = entries
 
     return result
@@ -335,7 +392,9 @@ def dedupe_worklog_entries(entries: list[dict]) -> list[dict]:
 
 
 async def get_worklogs_for_users_all_projects_by_candidates(
-    user_candidates: dict[str, list[str]], date_from: str, date_to: str,
+    user_candidates: dict[str, list[str]],
+    date_from: str,
+    date_to: str,
 ) -> dict[str, list[dict]]:
     d_from = date.fromisoformat(date_from)
     d_to = date.fromisoformat(date_to)
@@ -348,11 +407,16 @@ async def get_worklogs_for_users_all_projects_by_candidates(
                 candidate for candidate in dict.fromkeys(candidates) if candidate
             ]
             for candidate in unique_candidates:
-                jql = (
+                wl_jql = (
                     f'worklogAuthor = "{candidate}" '
                     f'AND worklogDate >= "{date_from}" AND worklogDate <= "{date_to}"'
                 )
-                all_jql_tasks.append((user_id, candidate, jql))
+                all_jql_tasks.append((user_id, candidate, wl_jql))
+                upd_jql = (
+                    f'worklogAuthor = "{candidate}" '
+                    f'AND updated >= "{date_from}" AND updated <= "{date_to}"'
+                )
+                all_jql_tasks.append((user_id, candidate, upd_jql))
 
         jql_results = await asyncio.gather(
             *[_fetch_all_issues(client, jql) for _, _, jql in all_jql_tasks]
@@ -378,28 +442,42 @@ async def get_worklogs_for_users_all_projects_by_candidates(
                 candidate for candidate in dict.fromkeys(candidates) if candidate
             ]
             for candidate in unique_candidates:
-                issue_keys = user_candidate_issues.get(user_id, {}).get(candidate, set())
+                issue_keys = user_candidate_issues.get(user_id, {}).get(
+                    candidate, set()
+                )
                 for issue_key in issue_keys:
                     issue_project = issue_key_to_project[issue_key]
                     worklogs = worklog_cache.get(issue_key, [])
                     extracted = _extract_worklogs(
-                        worklogs, issue_key, issue_project, d_from, d_to,
+                        worklogs,
+                        issue_key,
+                        issue_project,
+                        d_from,
+                        d_to,
                     )
-                    entries.extend(_match_any_candidate_entries(
-                        extracted, unique_candidates,
-                    ))
+                    entries.extend(
+                        _match_any_candidate_entries(
+                            extracted,
+                            unique_candidates,
+                        )
+                    )
             result[user_id] = dedupe_worklog_entries(entries)
 
     return result
 
 
 async def diagnose_worklog_author_candidates(
-    candidate_ids: list[str], date_from: str, date_to: str, issue_key: str = "",
+    candidate_ids: list[str],
+    date_from: str,
+    date_to: str,
+    issue_key: str = "",
 ) -> dict[str, dict]:
     d_from = date.fromisoformat(date_from)
     d_to = date.fromisoformat(date_to)
     result: dict[str, dict] = {}
-    unique_candidates = [candidate for candidate in dict.fromkeys(candidate_ids) if candidate]
+    unique_candidates = [
+        candidate for candidate in dict.fromkeys(candidate_ids) if candidate
+    ]
 
     async with httpx.AsyncClient(verify=False, timeout=60) as client:
         for candidate in unique_candidates:
