@@ -103,7 +103,10 @@ def _extract_worklogs(worklogs: list[dict], issue_key: str, issue_project: str,
             continue
         entries.append({
             "issue_key": issue_key,
+            "worklog_id": str(wl.get("id", "")),
             "date": started,
+            "started": wl.get("started", ""),
+            "updated": wl.get("updated", ""),
             "seconds": wl.get("timeSpentSeconds", 0),
             "project": issue_project,
             "display_name": author.get("displayName", ""),
@@ -301,21 +304,32 @@ async def get_worklogs_for_users_all_projects(
 
 
 def dedupe_worklog_entries(entries: list[dict]) -> list[dict]:
-    seen: set[tuple] = set()
+    seen: dict[tuple, int] = {}
     result: list[dict] = []
     for entry in entries:
-        key = (
-            entry.get("issue_key", ""),
-            entry.get("date", ""),
-            entry.get("seconds", 0),
-            entry.get("project", ""),
-            entry.get("display_name", ""),
-            entry.get("email", ""),
-            entry.get("author_key", ""),
-        )
+        worklog_id = entry.get("worklog_id", "")
+        if worklog_id:
+            key = ("worklog_id", str(worklog_id))
+        else:
+            key = (
+                "worklog_fields",
+                entry.get("issue_key", ""),
+                entry.get("date", ""),
+                entry.get("seconds", 0),
+                entry.get("project", ""),
+                entry.get("display_name", ""),
+                entry.get("email", ""),
+                entry.get("author_key", ""),
+            )
         if key in seen:
+            existing_index = seen[key]
+            existing = result[existing_index]
+            existing_updated = existing.get("updated", "")
+            incoming_updated = entry.get("updated", "")
+            if worklog_id and incoming_updated >= existing_updated:
+                result[existing_index] = entry
             continue
-        seen.add(key)
+        seen[key] = len(result)
         result.append(entry)
     return result
 

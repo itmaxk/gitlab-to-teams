@@ -376,7 +376,7 @@ def _build_email_html(
 </td>
 <td style="vertical-align:middle">
 <h1 style="margin:0;font-size:20px;font-weight:700;color:#ffffff;line-height:1.3">{title}</h1>
-<p style="margin:4px 0 0 0;font-size:14px;color:rgba(255,255,255,.85);line-height:1.4">{subtitle}</p>
+<p style="margin:4px 0 0 0;font-size:14px;color:#ffffff;line-height:1.4">{subtitle}</p>
 </td>
 </tr>
 </table>
@@ -560,8 +560,13 @@ async def time_logging_report(body: ReportRequest):
             else ""
         ),
     ):
-        proj_entries = project_worklogs.get(uid, [])
-        all_entries = other_worklogs.get(uid, [])
+        combined_entries = jira_client.dedupe_worklog_entries(
+            project_worklogs.get(uid, []) + other_worklogs.get(uid, [])
+        )
+        proj_entries = [
+            entry for entry in combined_entries if entry.get("project") == project
+        ]
+        all_entries = combined_entries
 
         # Объединяем даты из проектных и всех остальных ворклогов
         proj_dates = {e["date"] for e in proj_entries}
@@ -585,15 +590,6 @@ async def time_logging_report(body: ReportRequest):
 
         # Список задач пользователя с часами
         issues_map: dict[str, dict] = {}
-        for e in proj_entries:
-            ik = e["issue_key"]
-            if ik not in issues_map:
-                issues_map[ik] = {
-                    "issue_key": ik,
-                    "project": e["project"],
-                    "seconds": 0,
-                }
-            issues_map[ik]["seconds"] += e["seconds"]
         for e in all_entries:
             ik = e["issue_key"]
             if ik not in issues_map:
@@ -698,6 +694,11 @@ async def overtime_report(body: ReportRequest):
         if not has_project_entries:
             continue
 
+        other_worklog_ids = {
+            str(entry.get("worklog_id", ""))
+            for entry in other_entries
+            if entry.get("worklog_id", "")
+        }
         other_entry_scope = {
             (
                 entry.get("issue_key", ""),
@@ -709,7 +710,11 @@ async def overtime_report(body: ReportRequest):
         fallback_project_entries = [
             entry
             for entry in proj_entries
-            if (
+            if not (
+                entry.get("worklog_id", "")
+                and str(entry.get("worklog_id", "")) in other_worklog_ids
+            )
+            and (
                 entry.get("issue_key", ""),
                 entry.get("date", ""),
                 entry.get("project", ""),
