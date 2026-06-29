@@ -307,7 +307,7 @@ def _build_issue_debug_entries(
         if not author_key or not started:
             continue
 
-        started_date = started[:10]
+        started_date = jira_client.worklog_date(started)
         wl_date = date.fromisoformat(started_date)
         if wl_date < d_from or wl_date > d_to:
             continue
@@ -344,90 +344,170 @@ def _build_issue_debug_entries(
     return entries
 
 
+_EMAIL_FONT = (
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+)
+_EMAIL_BG = "#eceff4"
+_EMAIL_CARD = "#ffffff"
+_EMAIL_TEXT = "#1f2937"
+_EMAIL_MUTED = "#64748b"
+_EMAIL_BORDER = "#e5e9f0"
+_EMAIL_ROW_ALT = "#f7f9fc"
+
+
 def _build_email_html(
     title: str,
     subtitle: str,
     accent_color: str,
     accent_dark: str,
     body_content: str,
+    icon: str = "&#128202;",  # 📊
+    icon_bg: str = "",
+    preheader: str = "",
 ) -> str:
-    bg = "#f4f6f9"
-    card_bg = "#ffffff"
-    text_color = "#2d3748"
-    muted = "#718096"
-    border_light = "#e2e8f0"
-    row_alt = "#f7fafc"
+    icon_bg = icon_bg or accent_dark
+    generated = datetime.now().strftime("%d.%m.%Y %H:%M")
+    # Скрытый preheader — текст превью в списке писем Outlook.
+    preheader_html = (
+        f'<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;'
+        f'font-size:1px;line-height:1px;color:{_EMAIL_BG};opacity:0">'
+        f"{preheader or subtitle}</div>"
+    )
 
     return f"""\
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:{bg};font-family:Arial,Helvetica,sans-serif;color:{text_color}">
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:{bg}">
-<tr><td align="center" style="padding:24px 16px">
-<table width="600" cellpadding="0" cellspacing="0" border="0" style="background:{card_bg};border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<!--[if mso]>
+<style type="text/css">
+table {{border-collapse:collapse;mso-table-lspace:0;mso-table-rspace:0;}}
+td,th,h1,h2,p,div {{font-family:'Segoe UI',Arial,sans-serif !important;}}
+</style>
+<![endif]-->
+</head>
+<body style="margin:0;padding:0;background:{_EMAIL_BG};font-family:{_EMAIL_FONT};color:{_EMAIL_TEXT};-webkit-text-size-adjust:100%">
+{preheader_html}
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="{_EMAIL_BG}" style="background:{_EMAIL_BG}">
+<tr><td align="center" style="padding:28px 14px">
+
+<!--[if mso]><table role="presentation" width="640" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="width:640px;max-width:640px;background:{_EMAIL_CARD};border-radius:14px;overflow:hidden;border:1px solid {_EMAIL_BORDER};box-shadow:0 6px 24px rgba(15,23,42,.08)">
 
 <!-- Header banner -->
-<tr><td style="background:{accent_color};padding:28px 32px 24px 32px">
-<table width="100%" cellpadding="0" cellspacing="0" border="0">
+<tr><td bgcolor="{accent_color}" style="background:{accent_color};padding:26px 34px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr>
-<td style="font-size:28px;line-height:1;vertical-align:middle;padding-right:16px" width="48">
-<table cellpadding="0" cellspacing="0" border="0" style="width:44px;height:44px;border-radius:10px;background:rgba(255,255,255,.2)"><tr><td align="center" valign="middle" style="font-size:24px;color:#ffffff">&#9201;</td></tr></table>
+<td width="56" valign="middle" style="vertical-align:middle;padding-right:16px">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="52" bgcolor="{icon_bg}" style="width:52px;height:52px;background:{icon_bg};border-radius:14px">
+<tr><td align="center" valign="middle" height="52" style="height:52px;font-size:26px;line-height:52px;mso-line-height-rule:exactly;color:#ffffff">{icon}</td></tr>
+</table>
 </td>
-<td style="vertical-align:middle">
-<h1 style="margin:0;font-size:20px;font-weight:700;color:#ffffff;line-height:1.3">{title}</h1>
-<p style="margin:4px 0 0 0;font-size:14px;color:#ffffff;line-height:1.4">{subtitle}</p>
+<td valign="middle" style="vertical-align:middle">
+<h1 style="margin:0;font-size:22px;font-weight:700;color:#ffffff;line-height:1.25">{title}</h1>
+<p style="margin:6px 0 0 0;font-size:14px;color:#ffffff;opacity:.92;line-height:1.4">{subtitle}</p>
 </td>
 </tr>
 </table>
 </td></tr>
 
 <!-- Accent stripe -->
-<tr><td style="height:4px;background:{accent_dark};font-size:0;line-height:0">&nbsp;</td></tr>
+<tr><td height="4" bgcolor="{accent_dark}" style="height:4px;background:{accent_dark};font-size:0;line-height:0">&nbsp;</td></tr>
 
 <!-- Body -->
-<tr><td style="padding:24px 32px 8px 32px">
+<tr><td style="padding:28px 34px 10px 34px">
 {body_content}
 </td></tr>
 
 <!-- Footer -->
-<tr><td style="padding:16px 32px 24px 32px">
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid {border_light}">
-<tr><td style="padding-top:12px;font-size:11px;color:{muted};line-height:1.5">
-Отчёт сформирован автоматически. Дата формирования: {datetime.now().strftime('%d.%m.%Y %H:%M')} (МСК).
+<tr><td style="padding:8px 34px 26px 34px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid {_EMAIL_BORDER}">
+<tr><td style="padding-top:14px;font-size:11px;color:{_EMAIL_MUTED};line-height:1.6">
+Отчёт сформирован автоматически &middot; {generated} (МСК)<br>
+GitLab Manager &middot; данные из Jira
 </td></tr>
 </table>
 </td></tr>
 
 </table>
+<!--[if mso]></td></tr></table><![endif]-->
+
 </td></tr>
 </table>
 </body></html>"""
 
 
-_EMAIL_ROW_ALT = "#f7fafc"
-
-
 def _style_table_header(accent_color: str, accent_dark: str) -> str:
+    return f'bgcolor="{accent_color}" style="background:{accent_color}"'
+
+
+def _style_th(align: str = "left") -> str:
     return (
-        f'style="background:{accent_color};color:#ffffff;font-size:12px;'
-        f'text-transform:uppercase;letter-spacing:.5px;font-weight:600"'
+        f'style="padding:11px 14px;color:#ffffff;font-weight:600;font-size:11px;'
+        f"text-transform:uppercase;letter-spacing:.4px;text-align:{align};"
+        f'white-space:nowrap"'
     )
 
 
-def _style_th() -> str:
-    return 'style="padding:10px 14px;color:#ffffff;font-weight:600;text-align:left"'
-
-
-def _style_td(is_alt: bool = False) -> str:
+def _style_td(is_alt: bool = False, align: str = "left") -> str:
     bg = f"background:{_EMAIL_ROW_ALT};" if is_alt else ""
-    return f'style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{bg}line-height:1.5"'
+    return (
+        f'style="padding:11px 14px;border-bottom:1px solid {_EMAIL_BORDER};'
+        f'font-size:13px;{bg}line-height:1.5;text-align:{align}"'
+    )
 
 
-def _style_td_highlight(is_alt: bool = False, color: str = "") -> str:
+def _style_td_highlight(
+    is_alt: bool = False, color: str = "", align: str = "left"
+) -> str:
     bg = f"background:{_EMAIL_ROW_ALT};" if is_alt else ""
     col = f"color:{color};font-weight:600;" if color else ""
-    return f'style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{bg}{col}line-height:1.5"'
+    return (
+        f'style="padding:11px 14px;border-bottom:1px solid {_EMAIL_BORDER};'
+        f'font-size:13px;{bg}{col}line-height:1.5;text-align:{align}"'
+    )
+
+
+def _kpi_cards(cards: list[dict]) -> str:
+    """Ряд KPI-карточек (Outlook-safe, на таблице).
+
+    cards: [{"value": str, "label": str, "color": hex, "bg": hex}]
+    """
+    cells = ""
+    for idx, c in enumerate(cards):
+        if idx:
+            cells += '<td width="12" style="font-size:0;line-height:0">&nbsp;</td>'
+        cells += (
+            f'<td bgcolor="{c["bg"]}" valign="top" '
+            f'style="background:{c["bg"]};border-radius:10px;padding:16px 18px;'
+            f'vertical-align:top;border:1px solid {_EMAIL_BORDER}">'
+            f'<div style="font-size:25px;line-height:1.1;font-weight:700;'
+            f'color:{c["color"]};mso-line-height-rule:exactly">{c["value"]}</div>'
+            f'<div style="font-size:11px;line-height:1.4;color:{_EMAIL_MUTED};'
+            f"text-transform:uppercase;letter-spacing:.4px;font-weight:600;"
+            f'padding-top:5px">{c["label"]}</div>'
+            f"</td>"
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'border="0" style="margin-bottom:26px"><tr>'
+        f"{cells}"
+        "</tr></table>"
+    )
+
+
+def _section_heading(text: str, accent: str) -> str:
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        'style="margin:6px 0 13px 0"><tr>'
+        f'<td width="4" bgcolor="{accent}" style="width:4px;background:{accent};'
+        f'border-radius:2px;font-size:0;line-height:0">&nbsp;</td>'
+        f'<td style="padding-left:11px;font-size:15px;font-weight:700;'
+        f'color:#0f172a">{text}</td>'
+        "</tr></table>"
+    )
 
 
 def _send_email(recipients: list[str], subject: str, html_body: str):
@@ -747,7 +827,12 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
     issue_key = body.issue_key.strip().upper()
     date_from, date_to = _month_range(body.year, body.month)
 
-    # 1. Прямой запрос ворклогов задачи (эталон)
+    # Опциональные фильтры: если заданы — подробная диагностика только для них.
+    filter_user_id = (body.user_id or "").strip() or None
+    filter_date = (body.date or "").strip() or None
+
+    # 1. Прямой запрос ворклогов ТОЛЬКО указанной задачи (эталон).
+    #    Сканируется единственная задача из Issue key, не весь проект.
     try:
         raw_issue_worklogs = await jira_client.get_issue_worklogs(issue_key)
     except Exception as exc:
@@ -762,6 +847,14 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         date_from,
         date_to,
     )
+    # Фильтр по дате: оставляем только ворклоги задачи за выбранный день.
+    if filter_date:
+        issue_entries = [e for e in issue_entries if e["date"] == filter_date]
+    # Фильтр по пользователю: оставляем только его ворклоги по задаче.
+    if filter_user_id:
+        issue_entries = [
+            e for e in issue_entries if e["author_key"] == filter_user_id
+        ]
 
     issue_user_map: dict[str, dict] = {}
     for entry in issue_entries:
@@ -771,11 +864,20 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         }
     issue_user_ids = set(issue_user_map.keys())
 
-    # 2. Те же project_worklogs, что использует overtime_report
+    # 2. Period-ворклоги для расчёта day-checks (как в overtime_report).
+    #    Если выбран пользователь — тянем ТОЛЬКО его ворклоги (а не весь
+    #    проект), что и сокращает объём сканирования.
     try:
-        project_worklogs = await jira_client.get_all_worklogs_for_project(
-            project, date_from, date_to,
-        )
+        if filter_user_id:
+            project_worklogs = (
+                await jira_client.get_worklogs_for_users_all_projects(
+                    [filter_user_id], date_from, date_to,
+                )
+            )
+        else:
+            project_worklogs = await jira_client.get_all_worklogs_for_project(
+                project, date_from, date_to,
+            )
     except Exception:
         project_worklogs = {}
 
@@ -787,15 +889,22 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
 
     project_user_ids = set(project_worklogs.keys())
     report_scope_user_ids = sorted(project_user_ids | db_user_ids)
-    diagnostic_user_ids = sorted(issue_user_ids | db_user_ids)
+    # Если выбран пользователь — диагностика только по нему; иначе как раньше.
+    if filter_user_id:
+        diagnostic_user_ids = [filter_user_id]
+    else:
+        diagnostic_user_ids = sorted(issue_user_ids | db_user_ids)
 
+    lookup_ids = (
+        sorted(issue_user_ids) if not filter_user_id else [filter_user_id]
+    )
     lookup_diagnostics: dict[str, dict] = {}
     lookup_diagnostics_error = ""
-    if issue_user_ids:
+    if lookup_ids:
         try:
             lookup_diagnostics = await asyncio.wait_for(
                 jira_client.diagnose_worklog_author_candidates(
-                    sorted(issue_user_ids),
+                    lookup_ids,
                     date_from,
                     date_to,
                     issue_key=issue_key,
@@ -912,6 +1021,8 @@ async def overtime_debug_issue(body: OvertimeDebugRequest):
         "month": body.month,
         "project": project,
         "issue_key": issue_key,
+        "filter_user_id": filter_user_id,
+        "filter_date": filter_date,
         "issue_worklogs": issue_entries,
         "project_worklogs_user_count": len(project_worklogs),
         "project_worklogs_issue_keys": sorted(
@@ -1219,6 +1330,10 @@ async def send_overtime_email(body: SendReportRequest):
         return {"sent": False, "reason": "no overtime data"}
 
     jira_url = os.getenv("JIRA_URL", "").rstrip("/")
+    month_name = f"{body.year}-{body.month:02d}"
+    accent = "#dc2626"
+    accent_dark = "#b91c1c"
+    project_esc = html_mod.escape(project)
 
     summary = _build_overtime_summary(rows)
     totals = {"days": 0, "project": 0.0, "other": 0.0, "workday_hours": 0.0, "weekend_hours": 0.0, "total": 0.0}
@@ -1231,102 +1346,128 @@ async def send_overtime_email(body: SendReportRequest):
         summary_html += (
             f"<tr>"
             f'<td {_style_td(is_alt)}>{name_esc}</td>'
-            f'<td {_style_td(is_alt)}>{s["days"]}</td>'
-            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{s["project"]:.1f}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#718096")}>{s["other"]:.1f}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#c2410c")}>{s["workday_hours"]:.1f}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#dc2626")}>{s["weekend_hours"]:.1f}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#dc2626")}>+{s["total"]:.1f}h</td>'
+            f'<td {_style_td(is_alt, "center")}>{s["days"]}</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2", "right")}>{s["project"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#64748b", "right")}>{s["other"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#c2410c", "right")}>{s["workday_hours"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#dc2626", "right")}>{s["weekend_hours"]:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#dc2626", "right")}>+{s["total"]:.1f}h</td>'
             f"</tr>"
         )
+    tf = (
+        'style="padding:12px 14px;font-weight:700;font-size:13px;'
+        f'border-top:2px solid {accent}'
+    )
     summary_html += (
-        f'<tr style="border-top:2px solid #e2e8f0">'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px">Итого</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px">{totals["days"]}</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#0891b2">{totals["project"]:.1f}h</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#718096">{totals["other"]:.1f}h</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#c2410c">{totals["workday_hours"]:.1f}h</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#dc2626">{totals["weekend_hours"]:.1f}h</td>'
-        f'<td style="padding:10px 14px;font-weight:700;font-size:13px;color:#dc2626">+{totals["total"]:.1f}h</td>'
-        f'</tr>'
+        f"<tr>"
+        f'<td {tf};text-align:left">Итого</td>'
+        f'<td {tf};text-align:center">{totals["days"]}</td>'
+        f'<td {tf};text-align:right;color:#0891b2">{totals["project"]:.1f}h</td>'
+        f'<td {tf};text-align:right;color:#64748b">{totals["other"]:.1f}h</td>'
+        f'<td {tf};text-align:right;color:#c2410c">{totals["workday_hours"]:.1f}h</td>'
+        f'<td {tf};text-align:right;color:#dc2626">{totals["weekend_hours"]:.1f}h</td>'
+        f'<td {tf};text-align:right;color:#dc2626">+{totals["total"]:.1f}h</td>'
+        f"</tr>"
+    )
+
+    kpi = _kpi_cards(
+        [
+            {"value": f"+{totals['total']:.1f}h", "label": "Сверх нормы", "color": "#dc2626", "bg": "#fef2f2"},
+            {"value": str(len(summary)), "label": "Сотрудников", "color": "#0f172a", "bg": "#f1f5f9"},
+            {"value": f"+{totals['workday_hours']:.1f}h", "label": "Будни", "color": "#c2410c", "bg": "#fff7ed"},
+            {"value": f"+{totals['weekend_hours']:.1f}h", "label": "Выходные", "color": "#dc2626", "bg": "#fef2f2"},
+        ]
     )
 
     day_labels = {"workday": "Рабочий", "weekend": "Выходной", "holiday": "Праздник"}
+    day_chip = {
+        "workday": ("#475569", "#f1f5f9"),
+        "weekend": ("#b91c1c", "#fef2f2"),
+        "holiday": ("#b45309", "#fffbeb"),
+    }
     html_rows = ""
-    for r in rows:
-        is_alt = False
+    for idx, r in enumerate(rows):
+        is_alt = idx % 2 == 1
         day_type = r.get("day_type", "")
         issues_links = ", ".join(
-            f'<a href="{jira_url}/browse/{html_mod.escape(ik)}" style="color:#0891b2;text-decoration:none">{html_mod.escape(ik)}</a>' for ik in r.get("issues", [])
+            f'<a href="{jira_url}/browse/{html_mod.escape(ik)}" style="color:#2563eb;text-decoration:none;font-weight:600">{html_mod.escape(ik)}</a>'
+            for ik in r.get("issues", [])
         )
-        over_norm_style = 'color:#dc2626;font-weight:600' if day_type != "workday" else 'color:#c2410c;font-weight:600'
+        chip_color, chip_bg = day_chip.get(day_type, ("#475569", "#f1f5f9"))
         day_label = day_labels.get(day_type, day_type)
+        day_chip_html = (
+            f'<span style="display:inline-block;background:{chip_bg};color:{chip_color};'
+            f'border-radius:11px;padding:2px 10px;font-size:11px;font-weight:600">{day_label}</span>'
+        )
+        over_color = "#dc2626" if day_type != "workday" else "#c2410c"
         html_rows += (
-            f'<tr>'
+            f"<tr>"
             f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("display_name", "")))}</td>'
-            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("date", "")))}</td>'
-            f'<td {_style_td_highlight(is_alt, "#dc2626" if day_type != "workday" else "#c2410c")}>{day_label}</td>'
-            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("total_hours", "")))}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#718096")}>{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
-            f'<td style="padding:10px 14px;border-bottom:1px solid #e2e8f0;font-size:13px;{over_norm_style}">+{html_mod.escape(str(r.get("over_norm", "")))}h</td>'
+            f'<td {_style_td(is_alt, "center")}>{html_mod.escape(str(r.get("date", "")))}</td>'
+            f'<td {_style_td(is_alt, "center")}>{day_chip_html}</td>'
+            f'<td {_style_td(is_alt, "right")}>{html_mod.escape(str(r.get("total_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2", "right")}>{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#64748b", "right")}>{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
+            f'<td {_style_td_highlight(is_alt, over_color, "right")}>+{html_mod.escape(str(r.get("over_norm", "")))}h</td>'
             f'<td {_style_td(is_alt)}>{issues_links or "&mdash;"}</td>'
             f"</tr>"
         )
 
-    month_name = f"{body.year}-{body.month:02d}"
-    accent = "#b91c1c"
-    accent_dark = "#991b1b"
-    project_esc = html_mod.escape(project)
-
     summary_table = (
-        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0;margin-bottom:24px">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid {_EMAIL_BORDER};border-radius:10px;overflow:hidden;margin-bottom:28px">'
         f'<tr {_style_table_header(accent, accent_dark)}>'
         f'<th {_style_th()}>Пользователь</th>'
-        f'<th {_style_th()}>Дней</th>'
-        f'<th {_style_th()}>{project_esc}</th>'
-        f'<th {_style_th()}>Другие</th>'
-        f'<th {_style_th()}>Рабочих (ч)</th>'
-        f'<th {_style_th()}>Выходных (ч)</th>'
-        f'<th {_style_th()}>Сверх нормы</th>'
-        f'</tr>'
-        f'{summary_html}'
-        f'</table>'
+        f'<th {_style_th("center")}>Дней</th>'
+        f'<th {_style_th("right")}>{project_esc}</th>'
+        f'<th {_style_th("right")}>Другие</th>'
+        f'<th {_style_th("right")}>Будни</th>'
+        f'<th {_style_th("right")}>Вых.</th>'
+        f'<th {_style_th("right")}>Сверх нормы</th>'
+        f"</tr>"
+        f"{summary_html}"
+        f"</table>"
     )
 
     detail_table = (
-        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid {_EMAIL_BORDER};border-radius:10px;overflow:hidden">'
         f'<tr {_style_table_header(accent, accent_dark)}>'
         f'<th {_style_th()}>Пользователь</th>'
-        f'<th {_style_th()}>Дата</th>'
-        f'<th {_style_th()}>Тип дня</th>'
-        f'<th {_style_th()}>Всего</th>'
-        f'<th {_style_th()}>{project_esc}</th>'
-        f'<th {_style_th()}>Другие</th>'
-        f'<th {_style_th()}>Сверх нормы</th>'
+        f'<th {_style_th("center")}>Дата</th>'
+        f'<th {_style_th("center")}>Тип дня</th>'
+        f'<th {_style_th("right")}>Всего</th>'
+        f'<th {_style_th("right")}>{project_esc}</th>'
+        f'<th {_style_th("right")}>Другие</th>'
+        f'<th {_style_th("right")}>Сверх нормы</th>'
         f'<th {_style_th()}>Задачи</th>'
-        f'</tr>'
-        f'{html_rows}'
-        f'</table>'
+        f"</tr>"
+        f"{html_rows}"
+        f"</table>"
     )
 
     body_content = (
-        f'<h2 style="margin:0 0 16px 0;font-size:16px;color:#2d3748">Сводка по пользователям</h2>'
-        f'{summary_table}'
-        f'<h2 style="margin:24px 0 16px 0;font-size:16px;color:#2d3748">Детализация</h2>'
-        f'{detail_table}'
+        f'<p style="margin:0 0 22px 0;font-size:14px;line-height:1.6;color:{_EMAIL_TEXT}">'
+        f"Переработки за <strong>{month_name}</strong> по проекту <strong>{project_esc}</strong>. "
+        f"Ниже — сводка по сотрудникам и детализация по дням.</p>"
+        f"{kpi}"
+        f'{_section_heading("Сводка по сотрудникам", accent)}'
+        f"{summary_table}"
+        f'{_section_heading("Детализация по дням", accent)}'
+        f"{detail_table}"
     )
 
     html = _build_email_html(
         title="Отчёт по переработкам",
-        subtitle=f"Период: {month_name}  |  Проект: {project_esc}",
+        subtitle=f"Период {month_name}  ·  Проект {project_esc}",
         accent_color=accent,
         accent_dark=accent_dark,
         body_content=body_content,
+        icon="\U0001f525",  # 🔥
+        icon_bg="#ef4444",
+        preheader=f"Переработки за {month_name}: +{totals['total']:.1f}ч у {len(summary)} сотр.",
     )
 
     now_str = datetime.now().strftime("%H:%M")
-    _send_email(body.emails, f"\u267b\ufe0f Отчёт по переработкам \u2014 {month_name} ({now_str})", html)
+    _send_email(body.emails, f"\U0001f525 Отчёт по переработкам \u2014 {month_name} ({now_str})", html)
     return {"sent": True}
 
 
@@ -1350,52 +1491,111 @@ async def send_time_logging_email(body: SendReportRequest):
     if not rows:
         return {"sent": False, "reason": "no time logging data"}
 
+    month_name = f"{body.year}-{body.month:02d}"
+    accent = "#2563eb"
+    accent_dark = "#1d4ed8"
+    project_esc = html_mod.escape(project)
+
+    tot_logged = 0
+    tot_workdays = 0
+    tot_hours = 0.0
+    tot_missing = 0
     html_rows = ""
     for idx, r in enumerate(rows):
         is_alt = idx % 2 == 1
-        missing = r.get("missing_count", 0)
-        missing_color = "#dc2626" if missing > 0 else "#16a34a"
-        missing_text = f'<span style="color:{missing_color};font-weight:600">{missing} дн.</span>' if missing > 0 else '<span style="color:#16a34a;font-weight:600">&#10003;</span>'
+        days_logged = int(r.get("days_logged", 0) or 0)
+        total_workdays = int(r.get("total_workdays", 0) or 0)
+        try:
+            ph = float(r.get("project_hours", 0) or 0)
+            oh = float(r.get("other_hours", 0) or 0)
+        except ValueError:
+            ph = oh = 0.0
+        missing = int(r.get("missing_count", 0) or 0)
+        tot_logged += days_logged
+        tot_workdays += total_workdays
+        tot_hours += ph + oh
+        tot_missing += missing
+
+        pct = round(days_logged / total_workdays * 100) if total_workdays else 0
+        bar_color = "#16a34a" if pct >= 100 else ("#f59e0b" if pct >= 60 else "#dc2626")
+        bar = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="120" style="width:120px;margin-top:5px">'
+            f'<tr><td height="6" bgcolor="{bar_color}" width="{pct}%" style="height:6px;background:{bar_color};border-radius:3px 0 0 3px;font-size:0;line-height:0">&nbsp;</td>'
+            f'<td height="6" bgcolor="#e5e9f0" style="height:6px;background:#e5e9f0;font-size:0;line-height:0">&nbsp;</td></tr></table>'
+        )
+        days_cell = (
+            f'<div style="font-weight:600;color:#0f172a">{days_logged}/{total_workdays} '
+            f'<span style="color:{_EMAIL_MUTED};font-weight:400">&middot; {pct}%</span></div>{bar}'
+        )
+
+        if missing > 0:
+            status = (
+                f'<span style="display:inline-block;background:#fef2f2;color:#dc2626;'
+                f'border-radius:11px;padding:2px 10px;font-size:11px;font-weight:600">{missing} дн.</span>'
+            )
+        else:
+            status = (
+                '<span style="display:inline-block;background:#ecfdf5;color:#16a34a;'
+                'border-radius:11px;padding:2px 10px;font-size:11px;font-weight:600">&#10003; всё</span>'
+            )
+
         html_rows += (
             f"<tr>"
-            f'<td {_style_td(is_alt)} style="font-weight:600">{html_mod.escape(str(r.get("display_name", "")))}</td>'
-            f'<td {_style_td(is_alt)}>{html_mod.escape(str(r.get("days_logged", "")))}/{html_mod.escape(str(r.get("total_workdays", "")))}</td>'
-            f'<td {_style_td_highlight(is_alt, "#0891b2")}>{html_mod.escape(str(r.get("project_hours", "")))}h</td>'
-            f'<td {_style_td_highlight(is_alt, "#718096")}>{html_mod.escape(str(r.get("other_hours", "")))}h</td>'
-            f'<td {_style_td(is_alt)}>{missing_text}</td>'
+            f'<td {_style_td(is_alt)}><strong>{html_mod.escape(str(r.get("display_name", "")))}</strong></td>'
+            f'<td {_style_td(is_alt)}>{days_cell}</td>'
+            f'<td {_style_td_highlight(is_alt, "#0891b2", "right")}>{ph:.1f}h</td>'
+            f'<td {_style_td_highlight(is_alt, "#64748b", "right")}>{oh:.1f}h</td>'
+            f'<td {_style_td(is_alt, "center")}>{status}</td>'
             f"</tr>"
         )
 
-    month_name = f"{body.year}-{body.month:02d}"
-    accent = "#1d4ed8"
-    accent_dark = "#1e40af"
-    project_esc = html_mod.escape(project)
-
-    table = (
-        f'<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-radius:6px;overflow:hidden;border:1px solid #e2e8f0">'
-        f'<tr {_style_table_header(accent, accent_dark)}>'
-        f'<th {_style_th()}>Пользователь</th>'
-        f'<th {_style_th()}>Дни</th>'
-        f'<th {_style_th()}>{project_esc}</th>'
-        f'<th {_style_th()}>Другие</th>'
-        f'<th {_style_th()}>Пропущено</th>'
-        f'</tr>'
-        f'{html_rows}'
-        f'</table>'
+    coverage = round(tot_logged / tot_workdays * 100) if tot_workdays else 0
+    cov_color = "#16a34a" if coverage >= 90 else ("#f59e0b" if coverage >= 60 else "#dc2626")
+    miss_color = "#dc2626" if tot_missing > 0 else "#16a34a"
+    kpi = _kpi_cards(
+        [
+            {"value": str(len(rows)), "label": "Сотрудников", "color": "#0f172a", "bg": "#f1f5f9"},
+            {"value": f"{tot_hours:.0f}h", "label": "Залогировано", "color": "#0891b2", "bg": "#ecfeff"},
+            {"value": f"{coverage}%", "label": "Охват дней", "color": cov_color, "bg": "#eff6ff"},
+            {"value": str(tot_missing), "label": "Пропущено дней", "color": miss_color, "bg": "#fef2f2" if tot_missing else "#ecfdf5"},
+        ]
     )
 
-    body_content = table
+    table = (
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid {_EMAIL_BORDER};border-radius:10px;overflow:hidden">'
+        f'<tr {_style_table_header(accent, accent_dark)}>'
+        f'<th {_style_th()}>Пользователь</th>'
+        f'<th {_style_th()}>Дни (охват)</th>'
+        f'<th {_style_th("right")}>{project_esc}</th>'
+        f'<th {_style_th("right")}>Другие</th>'
+        f'<th {_style_th("center")}>Статус</th>'
+        f"</tr>"
+        f"{html_rows}"
+        f"</table>"
+    )
+
+    body_content = (
+        f'<p style="margin:0 0 22px 0;font-size:14px;line-height:1.6;color:{_EMAIL_TEXT}">'
+        f"Учёт залогированного времени за <strong>{month_name}</strong> по проекту "
+        f"<strong>{project_esc}</strong>. Охват дней — доля рабочих дней с залогированным временем.</p>"
+        f"{kpi}"
+        f'{_section_heading("Сотрудники", accent)}'
+        f"{table}"
+    )
 
     html = _build_email_html(
         title="Отчёт учёта времени",
-        subtitle=f"Период: {month_name}  |  Проект: {project_esc}",
+        subtitle=f"Период {month_name}  ·  Проект {project_esc}",
         accent_color=accent,
         accent_dark=accent_dark,
         body_content=body_content,
+        icon="\U0001f552",  # 🕒
+        icon_bg="#3b82f6",
+        preheader=f"Учёт времени {month_name}: охват {coverage}%, пропущено {tot_missing} дн.",
     )
 
     now_str = datetime.now().strftime("%H:%M")
-    _send_email(body.emails, f"\u231b Учёт времени \u2014 {month_name} ({now_str})", html)
+    _send_email(body.emails, f"\U0001f552 Учёт времени \u2014 {month_name} ({now_str})", html)
     return {"sent": True}
 
 

@@ -1,5 +1,4 @@
 import asyncio
-import html as html_mod
 import json
 import logging
 import os
@@ -76,54 +75,29 @@ async def _tick():
 
 
 async def _auto_generate_and_send(report_type: str, year: int, month: int, settings: dict):
-    from models import ReportRequest, SendReportRequest
-    from routers.reports import time_logging_report, overtime_report, _send_email
+    from models import SendReportRequest
 
     recipients_str = settings["email_recipients"] or ""
     recipients = [e.strip() for e in recipients_str.split(",") if e.strip()]
 
+    if not recipients or not settings["send_email"]:
+        return
+
+    # Используем те же отрисовщики, что и ручная отправка, чтобы дизайн письма
+    # (Outlook-вёрстка, KPI-карточки) был единым для авто- и ручной рассылки.
     if report_type == "time_logging":
-        data = await time_logging_report(ReportRequest(year=year, month=month))
-        if not recipients or not settings["send_email"]:
-            return
+        from routers.reports import send_time_logging_email
 
-        rows_html = ""
-        for r in data["rows"]:
-            missing_cls = 'color:red' if r["missing_count"] > 0 else ''
-            rows_html += (
-                f'<tr>'
-                f'<td style="padding:4px 8px">{html_mod.escape(str(r["display_name"]))}</td>'
-                f'<td style="padding:4px 8px">{html_mod.escape(str(r["days_logged"]))}/{html_mod.escape(str(r["total_workdays"]))}</td>'
-                f'<td style="padding:4px 8px;color:cyan">{html_mod.escape(str(r["project_hours"]))}h</td>'
-                f'<td style="padding:4px 8px;color:gray">{html_mod.escape(str(r["other_hours"]))}h</td>'
-                f'<td style="padding:4px 8px;{missing_cls}">{r["missing_count"]} дн.</td>'
-                f'</tr>'
-            )
-
-        month_name = f"{year}-{month:02d}"
-        html = f"""\
-<html><body style="font-family:Arial,sans-serif;color:#333">
-<h2>Отчёт учёта времени — {month_name}</h2>
-<p>Проект: {html_mod.escape(data['project'])}</p>
-<table style="border-collapse:collapse;border:1px solid #ccc">
-<tr style="background:#f0f0f0;font-weight:bold">
-<td style="padding:4px 8px">Пользователь</td>
-<td style="padding:4px 8px">Дни</td>
-<td style="padding:4px 8px">{html_mod.escape(data['project'])}</td>
-<td style="padding:4px 8px">Другие</td>
-<td style="padding:4px 8px">Пропущено</td>
-</tr>
-{rows_html}
-</table>
-</body></html>"""
-        now_str = datetime.now().strftime("%H:%M")
-        _send_email(recipients, f"\U0001f552 Отчёт учёта времени — {month_name} ({now_str})", html)
+        await send_time_logging_email(
+            SendReportRequest(year=year, month=month, emails=recipients)
+        )
 
     elif report_type == "overtime":
-        if not recipients or not settings["send_email"]:
-            return
         from routers.reports import send_overtime_email
-        await send_overtime_email(SendReportRequest(year=year, month=month, emails=recipients))
+
+        await send_overtime_email(
+            SendReportRequest(year=year, month=month, emails=recipients)
+        )
 
 
 async def _check_missing_time_notify():

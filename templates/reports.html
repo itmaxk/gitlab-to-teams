@@ -126,6 +126,21 @@
         <input type="text" id="otDebugIssueKey" placeholder="MAIN-123"
           class="w-56 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
       </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Дата (опц.)</label>
+        <input type="date" id="otDebugDate"
+          class="bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+      </div>
+      <div>
+        <label class="block text-sm text-slate-400 mb-1">Пользователь Jira (опц.)</label>
+        <select id="otDebugUser"
+          class="w-64 bg-slate-900 border border-slate-600 rounded px-3 py-2 text-white text-sm">
+          <option value="">— все —</option>
+          {% for u in users|sort(attribute='active', reverse=true) %}
+          <option value="{{ u.account_id|e }}">{{ u.display_name or u.account_id }}{% if u.email_address %} · {{ u.email_address }}{% endif %}{% if not u.active %} (удалён){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
       <button onclick="debugOvertimeIssue()" id="btnOTDebug"
         class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg font-medium">
         Debug issue
@@ -795,6 +810,8 @@ async function debugOvertimeIssue() {
 
   const year = parseInt(document.getElementById('otYear').value);
   const month = parseInt(document.getElementById('otMonth').value);
+  const userId = document.getElementById('otDebugUser').value || null;
+  const dateVal = document.getElementById('otDebugDate').value || null;
   const btn = document.getElementById('btnOTDebug');
   const errorEl = document.getElementById('otDebugError');
   const resultsEl = document.getElementById('otDebugResults');
@@ -808,7 +825,7 @@ async function debugOvertimeIssue() {
     const resp = await fetch('/api/reports/overtime/debug-issue', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({year, month, issue_key: issueKey}),
+      body: JSON.stringify({year, month, issue_key: issueKey, user_id: userId, date: dateVal}),
     });
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
@@ -824,8 +841,15 @@ async function debugOvertimeIssue() {
 
 function renderOvertimeDebug(data) {
   const users = data.users || [];
-  document.getElementById('otDebugSummary').textContent =
-    `Issue ${data.issue_key} | period ${data.year}-${String(data.month).padStart(2, '0')} | issue worklogs: ${(data.issue_worklogs || []).length} | users: ${users.length}`;
+  const filterParts = [];
+  if (data.filter_user_id) {
+    const u = users.find(x => x.account_id === data.filter_user_id);
+    filterParts.push(`user: ${esc((u && u.display_name) || data.filter_user_id)}`);
+  }
+  if (data.filter_date) filterParts.push(`date: ${esc(data.filter_date)}`);
+  const filterText = filterParts.length ? ` | filters → ${filterParts.join(', ')}` : '';
+  document.getElementById('otDebugSummary').innerHTML =
+    `Issue ${esc(data.issue_key)} | period ${data.year}-${String(data.month).padStart(2, '0')} | issue worklogs: ${(data.issue_worklogs || []).length} | users: ${users.length}${filterText}`;
 
   const tbody = document.getElementById('otDebugBody');
   tbody.innerHTML = '';

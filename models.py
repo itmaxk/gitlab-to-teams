@@ -63,6 +63,10 @@ class OvertimeDebugRequest(BaseModel):
     year: int = Field(ge=2020, le=2100)
     month: int = Field(ge=1, le=12)
     issue_key: str
+    # Опциональные фильтры диагностики: если заданы, подробная информация
+    # выводится только для указанного пользователя Jira и/или даты.
+    user_id: str | None = None
+    date: str | None = None
 
 
 class NotifyMissingRequest(BaseModel):

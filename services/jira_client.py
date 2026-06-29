@@ -2,11 +2,44 @@ import asyncio
 import base64
 import logging
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+def _report_tz() -> timezone:
+    """Часовой пояс отчёта (по умолчанию +03:00, Москва).
+
+    Jira отдаёт `started` со смещением пользователя-владельца токена; чтобы
+    календарный день ворклога совпадал с тем, что видит команда в Jira UI,
+    приводим время к этому поясу.
+    """
+    raw = os.getenv("REPORT_TZ_OFFSET_HOURS", "3")
+    try:
+        hours = float(raw)
+    except ValueError:
+        hours = 3.0
+    return timezone(timedelta(hours=hours))
+
+
+def worklog_date(started: str) -> str:
+    """Дата ворклога (YYYY-MM-DD) в часовом поясе отчёта.
+
+    Раньше дата бралась срезом `started[:10]` — в исходном смещении Jira.
+    Для ворклога у полуночи (напр. 23:58 +02:00) это давало предыдущий день,
+    хотя в поясе команды (+03:00) он относится к следующему дню.
+    """
+    if not started:
+        return ""
+    try:
+        dt = datetime.fromisoformat(started)
+    except ValueError:
+        return started[:10]
+    if dt.tzinfo is None:
+        return started[:10]
+    return dt.astimezone(_report_tz()).date().isoformat()
 
 _sem: asyncio.Semaphore | None = None
 
@@ -117,7 +150,7 @@ def _extract_worklogs(
             continue
         if author_filter and author_key != author_filter:
             continue
-        started = wl.get("started", "")[:10]
+        started = worklog_date(wl.get("started", ""))
         if not started:
             continue
         wl_date = date.fromisoformat(started)
